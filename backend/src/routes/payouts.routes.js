@@ -115,7 +115,7 @@ router.get('/payouts/breakdown', requirePermission('commissions.view'), asyncHan
   const F = from.toISOString(), T = to.toISOString();
   const data = await withWorkspace(wid(req), uid(req), async (c) => {
     const perCreator = (await c.query(`
-      SELECT cr.stage_name AS name, cr.revenue_model AS model, cr.salary,
+      SELECT cr.id, cr.stage_name AS name, cr.revenue_model AS model, cr.salary,
              COALESCE(agg.revenue,0) AS revenue, COALESCE(agg.owed,0) AS owed
       FROM creators cr
       LEFT JOIN (
@@ -125,7 +125,7 @@ router.get('/payouts/breakdown', requirePermission('commissions.view'), asyncHan
       ) agg ON agg.creator_id = cr.id
       WHERE cr.workspace_id = $3 ORDER BY owed DESC`, [F, T, wid(req)])).rows;
     const perChatter = (await c.query(`
-      SELECT u.full_name AS name, COALESCE(agg.owed,0) AS owed, COALESCE(agg.sales,0) AS sales
+      SELECT m.id, u.full_name AS name, COALESCE(agg.owed,0) AS owed, COALESCE(agg.sales,0) AS sales
       FROM memberships m JOIN users u ON u.id = m.user_id
       LEFT JOIN (
         SELECT ce.chatter_membership_id AS mid, SUM(ce.chatter_amount) FILTER (WHERE ce.chatter_payout_id IS NULL) AS owed,
@@ -172,8 +172,8 @@ router.get('/payouts/breakdown', requirePermission('commissions.view'), asyncHan
 
   res.json({
     range: { from: F, to: T },
-    perCreator: data.perCreator.map((r) => ({ name: r.name, model: r.model, salary: num(r.salary), revenue: num(r.revenue), owed: num(r.owed) })),
-    perChatter: data.perChatter.map((r) => ({ name: r.name, owed: num(r.owed), sales: num(r.sales) })),
+    perCreator: data.perCreator.map((r) => ({ id: r.id, name: r.name, model: r.model, salary: num(r.salary), revenue: num(r.revenue), owed: num(r.owed) })),
+    perChatter: data.perChatter.map((r) => ({ id: r.id, name: r.name, owed: num(r.owed), sales: num(r.sales) })),
     reserve,
     cash: {
       owed: round2(creatorsOwed + chattersOwed),
