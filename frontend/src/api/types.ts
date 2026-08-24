@@ -1,18 +1,12 @@
 /**
- * Shared API contract types. Each endpoint module below reuses these.
+ * Shared API contract types. Each endpoint module reuses these.
  *
- * These live under `api/` (not `types/`) so it's obvious which types are
- * *what the backend actually sends* vs. UI-facing types derived in hooks.
+ * These live under `api/` so it is obvious which types are what the backend
+ * actually sends, as opposed to UI-facing shapes derived in hooks.
  */
 
-export type Role =
-  | 'owner'
-  | 'admin'
-  | 'manager'
-  | 'analyst'
-  | 'chatter'
-  | 'creator'
-  | 'super_admin';
+/** Built-in workspace roles. Custom roles are free-form strings. */
+export type SystemRole = 'owner' | 'admin' | 'manager' | 'analyst' | 'chatter' | 'creator';
 
 export interface AuthUser {
   id: string;
@@ -24,7 +18,7 @@ export interface AuthUser {
 export interface AuthWorkspace {
   id: string;
   name: string;
-  role: Role;
+  role: string;
   status?: string;
   currency?: string;
   organization?: string;

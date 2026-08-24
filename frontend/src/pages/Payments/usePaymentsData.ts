@@ -1,66 +1,39 @@
-/**
- * Data hook for the Payments page.
- *
- * Emits a single `Transaction[]`-shaped list regardless of whether we're in
- * offline demo mode (reading from `appStore`) or live (React Query against
- * `payoutsApi.listTransactions`). The page component doesn't care which.
- */
-
-import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { useAppStore } from '../../store/appStore';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import { scopeTx } from '../../rbac/permissions';
-import { payoutsApi, type Transaction as ApiTransaction } from '../../api/endpoints';
-import type { Transaction } from '../../types';
-
-function apiToLegacyTx(t: ApiTransaction): Transaction {
-  return {
-    id: t.id,
-    referenceId: t.providerTransactionId ?? t.id,
-    providerTxId: t.providerTransactionId ?? undefined,
-    clientName: t.customer ?? '',
-    username: '',
-    creator: t.creator ?? '',
-    chatter: t.chatter ?? '',
-    amount: t.gross,
-    currency: 'EUR',
-    paid: t.status === 'settled' || t.status === 'authorized',
-    refunded: t.status === 'refunded' || t.status === 'reversed',
-    notes: '',
-    ts: Date.parse(t.occurredAt),
-  };
-}
+import { payoutsApi, type Transaction } from '../../api/endpoints';
 
 export interface UsePaymentsDataResult {
   transactions: Transaction[];
   isLoading: boolean;
   isError: boolean;
+  /** Records a refund that was already issued in the provider dashboard. */
+  recordRefund: (transactionId: string) => Promise<void>;
 }
 
 export function usePaymentsData(): UsePaymentsDataResult {
-  const { isDemo, activeWorkspaceId } = useCurrentSession();
-  const demoTx = useAppStore((s) => s.transactions);
-  const role = useAppStore((s) => s.role);
-  const identity = useAppStore((s) => s.identity);
+  const { activeWorkspaceId } = useCurrentSession();
+  const queryClient = useQueryClient();
 
   const query = useQuery({
     queryKey: ['transactions', activeWorkspaceId],
     queryFn: () => payoutsApi.listTransactions(),
-    enabled: !isDemo && Boolean(activeWorkspaceId),
+    enabled: Boolean(activeWorkspaceId),
   });
 
-  const scopedDemo = useMemo(
-    () => scopeTx(demoTx, role, identity),
-    [demoTx, role, identity],
-  );
+  const refund = useMutation({
+    mutationFn: (transactionId: string) => payoutsApi.refund(transactionId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions', activeWorkspaceId] });
+      queryClient.invalidateQueries({ queryKey: ['payouts-breakdown', activeWorkspaceId] });
+    },
+  });
 
-  if (isDemo) {
-    return { transactions: scopedDemo, isLoading: false, isError: false };
-  }
   return {
-    transactions: (query.data ?? []).map(apiToLegacyTx),
+    transactions: query.data ?? [],
     isLoading: query.isLoading,
     isError: query.isError,
+    recordRefund: async (transactionId) => {
+      await refund.mutateAsync(transactionId);
+    },
   };
 }

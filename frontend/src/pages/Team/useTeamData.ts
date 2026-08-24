@@ -1,70 +1,64 @@
-import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useAppStore } from '../../store/appStore';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import { membershipsApi, type Chatter as ApiChatter } from '../../api/endpoints';
-import type { Chatter } from '../../types';
-
-function apiToLegacyChatter(a: ApiChatter): Chatter {
-  return {
-    id: a.membershipId,
-    name: a.name,
-    email: a.email,
-    status: a.status,
-    shift: a.shift,
-    // The backend does not currently return per-membership creator
-    // assignments; the demo shape needs the list to render, so we leave it
-    // empty until the API grows an assignments endpoint.
-    assigned: [],
-    commissionPct: a.commissionPct ?? 0,
-  };
-}
+import {
+  membershipsApi, invitesApi, rolesApi,
+  type Chatter, type Invite, type WorkspaceRole,
+} from '../../api/endpoints';
 
 export interface UseTeamDataResult {
   chatters: Chatter[];
+  pendingInvites: Invite[];
+  roles: WorkspaceRole[];
   isLoading: boolean;
   isError: boolean;
-  setCommission: (chatterId: string, commissionPct: number) => Promise<void>;
+  setCommission: (membershipId: string, commissionPct: number) => Promise<void>;
+  invite: (input: { email: string; role: string }) => Promise<void>;
 }
 
 export function useTeamData(): UseTeamDataResult {
-  const { isDemo, activeWorkspaceId } = useCurrentSession();
-  const demoChatters = useAppStore((s) => s.chatters);
-  const updateDemo = useAppStore((s) => s.updateState);
-  const qc = useQueryClient();
+  const { activeWorkspaceId } = useCurrentSession();
+  const queryClient = useQueryClient();
+  const enabled = Boolean(activeWorkspaceId);
 
-  const query = useQuery({
+  const chatters = useQuery({
     queryKey: ['team-chatters', activeWorkspaceId],
     queryFn: () => membershipsApi.listChatters(),
-    enabled: !isDemo && Boolean(activeWorkspaceId),
+    enabled,
+  });
+  const invites = useQuery({
+    queryKey: ['invites', activeWorkspaceId],
+    queryFn: () => invitesApi.list(),
+    enabled,
+  });
+  const roles = useQuery({
+    queryKey: ['roles', activeWorkspaceId],
+    queryFn: () => rolesApi.list(),
+    enabled,
+    staleTime: 5 * 60_000,
   });
 
-  const commissionMutation = useMutation({
-    mutationFn: (args: { membershipId: string; commissionPct: number }) =>
-      membershipsApi.setCommissionPct(args.membershipId, args.commissionPct),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['team-chatters', activeWorkspaceId] }),
+  const commission = useMutation({
+    mutationFn: ({ membershipId, commissionPct }: { membershipId: string; commissionPct: number }) =>
+      membershipsApi.setCommissionPct(membershipId, commissionPct),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['team-chatters', activeWorkspaceId] }),
   });
 
-  const live = useMemo(
-    () => (query.data ?? []).map(apiToLegacyChatter),
-    [query.data],
-  );
+  const invite = useMutation({
+    mutationFn: (input: { email: string; role: string }) => invitesApi.create(input),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['invites', activeWorkspaceId] }),
+  });
 
   return {
-    chatters: isDemo ? demoChatters : live,
-    isLoading: !isDemo && query.isLoading,
-    isError: !isDemo && query.isError,
-
-    setCommission: async (chatterId, commissionPct) => {
-      const clamped = Math.min(100, Math.max(0, commissionPct));
-      if (isDemo) {
-        const next = demoChatters.map((c) =>
-          c.id === chatterId ? { ...c, commissionPct: clamped } : c,
-        );
-        updateDemo({ chatters: next });
-        return;
-      }
-      await commissionMutation.mutateAsync({ membershipId: chatterId, commissionPct: clamped });
+    chatters: chatters.data ?? [],
+    pendingInvites: (invites.data ?? []).filter((i) => !i.acceptedAt),
+    roles: roles.data ?? [],
+    isLoading: chatters.isLoading,
+    isError: chatters.isError,
+    setCommission: async (membershipId, commissionPct) => {
+      await commission.mutateAsync({ membershipId, commissionPct });
+    },
+    invite: async (input) => {
+      await invite.mutateAsync(input);
     },
   };
 }

@@ -1,121 +1,90 @@
-import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useAppStore } from '../../store/appStore';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import { linksApi, type PaymentLink as ApiLink, type LinkStatus as ApiStatus } from '../../api/endpoints';
-import type { PaymentLink, LinkStatus } from '../../types';
-
-const API_TO_UI_STATUS: Record<ApiStatus, LinkStatus> = {
-  created: 'Created',
-  opened: 'Created',
-  paid: 'Paid',
-  failed: 'Failed',
-  expired: 'Expired',
-  refunded: 'Failed',
-};
-
-function apiToLegacyLink(l: ApiLink): PaymentLink {
-  return {
-    id: l.id,
-    creator: l.creator ?? '',
-    chatter: l.chatter ?? '',
-    customerName: l.customer ?? '',
-    customerUsername: '',
-    amount: l.amount ?? 0,
-    unit: l.currency ?? 'EUR',
-    status: API_TO_UI_STATUS[l.status] ?? 'Created',
-    ts: Date.parse(l.createdAt),
-  };
-}
+import {
+  linksApi, creatorsApi, customersApi, workspacesApi,
+  type PaymentLink, type Creator, type Customer, type LinkLimits, type CreatedLink,
+} from '../../api/endpoints';
 
 export interface CreateLinkFormInput {
-  creator: string;
-  chatter: string;
-  customerName: string;
-  customerUsername: string;
-  amount: number;
-  creatorId?: string;
+  creatorId: string;
   customerId?: string;
+  amount: number;
+}
+
+export interface ReconcileSummary {
+  checked: number;
+  updated: number;
 }
 
 export interface UseLinksDataResult {
   links: PaymentLink[];
+  creators: Creator[];
+  customers: Customer[];
+  linkLimits: LinkLimits | null;
   isLoading: boolean;
   isError: boolean;
-  create: (input: CreateLinkFormInput) => Promise<{ url?: string }>;
-  reconcile: () => Promise<void>;
+  createLink: (input: CreateLinkFormInput) => Promise<CreatedLink>;
+  reconcile: () => Promise<ReconcileSummary>;
 }
 
 export function useLinksData(): UseLinksDataResult {
-  const { isDemo, activeWorkspaceId, currency } = useCurrentSession();
-  const demoLinks = useAppStore((s) => s.links);
-  const updateDemo = useAppStore((s) => s.updateState);
-  const qc = useQueryClient();
+  const { activeWorkspaceId, currency } = useCurrentSession();
+  const queryClient = useQueryClient();
+  const enabled = Boolean(activeWorkspaceId);
 
-  const query = useQuery({
+  const links = useQuery({
     queryKey: ['links', activeWorkspaceId],
     queryFn: () => linksApi.list(),
-    enabled: !isDemo && Boolean(activeWorkspaceId),
+    enabled,
+  });
+  const creators = useQuery({
+    queryKey: ['creators', activeWorkspaceId],
+    queryFn: () => creatorsApi.list(),
+    enabled,
+  });
+  const customers = useQuery({
+    queryKey: ['customers', activeWorkspaceId],
+    queryFn: () => customersApi.list({ limit: 200 }),
+    enabled,
+  });
+  const linkLimits = useQuery({
+    queryKey: ['link-limits', activeWorkspaceId],
+    queryFn: () => workspacesApi.getLinkLimits(),
+    enabled,
+    staleTime: 5 * 60_000,
   });
 
-  const createMutation = useMutation({
-    mutationFn: async (input: CreateLinkFormInput) => {
-      if (!input.creatorId) {
-        throw new Error('creatorId is required in live mode');
-      }
-      return linksApi.create({
+  const create = useMutation({
+    mutationFn: (input: CreateLinkFormInput) =>
+      linksApi.create({
         creatorId: input.creatorId,
         customerId: input.customerId,
         pricingMode: 'fixed',
         amount: input.amount,
         currency,
-      });
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['links', activeWorkspaceId] });
-    },
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['links', activeWorkspaceId] }),
   });
 
-  const reconcileMutation = useMutation({
+  const reconcile = useMutation({
     mutationFn: () => linksApi.reconcile(),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['links', activeWorkspaceId] });
+      queryClient.invalidateQueries({ queryKey: ['links', activeWorkspaceId] });
+      queryClient.invalidateQueries({ queryKey: ['transactions', activeWorkspaceId] });
     },
   });
 
-  const liveLinks = useMemo(
-    () => (query.data ?? []).map(apiToLegacyLink),
-    [query.data],
-  );
-
   return {
-    links: isDemo ? demoLinks : liveLinks,
-    isLoading: !isDemo && query.isLoading,
-    isError: !isDemo && query.isError,
+    links: links.data ?? [],
+    creators: creators.data ?? [],
+    customers: customers.data ?? [],
+    linkLimits: linkLimits.data ?? null,
+    isLoading: links.isLoading,
+    isError: links.isError,
+    createLink: (input) => create.mutateAsync(input),
     reconcile: async () => {
-      if (isDemo) return;
-      await reconcileMutation.mutateAsync();
-    },
-    create: async (input) => {
-      if (isDemo) {
-        let user = input.customerUsername.trim();
-        if (user && !user.startsWith('@')) user = `@${user}`;
-        const newLink: PaymentLink = {
-          id: `pl${demoLinks.length + 1}`,
-          creator: input.creator,
-          chatter: input.chatter,
-          customerName: input.customerName.trim(),
-          customerUsername: user,
-          amount: input.amount,
-          unit: 'EUR',
-          status: 'Created',
-          ts: Date.now(),
-        };
-        updateDemo({ links: [newLink, ...demoLinks] });
-        return {};
-      }
-      const created = await createMutation.mutateAsync(input);
-      return { url: created.url };
+      const result = await reconcile.mutateAsync();
+      return { checked: result.checked, updated: result.updated.length };
     },
   };
 }

@@ -13,10 +13,7 @@ interface DateRangePickerProps {
 
 function formatLabel(v: string): string {
   const d = new Date(`${v}T00:00:00`);
-  const day = d.getDate();
-  const month = MONTHS_SHORT[d.getMonth()];
-  const year = d.getFullYear();
-  return `${day} ${month} ${year}`;
+  return `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}`;
 }
 
 /**
@@ -32,25 +29,13 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
     `Until ${formatLabel(value.to)}`;
 
   return (
-    <div style={{ position: 'relative' }}>
-      <button
-        type="button"
-        className="btn ghost"
-        onClick={() => setOpen((o) => !o)}
-        style={{ fontSize: '13.2px' }}
-      >
+    <div className="range-picker">
+      <button type="button" className="btn ghost" onClick={() => setOpen((o) => !o)}>
         {label}
       </button>
       {open ? (
-        <div
-          style={{
-            position: 'absolute', top: '100%', left: 0, zIndex: 10,
-            background: 'var(--panel)', border: '1px solid var(--line)',
-            borderRadius: 12, padding: 14,
-            display: 'flex', flexDirection: 'column', gap: 10, minWidth: 220,
-          }}
-        >
-          <div className="field">
+        <div className="rangepop open">
+          <div className="rp-row">
             <label>From</label>
             <input
               type="date"
@@ -58,7 +43,7 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
               onChange={(e) => onChange({ ...value, from: e.target.value })}
             />
           </div>
-          <div className="field">
+          <div className="rp-row">
             <label>To</label>
             <input
               type="date"
@@ -66,12 +51,8 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
               onChange={(e) => onChange({ ...value, to: e.target.value })}
             />
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button
-              type="button"
-              className="btn ghost"
-              onClick={() => onChange({ from: '', to: '' })}
-            >
+          <div className="rp-actions">
+            <button type="button" className="btn ghost" onClick={() => onChange({ from: '', to: '' })}>
               All time
             </button>
             <button type="button" className="btn" onClick={() => setOpen(false)}>Apply</button>

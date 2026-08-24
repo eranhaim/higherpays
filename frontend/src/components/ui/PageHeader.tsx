@@ -20,7 +20,7 @@ export function PageHeader({ title, subtitle, eyebrow, actions }: PageHeaderProp
         <h2>{title}</h2>
         {subtitle ? <p>{subtitle}</p> : null}
       </div>
-      {actions ? <div style={{ display: 'flex', gap: 8 }}>{actions}</div> : null}
+      {actions ? <div className="pagehead-actions">{actions}</div> : null}
     </div>
   );
 }

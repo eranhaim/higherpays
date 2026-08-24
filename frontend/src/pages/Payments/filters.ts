@@ -1,7 +1,7 @@
-import type { Transaction } from '../../types';
+import type { Transaction, TransactionStatus } from '../../api/endpoints';
 
 export interface PaymentsFilters {
-  status: '' | 'paid' | 'declined';
+  status: '' | TransactionStatus;
   from: string;
   to: string;
   search: string;
@@ -14,12 +14,13 @@ export function filterTransactions(rows: Transaction[], f: PaymentsFilters): Tra
   const fromTs = f.from ? new Date(`${f.from}T00:00:00`).getTime() : null;
   const toTs = f.to ? new Date(`${f.to}T23:59:59`).getTime() : null;
   return rows.filter((t) => {
-    if (f.status === 'paid' && !t.paid) return false;
-    if (f.status === 'declined' && t.paid) return false;
-    if (fromTs && t.ts < fromTs) return false;
-    if (toTs && t.ts > toTs) return false;
+    if (f.status && t.status !== f.status) return false;
+    const ts = Date.parse(t.occurredAt);
+    if (fromTs && ts < fromTs) return false;
+    if (toTs && ts > toTs) return false;
     if (q) {
-      const hay = `${t.referenceId}${t.clientName}${t.username}${t.creator}${t.chatter}${t.notes}`.toLowerCase();
+      const hay = [t.providerTransactionId, t.customer, t.creator, t.chatter]
+        .filter(Boolean).join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;

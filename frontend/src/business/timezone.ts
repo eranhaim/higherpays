@@ -1,4 +1,12 @@
-import type { TzParts } from '../types';
+/** Calendar fields of an instant, as seen in one IANA time zone. */
+export interface TzParts {
+  y: number;
+  mo: number;
+  d: number;
+  h: number;
+  mi: number;
+  s: number;
+}
 
 export const TZ_LIST = [
   'UTC','America/Los_Angeles','America/Denver','America/Chicago','America/New_York',

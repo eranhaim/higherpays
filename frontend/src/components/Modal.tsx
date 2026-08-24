@@ -23,7 +23,7 @@ export default function Modal({ open, onClose, children }: ModalProps) {
   return (
     <div
       ref={overlayRef}
-      className="overlay show"
+      className="overlay"
       onClick={e => { if (e.target === overlayRef.current) onClose(); }}
     >
       <div className="modal">

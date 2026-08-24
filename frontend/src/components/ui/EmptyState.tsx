@@ -12,10 +12,10 @@ interface EmptyStateProps {
  */
 export function EmptyState({ title, hint, action }: EmptyStateProps) {
   return (
-    <div style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>
-      <div style={{ fontSize: 15, marginBottom: 6, color: 'var(--text)' }}>{title}</div>
-      {hint ? <div style={{ fontSize: 13.5 }}>{hint}</div> : null}
-      {action ? <div style={{ marginTop: 14 }}>{action}</div> : null}
+    <div className="empty-state">
+      <div className="empty-title">{title}</div>
+      {hint ? <div className="empty-hint">{hint}</div> : null}
+      {action ? <div className="empty-action">{action}</div> : null}
     </div>
   );
 }

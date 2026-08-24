@@ -22,9 +22,8 @@ interface DataTableProps<T> {
 }
 
 /**
- * Thin, type-safe wrapper around the app's shared `.tablewrap > table` styles.
- * Handles loading, empty, and clickable-row cases so pages don't reimplement
- * them each time.
+ * Type-safe wrapper around the shared `.tablewrap > table` styles. Handles
+ * loading, empty, and clickable-row cases so pages don't reimplement them.
  */
 export function DataTable<T>(props: DataTableProps<T>) {
   const {
@@ -46,9 +45,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
           <tbody>
             {isLoading ? (
               <tr>
-                <td colSpan={columns.length} style={{ padding: 40, textAlign: 'center', color: 'var(--muted)' }}>
-                  Loading…
-                </td>
+                <td colSpan={columns.length} className="table-note">Loading…</td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
@@ -60,8 +57,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
               rows.map((row) => (
                 <tr
                   key={rowKey(row)}
-                  className="txrow"
-                  style={onRowClick ? { cursor: 'pointer' } : undefined}
+                  className={onRowClick ? 'clickable' : undefined}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
                 >
                   {columns.map((c) => (
@@ -73,9 +69,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
           </tbody>
         </table>
       </div>
-      {footer ? (
-        <div style={{ padding: '8px 12px', fontSize: '13.2px', color: 'var(--muted)' }}>{footer}</div>
-      ) : null}
+      {footer ? <div className="table-foot">{footer}</div> : null}
     </div>
   );
 }

@@ -1,8 +1,20 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
 
+/** Mirrors the `link_status` enum. `expired` is computed server-side from the link TTL. */
 export type LinkStatus = 'created' | 'opened' | 'paid' | 'failed' | 'expired' | 'refunded';
 export type PricingMode = 'fixed' | 'open';
+
+export const LINK_STATUSES: LinkStatus[] = ['created', 'opened', 'paid', 'failed', 'expired', 'refunded'];
+
+export const LINK_STATUS_LABELS: Record<LinkStatus, string> = {
+  created: 'Created',
+  opened: 'Opened',
+  paid: 'Paid',
+  failed: 'Failed',
+  expired: 'Expired',
+  refunded: 'Refunded',
+};
 
 export interface PaymentLink {
   id: string;

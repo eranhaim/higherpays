@@ -28,6 +28,7 @@ interface AuthState {
     workspaces: AuthWorkspace[];
   }) => void;
   setTokens: (accessToken: string, refreshToken: string) => void;
+  setUser: (user: AuthUser) => void;
   setWorkspaces: (workspaces: AuthWorkspace[]) => void;
   clear: () => void;
 }
@@ -45,6 +46,8 @@ export const useAuthStore = create<AuthState>()(
 
       setTokens: (accessToken, refreshToken) =>
         set({ accessToken, refreshToken }),
+
+      setUser: (user) => set({ user }),
 
       setWorkspaces: (workspaces) => set({ workspaces }),
 

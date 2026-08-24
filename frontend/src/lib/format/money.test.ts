@@ -2,18 +2,12 @@ import { describe, it, expect } from 'vitest';
 import { formatMoney, formatDecimal, formatPct, sum } from './money';
 
 describe('formatMoney', () => {
-  it('formats with the euro symbol by default', () => {
-    // Some locales use narrow spaces / different separators; assert on
-    // *substance*, not the exact glyph.
-    const s = formatMoney(1234.56);
-    expect(s).toContain('1');
-    expect(s).toContain('56');
-    expect(/€|EUR/.test(s)).toBe(true);
+  it('formats in a fixed locale regardless of the browser locale', () => {
+    expect(formatMoney(1234.56)).toBe('€1,234.56');
   });
 
   it('supports other ISO currencies', () => {
-    const s = formatMoney(10, 'USD');
-    expect(/\$|USD/.test(s)).toBe(true);
+    expect(formatMoney(10, 'USD')).toBe('$10.00');
   });
 
   it('falls back to a plain string when the currency code is nonsense', () => {

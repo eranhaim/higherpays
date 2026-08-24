@@ -1,318 +1,200 @@
-import { useState, useMemo } from 'react';
-import { useAppStore } from '../../store/appStore';
+import { useMemo, useState } from 'react';
 import { useCan } from '../../hooks/usePermission';
 import Modal from '../../components/Modal';
-import { toast } from '../../components/Toast';
-import { tzParts } from '../../business/timezone';
-import { PageHeader } from '../../components/ui';
-import type { Customer, CustomerSegment } from '../../types';
+import { toast } from '../../lib/toast';
+import {
+  PageHeader, Money, DateCell, DataTable, FilterBar, DetailRow, type Column,
+} from '../../components/ui';
+import {
+  CUSTOMER_SEGMENTS, CUSTOMER_SEGMENT_LABELS,
+  type Customer, type CustomerSegment,
+} from '../../api/endpoints';
 import { useCustomersData } from './useCustomersData';
 
-const fmt = (n: number) => {
-  try { return new Intl.NumberFormat(undefined, { style: 'currency', currency: 'EUR' }).format(n); }
-  catch { return 'EUR ' + n.toFixed(2); }
+type SortKey = 'spend' | 'recent';
+
+const SEGMENT_CLASS: Record<CustomerSegment, string> = {
+  new: 'seg',
+  regular: 'seg',
+  high_value: 'seg',
+  vip: 'seg vip',
+  inactive: 'seg inactive',
+  at_risk: 'seg risk',
 };
 
-const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-const segClass = (s: string) =>
-  s === 'VIP' ? 'seg vip' : s === 'At-risk' ? 'seg risk' : s === 'Inactive' ? 'seg inactive' : 'seg';
-
-const custAvg = (c: Customer) => c.purchases ? c.spend / c.purchases : 0;
-
-interface ColDef { k: string; label: string }
-
-const CUST_COLS: ColDef[] = [
-  { k: 'name', label: 'Customer' }, { k: 'username', label: 'Username' },
-  { k: 'creator', label: 'Creator' }, { k: 'chatter', label: 'Chatter' },
-  { k: 'spend', label: 'Total spend' }, { k: 'ltv', label: 'LTV' },
-  { k: 'purchases', label: '# Buys' }, { k: 'avg', label: 'Avg / sale' },
-  { k: 'last', label: 'Last purchase' }, { k: 'seg', label: 'Segment' },
-];
-
-const DEFAULT_COLS = new Set(['name', 'username', 'creator', 'chatter', 'spend', 'avg', 'last', 'seg']);
-const SEGMENTS: CustomerSegment[] = ['New', 'Regular', 'High value', 'VIP', 'Inactive', 'At-risk'];
+function SegmentTag({ segment }: { segment: CustomerSegment }) {
+  return <span className={SEGMENT_CLASS[segment]}>{CUSTOMER_SEGMENT_LABELS[segment]}</span>;
+}
 
 export default function CustomersPage() {
   const can = useCan();
-  const { customers, isLoading, isError } = useCustomersData();
-  const creators = useAppStore(s => s.creators);
-  const chatters = useAppStore(s => s.chatters);
-  const links = useAppStore(s => s.links);
-  const updateState = useAppStore(s => s.updateState);
-  const tzMode = useAppStore(s => s.tzMode);
-  const tzManual = useAppStore(s => s.tzManual);
+  const { customers, creators, isLoading, isError, createCustomer, exportCsv } = useCustomersData();
+  const creatorNameById = useMemo(() => new Map(creators.map((c) => [c.id, c.stageName])), [creators]);
 
-  const activeTZ = () => {
-    if (tzMode === 'manual' && tzManual) return tzManual;
-    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; }
-  };
-
-  const fmtDate = (ts: number) => {
-    const p = tzParts(ts, activeTZ());
-    const hh = String(p.h).padStart(2, '0'), mm = String(p.mi).padStart(2, '0');
-    return { date: `${p.d} ${MON[p.mo - 1]} ${p.y}`, time: `${hh}:${mm}` };
-  };
-
-  // Filters
-  const [seg, setSeg] = useState('');
+  const [segment, setSegment] = useState<'' | CustomerSegment>('');
+  const [creatorId, setCreatorId] = useState('');
   const [search, setSearch] = useState('');
-  const [crFilter, setCrFilter] = useState('');
-  const [chFilter, setChFilter] = useState('');
-  const [sort, setSort] = useState('spend');
+  const [sort, setSort] = useState<SortKey>('spend');
+  const [detail, setDetail] = useState<Customer | null>(null);
 
-  // Column chooser
-  const [cols, setCols] = useState(DEFAULT_COLS);
-  const [colModal, setColModal] = useState(false);
-  const [colPick, setColPick] = useState(DEFAULT_COLS);
+  const [addOpen, setAddOpen] = useState(false);
+  const [alias, setAlias] = useState('');
+  const [email, setEmail] = useState('');
+  const [newCreatorId, setNewCreatorId] = useState('');
+  const [newSegment, setNewSegment] = useState<CustomerSegment>('new');
+  const [isSaving, setIsSaving] = useState(false);
 
-  // Customer card
-  const [cardId, setCardId] = useState<string | null>(null);
-
-  // Add customer
-  const [addModal, setAddModal] = useState(false);
-  const [cuName, setCuName] = useState('');
-  const [cuUser, setCuUser] = useState('');
-  const [cuCreator, setCuCreator] = useState(creators[0]?.name || '');
-  const [cuChatter, setCuChatter] = useState(chatters[0]?.name || '');
-  const [cuSeg, setCuSeg] = useState<CustomerSegment>('New');
-  const [cuError, setCuError] = useState(false);
-
-  // Filtered list
   const filtered = useMemo(() => {
-    let list = customers.filter(c => {
-      if (seg && c.seg !== seg) return false;
-      if (crFilter && c.creator !== crFilter) return false;
-      if (chFilter && c.chatter !== chFilter) return false;
-      if (search) {
-        const q = search.toLowerCase();
-        if (!(c.name + c.username + (c.email || '')).toLowerCase().includes(q)) return false;
-      }
+    const q = search.trim().toLowerCase();
+    const rows = customers.filter((c) => {
+      if (segment && c.segment !== segment) return false;
+      if (creatorId && c.creatorId !== creatorId) return false;
+      if (q && !`${c.alias} ${c.email ?? ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
-    const keyFn: Record<string, (c: Customer) => number> = {
-      spend: c => c.spend, ltv: c => c.spend, avg: custAvg, last: c => c.last,
-    };
-    const fn = keyFn[sort] || (c => c.spend);
-    return [...list].sort((a, b) => fn(b) - fn(a));
-  }, [customers, seg, crFilter, chFilter, search, sort]);
+    const key = (c: Customer) => sort === 'spend' ? c.totalSpend : (c.lastPurchaseAt ? Date.parse(c.lastPurchaseAt) : 0);
+    return rows.sort((a, b) => key(b) - key(a));
+  }, [customers, segment, creatorId, search, sort]);
 
-  const visibleCols = CUST_COLS.filter(c => cols.has(c.k));
+  const clearFilters = () => { setSegment(''); setCreatorId(''); setSearch(''); setSort('spend'); };
 
-  const cellContent = (c: Customer, k: string) => {
-    switch (k) {
-      case 'name': return <span className="cname">{c.name}</span>;
-      case 'username': return <span className="cemail">{c.username}</span>;
-      case 'spend': case 'ltv': return <span className="amt">{fmt(c.spend)}</span>;
-      case 'avg': return fmt(custAvg(c));
-      case 'purchases': return c.purchases;
-      case 'last': { const d = fmtDate(c.last); return <span className="time">{d.date}<br /><span style={{ color: '#4d5a72' }}>{d.time}</span></span>; }
-      case 'seg': return <span className={segClass(c.seg)}>{c.seg}</span>;
-      default: return (c as unknown as Record<string, string>)[k] || '';
+  const closeAdd = () => {
+    setAddOpen(false);
+    setAlias(''); setEmail(''); setNewCreatorId(''); setNewSegment('new');
+  };
+
+  const submitAdd = async () => {
+    if (!alias.trim()) { toast('Name is required.'); return; }
+    setIsSaving(true);
+    try {
+      await createCustomer({
+        alias: alias.trim(),
+        email: email.trim() || undefined,
+        creatorId: newCreatorId || undefined,
+        segment: newSegment,
+      });
+      closeAdd();
+      toast('Customer added.');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not add the customer.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const clearFilters = () => { setSeg(''); setSearch(''); setCrFilter(''); setChFilter(''); setSort('spend'); };
-
-  const addCustomer = () => {
-    if (!cuName.trim()) { setCuError(true); return; }
-    let u = cuUser.trim();
-    if (u && !u.startsWith('@')) u = '@' + u;
-    const newCust: Customer = {
-      id: 'cu' + (customers.length + 1),
-      name: cuName.trim(), username: u, email: '',
-      creator: cuCreator, chatter: cuChatter,
-      spend: 0, purchases: 0, last: Date.now(), seg: cuSeg,
-    };
-    updateState({ customers: [...customers, newCust] });
-    setAddModal(false);
-    setCuName(''); setCuUser(''); setCuError(false);
-    toast('Customer added.');
+  const runExport = async () => {
+    try {
+      await exportCsv();
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Export failed.');
+    }
   };
 
-  const applyColumns = () => {
-    if (colPick.size === 0) { toast('Pick at least one column.'); return; }
-    setCols(new Set(colPick));
-    setColModal(false);
-  };
-
-  // Customer card data
-  const cardCustomer = cardId ? customers.find(c => c.id === cardId) : null;
-  const cardLinks = cardCustomer ? links.filter(l => l.customerUsername === cardCustomer.username) : [];
+  const columns: Column<Customer>[] = [
+    {
+      key: 'customer', header: 'Customer',
+      render: (c) => (
+        <>
+          <div className="cname">{c.alias}</div>
+          {c.email && <div className="cemail">{c.email}</div>}
+        </>
+      ),
+    },
+    { key: 'creator', header: 'Creator', render: (c) => (c.creatorId && creatorNameById.get(c.creatorId)) ?? '—' },
+    { key: 'spend', header: 'Total spend', align: 'right', render: (c) => <Money amount={c.totalSpend} direction="in" /> },
+    { key: 'last', header: 'Last purchase', render: (c) => <DateCell ts={c.lastPurchaseAt} /> },
+    { key: 'segment', header: 'Segment', render: (c) => <SegmentTag segment={c.segment} /> },
+  ];
 
   return (
     <div>
       <PageHeader
         eyebrow="People"
         title="Customers"
-        subtitle="Everyone who paid, with what they spent and who they belong to."
+        subtitle="Everyone who paid, what they spent, and which creator they belong to."
         actions={
           <>
-            {can('customers.export') && (
-              <button className="btn ghost" onClick={() => toast('Export coming soon.')}>Export</button>
-            )}
-            {can('customers.manage') && (
-              <button className="btn" onClick={() => setAddModal(true)}>Add customer</button>
-            )}
+            {can('customers.export') && <button className="btn ghost" onClick={runExport}>Export CSV</button>}
+            {can('customers.manage') && <button className="btn" onClick={() => setAddOpen(true)}>Add customer</button>}
           </>
         }
       />
 
-      {/* Filters */}
-      <div className="filters">
-        <select value={seg} onChange={e => setSeg(e.target.value)}>
+      <FilterBar>
+        <select value={segment} onChange={(e) => setSegment(e.target.value as '' | CustomerSegment)}>
           <option value="">All segments</option>
-          {SEGMENTS.map(s => <option key={s}>{s}</option>)}
+          {CUSTOMER_SEGMENTS.map((s) => <option key={s} value={s}>{CUSTOMER_SEGMENT_LABELS[s]}</option>)}
         </select>
-        <select value={crFilter} onChange={e => setCrFilter(e.target.value)}>
+        <select value={creatorId} onChange={(e) => setCreatorId(e.target.value)}>
           <option value="">All creators</option>
-          {[...new Set(creators.map(c => c.name))].map(n => <option key={n}>{n}</option>)}
+          {creators.map((c) => <option key={c.id} value={c.id}>{c.stageName}</option>)}
         </select>
-        <select value={chFilter} onChange={e => setChFilter(e.target.value)}>
-          <option value="">All chatters</option>
-          {[...new Set(chatters.map(c => c.name))].map(n => <option key={n}>{n}</option>)}
+        <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
+          <option value="spend">Highest spend first</option>
+          <option value="recent">Most recent first</option>
         </select>
-        <select value={sort} onChange={e => setSort(e.target.value)}>
-          <option value="spend">Sort by spend</option>
-          <option value="avg">Sort by avg</option>
-          <option value="last">Sort by recent</option>
-        </select>
-        <input type="text" placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} style={{ maxWidth: 200 }} />
+        <input
+          type="search" className="search-input" placeholder="Search name or email" value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
         <button className="btn ghost" onClick={clearFilters}>Clear</button>
-        <button className="btn ghost" onClick={() => { setColPick(new Set(cols)); setColModal(true); }}>Columns</button>
-      </div>
+      </FilterBar>
 
-      {/* Table */}
-      <div className="card">
-        <div className="tablewrap">
-          <table>
-            <thead>
-              <tr>{visibleCols.map(c => <th key={c.k}>{c.label}</th>)}</tr>
-            </thead>
-            <tbody>
-              {isLoading ? (
-                <tr>
-                  <td colSpan={visibleCols.length} style={{ padding: 36, textAlign: 'center', color: 'var(--muted)' }}>
-                    Loading customers…
-                  </td>
-                </tr>
-              ) : isError ? (
-                <tr>
-                  <td colSpan={visibleCols.length} style={{ padding: 36, textAlign: 'center', color: 'var(--neg)' }}>
-                    Couldn't load customers. Try again in a moment.
-                  </td>
-                </tr>
-              ) : filtered.length > 0 ? filtered.map(c => (
-                <tr key={c.id} style={{ cursor: 'pointer' }} onClick={() => setCardId(c.id)}>
-                  {visibleCols.map(col => <td key={col.k}>{cellContent(c, col.k)}</td>)}
-                </tr>
-              )) : (
-                <tr>
-                  <td colSpan={visibleCols.length} style={{ padding: 36, textAlign: 'center', color: 'var(--muted)' }}>
-                    No customers match these filters.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        <div style={{ padding: '8px 12px', fontSize: '13.2px', color: 'var(--muted)' }}>Showing {filtered.length}</div>
-      </div>
+      <DataTable
+        columns={columns}
+        rows={filtered}
+        rowKey={(c) => c.id}
+        onRowClick={setDetail}
+        isLoading={isLoading}
+        emptyTitle={isError ? "Couldn't load customers." : 'No customers match these filters.'}
+        emptyHint={isError ? 'Try again in a moment.' : 'Customers appear here once a link is paid, or add one by hand.'}
+        footer={`Showing ${filtered.length} of ${customers.length}`}
+      />
 
-      {/* Customer card modal */}
-      <Modal open={!!cardCustomer} onClose={() => setCardId(null)}>
-        {cardCustomer && (
+      <Modal open={!!detail} onClose={() => setDetail(null)}>
+        {detail && (
           <>
-            <h3>{cardCustomer.username}</h3>
-            <p className="sub">{cardCustomer.name} &middot; {cardCustomer.email || 'no email'}</p>
-            <div className="deep">
-              <div className="dcell"><div className="dl">Total spend / LTV</div><div className="dv">{fmt(cardCustomer.spend)}</div></div>
-              <div className="dcell"><div className="dl">Purchases</div><div className="dv">{cardCustomer.purchases}</div></div>
-              <div className="dcell"><div className="dl">Avg / sale</div><div className="dv">{fmt(custAvg(cardCustomer))}</div></div>
-              <div className="dcell"><div className="dl">Segment</div><div className="dv" style={{ fontSize: '15.4px' }}><span className={segClass(cardCustomer.seg)}>{cardCustomer.seg}</span></div></div>
-            </div>
-            <div className="setrow"><div className="k">Creator</div><span className="mono-val">{cardCustomer.creator}</span></div>
-            <div className="setrow"><div className="k">Chatter</div><span className="mono-val">{cardCustomer.chatter}</span></div>
-            <div className="setrow"><div className="k">Last purchase</div><span className="mono-val">{new Date(cardCustomer.last).toLocaleString()}</span></div>
-            <div className="sechead">Recent links ({cardLinks.length})</div>
-            <div style={{ maxHeight: 120, overflow: 'auto', fontSize: '14.3px' }}>
-              {cardLinks.slice(0, 6).map(l => (
-                <div className="ws-row" key={l.id}>
-                  <span>{l.creator} &middot; {fmt(l.amount)}</span>
-                  <span className={`pill ${l.status === 'Paid' ? 'ok' : 'no'}`}>{l.status}</span>
-                </div>
-              ))}
-              {cardLinks.length === 0 && <span style={{ color: 'var(--muted)' }}>No links.</span>}
-            </div>
+            <h3>{detail.alias}</h3>
+            <p className="sub">{detail.email ?? 'No email on record'}</p>
+            <DetailRow label="Creator">{(detail.creatorId && creatorNameById.get(detail.creatorId)) ?? '—'}</DetailRow>
+            <DetailRow label="Segment"><SegmentTag segment={detail.segment} /></DetailRow>
+            <DetailRow label="Total spend"><Money amount={detail.totalSpend} direction="in" emphasis /></DetailRow>
+            <DetailRow label="Last purchase"><DateCell ts={detail.lastPurchaseAt} /></DetailRow>
+            <DetailRow label="Customer since"><DateCell ts={detail.createdAt} /></DetailRow>
             <div className="modal-actions">
-              <button className="btn ghost" onClick={() => setCardId(null)}>Close</button>
+              <button className="btn" onClick={() => setDetail(null)}>Close</button>
             </div>
           </>
         )}
       </Modal>
 
-      {/* Column chooser modal */}
-      <Modal open={colModal} onClose={() => setColModal(false)}>
-        <h3>Choose columns</h3>
-        <p className="sub">Pick what shows in the customers table.</p>
-        <div style={{ maxHeight: 260, overflow: 'auto' }}>
-          {CUST_COLS.map(c => (
-            <label key={c.k} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 0', fontSize: '15.4px' }}>
-              <input type="checkbox" checked={colPick.has(c.k)}
-                onChange={e => {
-                  setColPick(prev => {
-                    const next = new Set(prev);
-                    e.target.checked ? next.add(c.k) : next.delete(c.k);
-                    return next;
-                  });
-                }}
-                style={{ minWidth: 'auto', width: 'auto' }} />
-              {c.label}
-            </label>
-          ))}
-        </div>
-        <div className="modal-actions">
-          <button className="btn ghost" onClick={() => setColModal(false)}>Cancel</button>
-          <button className="btn" onClick={applyColumns}>Apply</button>
-        </div>
-      </Modal>
-
-      {/* Add customer modal */}
-      <Modal open={addModal} onClose={() => setAddModal(false)}>
+      <Modal open={addOpen} onClose={closeAdd}>
         <h3>Add customer</h3>
-        <p className="sub">Fan CRM record. Keep only data you have a lawful basis to hold.</p>
+        <p className="sub">Keep only data you have a lawful basis to hold.</p>
         <div className="field">
-          <label>Name</label>
-          <input type="text" placeholder="Display name" value={cuName}
-            onChange={e => { setCuName(e.target.value); setCuError(false); }}
-            style={cuError ? { borderColor: 'var(--red)' } : undefined} />
+          <label htmlFor="customer-alias">Name or username</label>
+          <input id="customer-alias" type="text" value={alias} onChange={(e) => setAlias(e.target.value)} autoFocus />
         </div>
         <div className="field">
-          <label>Username</label>
-          <input type="text" placeholder="@username" value={cuUser}
-            onChange={e => setCuUser(e.target.value)} />
+          <label htmlFor="customer-email">Email</label>
+          <input id="customer-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </div>
         <div className="field">
-          <label>Creator</label>
-          <select value={cuCreator} onChange={e => setCuCreator(e.target.value)}>
-            {creators.map(c => <option key={c.id}>{c.name}</option>)}
+          <label htmlFor="customer-creator">Creator</label>
+          <select id="customer-creator" value={newCreatorId} onChange={(e) => setNewCreatorId(e.target.value)}>
+            <option value="">Not assigned</option>
+            {creators.map((c) => <option key={c.id} value={c.id}>{c.stageName}</option>)}
           </select>
         </div>
         <div className="field">
-          <label>Chatter</label>
-          <select value={cuChatter} onChange={e => setCuChatter(e.target.value)}>
-            {chatters.map(c => <option key={c.id}>{c.name}</option>)}
-          </select>
-        </div>
-        <div className="field">
-          <label>Segment</label>
-          <select value={cuSeg} onChange={e => setCuSeg(e.target.value as CustomerSegment)}>
-            {SEGMENTS.map(s => <option key={s}>{s}</option>)}
+          <label htmlFor="customer-segment">Segment</label>
+          <select id="customer-segment" value={newSegment} onChange={(e) => setNewSegment(e.target.value as CustomerSegment)}>
+            {CUSTOMER_SEGMENTS.map((s) => <option key={s} value={s}>{CUSTOMER_SEGMENT_LABELS[s]}</option>)}
           </select>
         </div>
         <div className="modal-actions">
-          <button className="btn ghost" onClick={() => setAddModal(false)}>Cancel</button>
-          <button className="btn" onClick={addCustomer}>Add customer</button>
+          <button className="btn ghost" onClick={closeAdd}>Cancel</button>
+          <button className="btn" onClick={submitAdd} disabled={isSaving}>{isSaving ? 'Adding…' : 'Add customer'}</button>
         </div>
       </Modal>
     </div>

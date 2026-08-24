@@ -3,7 +3,18 @@ import { workspacePath } from '../workspacePath';
 
 export type CustomerSegment = 'new' | 'regular' | 'high_value' | 'vip' | 'inactive' | 'at_risk';
 
-export interface CustomerListItem {
+export const CUSTOMER_SEGMENTS: CustomerSegment[] = ['new', 'regular', 'high_value', 'vip', 'inactive', 'at_risk'];
+
+export const CUSTOMER_SEGMENT_LABELS: Record<CustomerSegment, string> = {
+  new: 'New',
+  regular: 'Regular',
+  high_value: 'High value',
+  vip: 'VIP',
+  inactive: 'Inactive',
+  at_risk: 'At risk',
+};
+
+export interface Customer {
   id: string;
   alias: string;
   email: string | null;
@@ -20,19 +31,24 @@ interface RawCustomer {
   email: string | null;
   creator_id: string | null;
   segment: CustomerSegment;
-  total_spend: number | string;
+  total_spend: number | string | null;
   last_purchase_at: string | null;
   created_at: string;
 }
 
-function normalize(c: RawCustomer): CustomerListItem {
+function toNumber(v: unknown): number {
+  const n = typeof v === 'string' ? parseFloat(v) : (v as number);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function normalize(c: RawCustomer): Customer {
   return {
     id: c.id,
     alias: c.alias,
     email: c.email,
     creatorId: c.creator_id,
     segment: c.segment,
-    totalSpend: typeof c.total_spend === 'string' ? parseFloat(c.total_spend) : c.total_spend,
+    totalSpend: toNumber(c.total_spend),
     lastPurchaseAt: c.last_purchase_at,
     createdAt: c.created_at,
   };
@@ -46,8 +62,15 @@ export interface ListCustomersQuery {
   offset?: number;
 }
 
+export interface CreateCustomerInput {
+  alias: string;
+  email?: string;
+  creatorId?: string;
+  segment?: CustomerSegment;
+}
+
 export const customersApi = {
-  async list(query: ListCustomersQuery = {}): Promise<{ customers: CustomerListItem[]; limit: number; offset: number }> {
+  async list(query: ListCustomersQuery = {}): Promise<Customer[]> {
     const qs = new URLSearchParams();
     if (query.segment) qs.set('segment', query.segment);
     if (query.q) qs.set('q', query.q);
@@ -55,14 +78,16 @@ export const customersApi = {
     if (query.limit != null) qs.set('limit', String(query.limit));
     if (query.offset != null) qs.set('offset', String(query.offset));
     const suffix = qs.toString() ? `/customers?${qs.toString()}` : '/customers';
+    const raw = await api.get<{ customers: RawCustomer[] }>(workspacePath(suffix));
+    return raw.customers.map(normalize);
+  },
 
-    const raw = await api.get<{ customers: RawCustomer[]; limit: number; offset: number }>(
-      workspacePath(suffix),
-    );
-    return {
-      customers: raw.customers.map(normalize),
-      limit: raw.limit,
-      offset: raw.offset,
-    };
+  async create(input: CreateCustomerInput): Promise<Customer> {
+    const raw = await api.post<RawCustomer>(workspacePath('/customers'), input);
+    return normalize(raw);
+  },
+
+  exportCsv() {
+    return api.download(workspacePath('/customers/export'), 'customers.csv');
   },
 };

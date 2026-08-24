@@ -4,13 +4,8 @@ interface StatCardProps {
   label: string;
   value: ReactNode;
   sub?: ReactNode;
-  /**
-   * @deprecated Prefer `<Money direction="in" | "out" />` in `value`.
-   * Left in for pages we haven't migrated yet.
-   */
-  color?: string;
-  /** Marks the sub-line as a positive delta ("up 12%"). */
-  up?: boolean;
+  /** Colours the sub-line as a positive ("up") or negative ("down") change. */
+  trend?: 'up' | 'down';
 }
 
 /**
@@ -18,12 +13,12 @@ interface StatCardProps {
  * shared `.stats` container so a row of stats reads as a single band, the
  * way a ledger prints headline totals.
  */
-export function StatCard({ label, value, sub, color, up }: StatCardProps) {
+export function StatCard({ label, value, sub, trend }: StatCardProps) {
   return (
     <div className="stat">
       <div className="lbl">{label}</div>
-      <div className="val" style={color ? { color } : undefined}>{value}</div>
-      {sub ? <div className={`sub${up ? ' up' : ''}`}>{sub}</div> : null}
+      <div className="val">{value}</div>
+      {sub ? <div className={`sub${trend ? ` ${trend}` : ''}`}>{sub}</div> : null}
     </div>
   );
 }

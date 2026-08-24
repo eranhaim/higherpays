@@ -37,41 +37,59 @@ interface HttpOptions {
   skipWorkspace?: boolean;
 }
 
-/** Low-level request. Prefer the `api` helper below. */
-async function request<T>(path: string, opts: HttpOptions = {}): Promise<T> {
+function sessionHeaders(opts: HttpOptions): Record<string, string> {
   const auth = useAuthStore.getState();
   const workspaceId = useSessionStore.getState().activeWorkspaceId;
-
   const headers: Record<string, string> = { ...(opts.headers ?? {}) };
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (auth.accessToken) headers['Authorization'] = `Bearer ${auth.accessToken}`;
   if (workspaceId && !opts.skipWorkspace) headers['X-Workspace-Id'] = workspaceId;
+  return headers;
+}
 
+async function send(path: string, opts: HttpOptions): Promise<Response> {
   const res = await fetch(`${API_URL}${path}`, {
     method: opts.method ?? 'GET',
-    headers,
+    headers: sessionHeaders(opts),
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     signal: opts.signal,
     credentials: 'include',
   });
+  if (res.status === 401 && !opts.skipRefresh && useAuthStore.getState().refreshToken) {
+    const refreshed = await tryRefresh();
+    if (refreshed) return send(path, { ...opts, skipRefresh: true });
+  }
+  return res;
+}
 
-  // Try to parse JSON regardless; empty bodies become {}.
+async function errorFrom(res: Response): Promise<HttpError> {
   const raw = await res.text();
   const parsed: unknown = raw ? safeJson(raw) : {};
+  const message =
+    (isObject(parsed) && typeof parsed.error === 'string' && parsed.error) ||
+    `HTTP ${res.status}`;
+  return new HttpError(res.status, message, parsed);
+}
 
-  if (res.status === 401 && !opts.skipRefresh && auth.refreshToken) {
-    const refreshed = await tryRefresh();
-    if (refreshed) return request<T>(path, { ...opts, skipRefresh: true });
-  }
+/** Low-level JSON request. Prefer the `api` helper below. */
+async function request<T>(path: string, opts: HttpOptions = {}): Promise<T> {
+  const res = await send(path, opts);
+  if (!res.ok) throw await errorFrom(res);
+  // Empty bodies (204) become {}.
+  const raw = await res.text();
+  return (raw ? safeJson(raw) : {}) as T;
+}
 
-  if (!res.ok) {
-    const message =
-      (isObject(parsed) && typeof parsed.error === 'string' && parsed.error) ||
-      `HTTP ${res.status}`;
-    throw new HttpError(res.status, message, parsed);
-  }
-
-  return parsed as T;
+/** Fetches a file with the session headers and hands it to the browser as a download. */
+async function download(path: string, filename: string): Promise<void> {
+  const res = await send(path, {});
+  if (!res.ok) throw await errorFrom(res);
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function safeJson(s: string): unknown {
@@ -123,4 +141,5 @@ export const api = {
     request<T>(path, { ...opts, method: 'PATCH', body }),
   del: <T>(path: string, opts?: HttpOptions) =>
     request<T>(path, { ...opts, method: 'DELETE' }),
+  download,
 };

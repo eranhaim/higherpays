@@ -1,33 +1,25 @@
+import { useQuery } from '@tanstack/react-query';
+import { workspacesApi } from '../api/endpoints';
+import { SYSTEM_ROLE_PERMISSIONS, type Permission } from '../rbac/permissions';
 import { useCurrentSession } from './useCurrentSession';
-import { ROLE_PERMISSIONS } from '../rbac/permissions';
-import { useAppStore } from '../store/appStore';
-import type { Permission, Role } from '../types';
 
 /**
- * Returns `can(permission)` for the CURRENT session — live or demo.
+ * Returns `can(permission)` for the current membership.
  *
- * In live mode the role comes from the user's membership on the active
- * workspace; in demo mode it comes from the demo store (so the sidebar's
- * "Preview as role" switcher still works). Either way, permissions are
- * resolved from the same built-in matrix as the backend.
- *
- * Fixes the class of bug where the sidebar showed a signed-in chatter every
- * tab because `useCan` was reading demo state (`appStore.role`) instead of
- * the live membership.
+ * Permissions come from the workspace's role definitions (`/permissions`),
+ * which is what the backend enforces. Until that request resolves, the
+ * built-in matrix stands in so the sidebar does not flash empty.
  */
 export function useCan(): (perm: Permission) => boolean {
-  const { role } = useCurrentSession();
-  const perms = ROLE_PERMISSIONS[role as Role] ?? [];
-  return (perm: Permission) => perms.includes(perm);
-}
+  const { role, activeWorkspaceId } = useCurrentSession();
 
-/**
- * The active workspace as recorded in the demo store — kept for pages that
- * still read from the demo dataset (Analytics, Goals, Compare, Settings).
- * Once those pages are wired to live data, prefer `useCurrentSession()`.
- */
-export function useActiveWorkspace() {
-  const workspaces = useAppStore((s) => s.workspaces);
-  const activeWsId = useAppStore((s) => s.activeWsId);
-  return workspaces.find((w) => w.id === activeWsId) || workspaces[0];
+  const query = useQuery({
+    queryKey: ['permissions', activeWorkspaceId],
+    queryFn: () => workspacesApi.getPermissions(),
+    enabled: Boolean(activeWorkspaceId),
+    staleTime: 5 * 60_000,
+  });
+
+  const perms: readonly string[] = query.data?.permissions ?? SYSTEM_ROLE_PERMISSIONS[role] ?? [];
+  return (perm) => perms.includes(perm);
 }

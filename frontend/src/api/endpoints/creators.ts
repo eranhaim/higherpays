@@ -1,8 +1,27 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
 
-export type CreatorStatus = 'active' | 'paused' | 'suspended';
+/** Mirrors the `creator_status` enum. New creators start as `onboarding`. */
+export type CreatorStatus = 'onboarding' | 'active' | 'paused' | 'archived';
 export type RevenueModel = 'revshare' | 'salary' | 'ai';
+
+export const CREATOR_STATUS_LABELS: Record<CreatorStatus, string> = {
+  onboarding: 'Onboarding',
+  active: 'Active',
+  paused: 'Paused',
+  archived: 'Archived',
+};
+
+/** Creators that can still take new payment links. */
+export function canTakeLinks(status: CreatorStatus): boolean {
+  return status === 'active' || status === 'onboarding';
+}
+
+export const REVENUE_MODEL_LABELS: Record<RevenueModel, string> = {
+  revshare: 'Rev-share',
+  salary: 'Salary',
+  ai: 'AI',
+};
 
 export interface Creator {
   id: string;
@@ -14,10 +33,7 @@ export interface Creator {
   revenueModel: RevenueModel;
   salary: number | null;
   salaryIncreasePct: number | null;
-  brand: string | null;
   createdAt: string;
-  complianceStatus: string | null;
-  ageVerified: boolean | null;
   chattersAssigned: number;
 }
 
@@ -31,11 +47,8 @@ interface RawCreator {
   revenue_model: RevenueModel;
   salary: number | string | null;
   salary_increase_pct: number | string | null;
-  brand: string | null;
   created_at: string;
-  compliance_status: string | null;
-  age_verified: boolean | null;
-  chatters_assigned: number | string;
+  chatters_assigned?: number | string;
 }
 
 function toNumber(v: unknown): number {
@@ -60,10 +73,7 @@ function normalize(c: RawCreator): Creator {
     revenueModel: c.revenue_model,
     salary: toNullableNumber(c.salary),
     salaryIncreasePct: toNullableNumber(c.salary_increase_pct),
-    brand: c.brand,
     createdAt: c.created_at,
-    complianceStatus: c.compliance_status,
-    ageVerified: c.age_verified,
     chattersAssigned: toNumber(c.chatters_assigned),
   };
 }
@@ -73,10 +83,16 @@ export interface CreateCreatorInput {
   handle?: string;
   country?: string;
   revenueSplitPct?: number;
-  brand?: string;
   revenueModel?: RevenueModel;
   salary?: number;
   salaryIncreasePct?: number;
+}
+
+export interface UpdateCreatorInput {
+  stageName?: string;
+  handle?: string;
+  status?: CreatorStatus;
+  revenueSplitPct?: number;
 }
 
 export const creatorsApi = {
@@ -90,8 +106,12 @@ export const creatorsApi = {
     return normalize(raw);
   },
 
-  async update(id: string, input: Partial<CreateCreatorInput> & { status?: CreatorStatus }) {
+  async update(id: string, input: UpdateCreatorInput): Promise<Creator> {
     const raw = await api.patch<RawCreator>(workspacePath(`/creators/${id}`), input);
     return normalize(raw);
+  },
+
+  assignChatter(creatorId: string, membershipId: string) {
+    return api.post<{ ok: true }>(workspacePath(`/creators/${creatorId}/assignments`), { membershipId });
   },
 };

@@ -9,11 +9,15 @@
 
 const DEFAULT_CURRENCY = 'EUR';
 
+// Fixed locale: the browser's own locale can insert bidi marks (e.g. Hebrew),
+// which reorder "€0.00 · 12%" in the ledger. Money must read the same for everyone.
+const MONEY_LOCALE = 'en';
+
 /** Formats a number as currency. Never throws — falls back to a plain string. */
 export function formatMoney(amount: number, currency: string = DEFAULT_CURRENCY): string {
   const safe = Number.isFinite(amount) ? amount : 0;
   try {
-    return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(safe);
+    return new Intl.NumberFormat(MONEY_LOCALE, { style: 'currency', currency }).format(safe);
   } catch {
     return `${currency} ${safe.toFixed(2)}`;
   }

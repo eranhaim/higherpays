@@ -4,14 +4,9 @@
  * Voice: a modern general ledger. Paper and ink for structure, monospaced
  * numerals with directional colour for money. The one bold move is that
  * every money value in the app is set in mono; everything else is quiet.
- *
- * Legacy variable names (--ink, --panel, --line, --text, --mint, --red,
- * --amber, --brand, --muted) are kept as aliases so pages we haven't
- * touched yet still resolve their colours. New pages should read from
- * the semantic tokens below (--paper, --surface, --rule, --pos, --neg…).
  */
 :root {
-  /* ── Semantic (preferred) ─────────────────────────────────────────── */
+  /* ── Surfaces and text ───────────────────────────────────────────── */
   --paper:      #F7F5F0;   /* app background — warm off-white           */
   --surface:    #FFFFFF;   /* cards, tables, popovers                   */
   --surface-2:  #EFEBE1;   /* subtly recessed panels                    */
@@ -21,14 +16,14 @@
   --rule:       #DCD5C4;   /* hairline dividers                         */
   --rule-soft:  #EAE4D5;   /* even quieter dividers                     */
 
-  /* Money direction. Never used for anything but numbers. */
+  /* Money direction. Never used for anything but numbers and their status. */
   --pos:        #0B5D3B;   /* money in / approved / paid                */
-  --pos-soft:   #E4EEE4;   /* positive backgrounds                      */
+  --pos-soft:   #E4EEE4;
   --neg:        #8B2E2E;   /* money out / refund / declined             */
-  --neg-soft:   #F3E3DF;   /* negative backgrounds                      */
+  --neg-soft:   #F3E3DF;
 
-  /* One attention colour, spent on brand + destination-of-eye moments. */
-  --accent:     #B8862A;   /* ochre — hover, focus, key stat            */
+  /* One attention colour, spent on focus and key moments. */
+  --accent:     #B8862A;   /* ochre                                     */
   --accent-soft:#F1E7D0;
 
   /* Info tone — used sparingly on informational pills. */
@@ -43,18 +38,5 @@
   /* ── Shape ───────────────────────────────────────────────────────── */
   --radius:     6px;    /* interactive elements                         */
   --radius-lg:  10px;   /* cards, modals                                */
-
-  /* ── Legacy aliases (dark-theme names → new palette) ──────────────── */
-  /* Kept so pages we haven't touched yet still render. Migrate onto the
-     semantic tokens above when each page is redesigned. */
-  --panel:    var(--surface);
-  --panel-2:  var(--surface-2);
-  --line:     var(--rule);
-  --text:     var(--ink);
-  --mint:     var(--pos);
-  --mint-dim: var(--pos-soft);
-  --red:      var(--neg);
-  --red-dim:  var(--neg-soft);
-  --amber:    var(--accent);
-  --brand:    var(--pos);       /* the "brand" is money in              */
+  --shadow-pop: 0 18px 40px -12px rgba(15, 14, 12, 0.22);
 }

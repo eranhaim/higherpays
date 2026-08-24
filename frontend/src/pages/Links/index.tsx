@@ -1,123 +1,114 @@
-/**
- * Payment Links page.
- *
- * Thin view over `useLinksData` (demo or live) and the shared UI kit. The
- * create-link modal shows the fee split up-front so chatters see what the
- * customer will actually pay.
- */
-
 import { useMemo, useState } from 'react';
 import { useCan } from '../../hooks/usePermission';
 import { useRateCard } from '../../hooks/useRateCard';
-import { useAppStore } from '../../store/appStore';
 import { feeBreakdown } from '../../business/feeBreakdown';
-import { formatMoney } from '../../lib/format';
+import { formatMoney, sum } from '../../lib/format';
 import Modal from '../../components/Modal';
-import { toast } from '../../components/Toast';
+import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DateCell,
-  DataTable, FilterBar, type Column,
+  DataTable, FilterBar, DateRangePicker, type Column, type DateRange,
 } from '../../components/ui';
-import type { PaymentLink, LinkStatus } from '../../types';
+import {
+  LINK_STATUSES, LINK_STATUS_LABELS, canTakeLinks, type PaymentLink, type LinkStatus,
+} from '../../api/endpoints';
 import { useLinksData } from './useLinksData';
-import { effectiveLinkStatus, filterLinks, DEFAULT_FILTERS, type LinksFilters } from './filters';
+import { filterLinks, DEFAULT_FILTERS, type LinksFilters } from './filters';
 
 const STATUS_TONE: Record<LinkStatus, 'ok' | 'no' | 'muted'> = {
-  Paid: 'ok',
-  Failed: 'no',
-  Created: 'muted',
-  Expired: 'muted',
+  created: 'muted',
+  opened: 'muted',
+  paid: 'ok',
+  failed: 'no',
+  expired: 'muted',
+  refunded: 'no',
 };
 
 export default function LinksPage() {
   const can = useCan();
-  const { rateCard: rc } = useRateCard();
-  const { links, isLoading, create, reconcile } = useLinksData();
-  const creators = useAppStore((s) => s.creators);
-  const chatters = useAppStore((s) => s.chatters);
-  const linkLimits = useAppStore((s) => s.linkLimits);
+  const { rateCard } = useRateCard();
+  const { links, creators, customers, linkLimits, isLoading, isError, createLink, reconcile } = useLinksData();
 
   const [filters, setFilters] = useState<LinksFilters>(DEFAULT_FILTERS);
   const [createOpen, setCreateOpen] = useState(false);
-  const [plCreator, setPlCreator] = useState('');
-  const [plChatter, setPlChatter] = useState('');
-  const [plName, setPlName] = useState('');
-  const [plUser, setPlUser] = useState('');
-  const [plAmt, setPlAmt] = useState('');
-  const [creating, setCreating] = useState(false);
+  const [creatorId, setCreatorId] = useState('');
+  const [customerId, setCustomerId] = useState('');
+  const [amountText, setAmountText] = useState('');
+  const [isCreating, setIsCreating] = useState(false);
+  const [createdUrl, setCreatedUrl] = useState<string | null>(null);
+  const [isReconciling, setIsReconciling] = useState(false);
 
   const filtered = useMemo(() => filterLinks(links, filters), [links, filters]);
-  const paid = filtered.filter((l) => l.status === 'Paid');
-  const conv = filtered.length ? Math.round((paid.length / filtered.length) * 100) : 0;
-  const revenue = paid.reduce((s, l) => s + l.amount, 0);
+  const paid = filtered.filter((l) => l.status === 'paid');
+  const conversion = filtered.length ? Math.round((paid.length / filtered.length) * 100) : 0;
+  const revenue = sum(paid.map((l) => l.amount ?? 0));
 
-  const clearFilters = () => setFilters(DEFAULT_FILTERS);
+  const range: DateRange = { from: filters.from, to: filters.to };
+  const setRange = (r: DateRange) => setFilters((f) => ({ ...f, ...r }));
+
+  const activeCreators = creators.filter((c) => canTakeLinks(c.status));
+  const creatorNames = [...new Set(links.map((l) => l.creator).filter((n): n is string => Boolean(n)))];
+
+  const minAmount = linkLimits?.minLinkAmount ?? linkLimits?.providerMinimum ?? 0;
+  const maxAmount = linkLimits?.maxLinkAmount ?? null;
+  const amount = parseFloat(amountText) || 0;
+  const belowMin = amount > 0 && amount < minAmount;
+  const aboveMax = maxAmount != null && amount > maxAmount;
+  const fees = amount > 0 && !belowMin && !aboveMax ? feeBreakdown(amount, rateCard) : null;
 
   const openCreate = () => {
-    const activeCreators = creators.filter((c) => c.status !== 'paused' && c.status !== 'suspended');
-    setPlCreator(activeCreators[0]?.name ?? '');
-    setPlChatter(chatters[0]?.name ?? '');
-    setPlName(''); setPlUser(''); setPlAmt('');
+    setCreatorId(activeCreators[0]?.id ?? '');
+    setCustomerId('');
+    setAmountText('');
     setCreateOpen(true);
   };
 
-  const amtNum = parseFloat(plAmt) || 0;
-  const amtValid = amtNum > 0;
-  const belowMin = linkLimits.min != null && amtNum < linkLimits.min;
-  const aboveMax = linkLimits.max != null && amtNum > linkLimits.max;
-  const fb = amtValid && !belowMin && !aboveMax ? feeBreakdown(amtNum, rc) : null;
-
-  const submit = async () => {
-    const amt = parseFloat(plAmt);
-    const floor = linkLimits.min ?? linkLimits.providerMin;
-    if (!(amt >= floor)) { toast(`Minimum link amount is ${formatMoney(floor)}.`); return; }
-    if (linkLimits.max != null && amt > linkLimits.max) {
-      toast(`Maximum link amount is ${formatMoney(linkLimits.max)}.`); return;
-    }
-    if (!plName.trim()) { toast('Customer name is required.'); return; }
-    setCreating(true);
+  const submitCreate = async () => {
+    if (!creatorId) { toast('Pick a creator.'); return; }
+    if (!(amount >= minAmount)) { toast(`Minimum link amount is ${formatMoney(minAmount)}.`); return; }
+    if (aboveMax) { toast(`Maximum link amount is ${formatMoney(maxAmount ?? 0)}.`); return; }
+    setIsCreating(true);
     try {
-      const { url } = await create({
-        creator: plCreator,
-        chatter: plChatter,
-        customerName: plName,
-        customerUsername: plUser,
-        amount: amt,
-      });
+      const created = await createLink({ creatorId, customerId: customerId || undefined, amount });
       setCreateOpen(false);
-      if (url) toast(`Hosted payment link generated: ${url}`);
-      else toast('Hosted payment link generated.');
+      setCreatedUrl(created.url);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Could not generate link.';
-      toast(msg);
+      toast(err instanceof Error ? err.message : 'Could not create the link.');
     } finally {
-      setCreating(false);
+      setIsCreating(false);
     }
   };
 
-  const showSplit = can('platform.view');
+  const runReconcile = async () => {
+    setIsReconciling(true);
+    try {
+      const result = await reconcile();
+      toast(`Checked ${result.checked} links, updated ${result.updated}.`);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Reconcile failed.');
+    } finally {
+      setIsReconciling(false);
+    }
+  };
+
+  const copyUrl = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('Link copied.');
+    } catch {
+      toast('Could not copy. Select the link and copy it manually.');
+    }
+  };
+
   const columns: Column<PaymentLink>[] = [
-    { key: 'ref', header: 'Ref', render: (l) => <span className="ref">{l.id}</span> },
-    { key: 'creator', header: 'Creator', render: (l) => l.creator || '—' },
-    { key: 'chatter', header: 'Chatter', render: (l) => l.chatter || '—' },
-    {
-      key: 'customer', header: 'Customer',
-      render: (l) => (
-        <>
-          <div className="cname">{l.customerName || '—'}</div>
-          <div className="cemail">{l.customerUsername}</div>
-        </>
-      ),
-    },
-    { key: 'amount', header: 'Amount', align: 'right', render: (l) => <Money amount={l.amount} /> },
-    {
-      key: 'status', header: 'Status',
-      render: (l) => {
-        const s = effectiveLinkStatus(l);
-        return <Pill tone={STATUS_TONE[s]}>{s}</Pill>;
-      },
-    },
-    { key: 'date', header: 'Date', render: (l) => <DateCell ts={l.ts} /> },
+    { key: 'ref', header: 'Ref', render: (l) => <span className="ref">{l.referenceId}</span> },
+    { key: 'creator', header: 'Creator', render: (l) => l.creator ?? '—' },
+    { key: 'chatter', header: 'Chatter', render: (l) => l.chatter ?? '—' },
+    { key: 'customer', header: 'Customer', render: (l) => <span className="cname">{l.customer ?? '—'}</span> },
+    { key: 'amount', header: 'Amount', align: 'right', render: (l) => l.amount == null ? '—' : <Money amount={l.amount} currency={l.currency} /> },
+    { key: 'status', header: 'Status', render: (l) => <Pill tone={STATUS_TONE[l.status]}>{LINK_STATUS_LABELS[l.status]}</Pill> },
+    { key: 'created', header: 'Created', render: (l) => <DateCell ts={l.createdAt} /> },
+    { key: 'paid', header: 'Paid', render: (l) => <DateCell ts={l.paidAt} /> },
   ];
 
   return (
@@ -125,12 +116,12 @@ export default function LinksPage() {
       <PageHeader
         eyebrow="Money in"
         title="Payment links"
-        subtitle="Hosted checkout links generated by chatters. Card details never touch this system."
+        subtitle="Hosted checkout links. The customer pays on MantaPay's page; card details never touch this system."
         actions={
           <>
             {can('commissions.manage') && (
-              <button className="btn ghost" onClick={() => reconcile().then(() => toast('Reconciled.')).catch(() => toast('Reconcile failed.'))}>
-                Reconcile
+              <button className="btn ghost" onClick={runReconcile} disabled={isReconciling}>
+                {isReconciling ? 'Reconciling…' : 'Reconcile'}
               </button>
             )}
             {can('links.create') && (
@@ -141,55 +132,38 @@ export default function LinksPage() {
       />
 
       <StatGrid>
-        <StatCard label="Links" value={filtered.length} sub="in view" />
-        <StatCard label="Paid" value={paid.length} sub="conversions" />
-        <StatCard label="Conversion" value={`${conv}%`} sub="paid / total" />
-        <StatCard label="Revenue" value={<Money amount={revenue} direction="in" emphasis />} sub="from paid links" />
+        <StatCard label="Links" value={filtered.length} sub="In view" />
+        <StatCard label="Paid" value={paid.length} sub="Conversions" />
+        <StatCard label="Conversion" value={`${conversion}%`} sub="Paid ÷ links" />
+        <StatCard label="Revenue" value={<Money amount={revenue} direction="in" emphasis />} sub="From paid links" />
       </StatGrid>
 
       <FilterBar>
         <select value={filters.creator} onChange={(e) => setFilters((f) => ({ ...f, creator: e.target.value }))}>
           <option value="">All creators</option>
-          {[...new Set(creators.map((c) => c.name))].map((n) => <option key={n}>{n}</option>)}
-        </select>
-        <select value={filters.chatter} onChange={(e) => setFilters((f) => ({ ...f, chatter: e.target.value }))}>
-          <option value="">All chatters</option>
-          {[...new Set(chatters.map((c) => c.name))].map((n) => <option key={n}>{n}</option>)}
+          {creatorNames.map((n) => <option key={n} value={n}>{n}</option>)}
         </select>
         <select
           value={filters.status}
           onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value as LinksFilters['status'] }))}
         >
           <option value="">All statuses</option>
-          <option value="Created">Created</option>
-          <option value="Paid">Paid</option>
-          <option value="Failed">Failed</option>
-          <option value="Expired">Expired</option>
+          {LINK_STATUSES.map((s) => <option key={s} value={s}>{LINK_STATUS_LABELS[s]}</option>)}
         </select>
         <input
-          type="number" placeholder="Min €" value={filters.min}
+          type="number" className="amount-input" placeholder="Min" value={filters.min}
           onChange={(e) => setFilters((f) => ({ ...f, min: e.target.value }))}
-          style={{ maxWidth: 100 }}
         />
         <input
-          type="number" placeholder="Max €" value={filters.max}
+          type="number" className="amount-input" placeholder="Max" value={filters.max}
           onChange={(e) => setFilters((f) => ({ ...f, max: e.target.value }))}
-          style={{ maxWidth: 100 }}
         />
+        <DateRangePicker value={range} onChange={setRange} />
         <input
-          type="date" value={filters.from}
-          onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))}
-        />
-        <input
-          type="date" value={filters.to}
-          onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))}
-        />
-        <input
-          type="search" placeholder="Search customer…" value={filters.search}
+          type="search" className="search-input" placeholder="Search ref, customer, chatter" value={filters.search}
           onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
-          style={{ maxWidth: 180 }}
         />
-        <button className="btn ghost" onClick={clearFilters}>Clear</button>
+        <button className="btn ghost" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear</button>
       </FilterBar>
 
       <DataTable
@@ -197,118 +171,108 @@ export default function LinksPage() {
         rows={filtered}
         rowKey={(l) => l.id}
         isLoading={isLoading}
-        emptyTitle="No links match these filters."
-        emptyHint={can('links.create') ? 'Generate one from the header.' : 'Ask a chatter to generate one.'}
-        footer={`Showing ${filtered.length}`}
+        emptyTitle={isError ? "Couldn't load payment links." : 'No links match these filters.'}
+        emptyHint={isError ? 'Try again in a moment.' : can('links.create') ? 'Create one from the header.' : 'Ask a chatter to create one.'}
+        footer={`Showing ${filtered.length} of ${links.length}`}
       />
 
       <Modal open={createOpen} onClose={() => setCreateOpen(false)}>
-        <h3>Create PPV link</h3>
-        <p className="sub">
-          Generates a hosted payment link. The customer pays on the provider's page — card details never touch this system.
-        </p>
+        <h3>New payment link</h3>
+        <p className="sub">The customer pays on MantaPay's hosted page. The amount is fixed in the link.</p>
         <div className="field">
-          <label>Creator</label>
-          <select value={plCreator} onChange={(e) => setPlCreator(e.target.value)}>
-            {creators.filter((c) => c.status !== 'paused' && c.status !== 'suspended').map((c) => (
-              <option key={c.id}>{c.name}</option>
-            ))}
+          <label htmlFor="link-creator">Creator</label>
+          <select id="link-creator" value={creatorId} onChange={(e) => setCreatorId(e.target.value)}>
+            {activeCreators.length === 0 && <option value="">No active creators</option>}
+            {activeCreators.map((c) => <option key={c.id} value={c.id}>{c.stageName}</option>)}
           </select>
         </div>
         <div className="field">
-          <label>Chatter</label>
-          <select value={plChatter} onChange={(e) => setPlChatter(e.target.value)}>
-            {chatters.map((c) => <option key={c.id}>{c.name}</option>)}
+          <label htmlFor="link-customer">Customer</label>
+          <select id="link-customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+            <option value="">Not recorded</option>
+            {customers.map((c) => <option key={c.id} value={c.id}>{c.alias}</option>)}
           </select>
         </div>
         <div className="field">
-          <label>Customer name</label>
-          <input type="text" placeholder="Display name" value={plName} onChange={(e) => setPlName(e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Customer username</label>
+          <label htmlFor="link-amount">Amount</label>
           <input
-            type="text" placeholder="@username" value={plUser}
-            onChange={(e) => setPlUser(e.target.value)}
-            onBlur={() => {
-              const v = plUser.trim();
-              if (v && !v.startsWith('@')) setPlUser(`@${v}`);
-            }}
-          />
-        </div>
-        <div className="field">
-          <label>Amount (EUR)</label>
-          <input
+            id="link-amount"
             type="number"
-            min={linkLimits.min ?? linkLimits.providerMin}
-            max={linkLimits.max ?? undefined}
+            min={minAmount}
+            max={maxAmount ?? undefined}
             step={0.01}
             placeholder="0.00"
-            value={plAmt}
-            onChange={(e) => setPlAmt(e.target.value)}
+            value={amountText}
+            onChange={(e) => setAmountText(e.target.value)}
           />
-          <div className="sub" style={{ marginTop: 6 }}>
-            {belowMin ? <span style={{ color: 'var(--red)' }}>Below the {formatMoney(linkLimits.min ?? 0)} minimum.</span>
-              : aboveMax ? <span style={{ color: 'var(--red)' }}>Above the {formatMoney(linkLimits.max ?? 0)} maximum.</span>
+          <p className="sub">
+            {belowMin ? <span className="text-neg">Below the {formatMoney(minAmount)} minimum.</span>
+              : aboveMax ? <span className="text-neg">Above the {formatMoney(maxAmount ?? 0)} maximum.</span>
                 : [
-                    linkLimits.min ? `Minimum ${formatMoney(linkLimits.min)}` : null,
-                    linkLimits.max ? `Maximum ${formatMoney(linkLimits.max)}` : null,
+                    `Minimum ${formatMoney(minAmount)}`,
+                    maxAmount != null ? `Maximum ${formatMoney(maxAmount)}` : null,
                   ].filter(Boolean).join(' · ')}
-          </div>
+          </p>
         </div>
 
-        <div className="pl-fees">
-          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
-            <span style={{ color: 'var(--muted)', fontSize: 13 }}>Fees on this link</span>
-            <span
-              className="pl-fee-pct"
-              style={{
-                color: fb
-                  ? fb.effectivePct >= 18 ? 'var(--neg)'
-                    : fb.effectivePct >= 15 ? 'var(--accent)'
-                      : 'var(--ink)'
-                  : 'var(--muted)',
-              }}
-            >
-              {fb ? `${fb.effectivePct.toFixed(1)}%` : '—'}
-            </span>
+        <div className={`pl-fees${fees && fees.effectivePct >= 18 ? ' hot' : fees && fees.effectivePct >= 15 ? ' warm' : ''}`}>
+          <div className="pl-fees-head">
+            <span className="sub">Fees on this link</span>
+            <span className="pl-fee-pct">{fees ? `${fees.effectivePct.toFixed(1)}%` : '—'}</span>
           </div>
           <div className="fee-line">
-            <span>{fb ? `Platform fee (${fb.blendedPct}%)` : 'Platform fee'}</span>
-            <b className="fee-val">{fb ? formatMoney(fb.blendedFee) : '—'}</b>
+            <span>Platform fee ({rateCard.blended.toFixed(1)}%)</span>
+            <b className="fee-val">{fees ? formatMoney(fees.blendedFee) : '—'}</b>
           </div>
           <div className="fee-line">
             <span>Fixed per transaction</span>
-            <b className="fee-val">{fb ? formatMoney(fb.fixed) : '—'}</b>
+            <b className="fee-val">{fees ? formatMoney(fees.fixed) : '—'}</b>
           </div>
-          {showSplit && fb && fb.pspPct != null ? (
+          {fees?.pspFee != null && fees.marginFee != null && (
             <>
-              <div className="fee-line" style={{ opacity: 0.75 }}>
-                <span>↳ PSP cost ({fb.pspPct}%)</span>
-                <b className="fee-val">{formatMoney(fb.pspFee ?? 0)}</b>
+              <div className="fee-line fee-line-sub">
+                <span>PSP cost ({fees.pspPct}%)</span>
+                <b className="fee-val">{formatMoney(fees.pspFee)}</b>
               </div>
-              <div className="fee-line" style={{ opacity: 0.75 }}>
-                <span>↳ HigherPays margin ({fb.marginPct}%)</span>
-                <b className="fee-val">{formatMoney(fb.marginFee ?? 0)}</b>
+              <div className="fee-line fee-line-sub">
+                <span>HigherPays margin ({fees.marginPct}%)</span>
+                <b className="fee-val">{formatMoney(fees.marginFee)}</b>
               </div>
             </>
-          ) : null}
+          )}
           <div className="fee-tot">
             <span>Total fees</span>
-            <span className="fee-val">{fb ? formatMoney(fb.total) : '—'}</span>
+            <span className="fee-val">{fees ? formatMoney(fees.total) : '—'}</span>
           </div>
           <div className="fee-net">
             <span>Net to workspace</span>
-            <span className="fee-val">{fb ? formatMoney(fb.net) : '—'}</span>
+            <span className="fee-val">{fees ? formatMoney(fees.net) : '—'}</span>
           </div>
         </div>
 
         <div className="modal-actions">
           <button className="btn ghost" onClick={() => setCreateOpen(false)}>Cancel</button>
-          <button className="btn" onClick={submit} disabled={creating}>
-            {creating ? 'Generating…' : 'Generate link'}
+          <button className="btn" onClick={submitCreate} disabled={isCreating || !creatorId}>
+            {isCreating ? 'Creating…' : 'Create link'}
           </button>
         </div>
+      </Modal>
+
+      <Modal open={createdUrl !== null} onClose={() => setCreatedUrl(null)}>
+        {createdUrl && (
+          <>
+            <h3>Link ready</h3>
+            <p className="sub">Share this URL with the customer. It expires if it is not paid in time.</p>
+            <div className="field">
+              <label htmlFor="created-url">Checkout URL</label>
+              <input id="created-url" type="text" readOnly value={createdUrl} onFocus={(e) => e.target.select()} />
+            </div>
+            <div className="modal-actions">
+              <button className="btn ghost" onClick={() => setCreatedUrl(null)}>Close</button>
+              <button className="btn" onClick={() => copyUrl(createdUrl)}>Copy link</button>
+            </div>
+          </>
+        )}
       </Modal>
     </div>
   );

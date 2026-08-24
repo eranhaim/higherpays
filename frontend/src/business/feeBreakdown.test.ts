@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { feeBreakdown } from './feeBreakdown';
-import type { RateCard } from '../types';
+import { feeBreakdown, type RateCard } from './feeBreakdown';
 
 const rc: RateCard = {
   blended: 13,

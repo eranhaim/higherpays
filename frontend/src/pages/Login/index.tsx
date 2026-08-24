@@ -6,17 +6,10 @@ import { HttpError } from '../../api/http';
 import { isTwoFactorRequired, type LoginSuccess } from '../../api/types';
 import { useAuthStore, useIsAuthenticated } from '../../store/auth';
 import { useSessionStore } from '../../store/session';
-import { useDemoModeStore } from '../../store/demoMode';
-import { useAppStore } from '../../store/appStore';
 
 /**
- * Sign-in screen.
- *
- * States:
- *   - `credentials`: email + password
- *   - `totp`: 2FA required after the first submit — collect the 6-digit code
- *
- * Also exposes the escape hatch into the offline demo (no server needed).
+ * Sign-in screen. Two stages: email + password, then a 6-digit code when the
+ * account has two-factor authentication enabled.
  */
 
 type Stage = 'credentials' | 'totp';
@@ -24,22 +17,18 @@ type Stage = 'credentials' | 'totp';
 interface LocationState { from?: { pathname: string } }
 
 export default function LoginPage() {
-  const isAuthed = useIsAuthenticated();
+  const isAuthenticated = useIsAuthenticated();
   const navigate = useNavigate();
   const location = useLocation();
   const from = (location.state as LocationState | null)?.from?.pathname ?? '/payments';
 
   const [stage, setStage] = useState<Stage>('credentials');
-  const [email, setEmail] = useState('owner@example.com');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [totp, setTotp] = useState('');
 
   const setSession = useAuthStore((s) => s.setSession);
   const setActiveWorkspaceId = useSessionStore((s) => s.setActiveWorkspaceId);
-  const enableDemo = useDemoModeStore((s) => s.enable);
-  const disableDemo = useDemoModeStore((s) => s.disable);
-  const setAppMode = useAppStore((s) => s.setMode);
-  const loadDemo = useAppStore((s) => s.loadDemoState);
 
   const login = useMutation({
     mutationFn: (input: { email: string; password: string; totp?: string }) =>
@@ -57,30 +46,19 @@ export default function LoginPage() {
     setSession(response);
     const firstWorkspace = response.workspaces[0];
     if (firstWorkspace) setActiveWorkspaceId(firstWorkspace.id);
-    // Explicitly leave demo mode: without this, data hooks keep serving demo
-    // data even after a valid login (useCurrentSession checks demo first).
-    disableDemo();
-    setAppMode('live');
     navigate(from, { replace: true });
   }
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (stage === 'credentials') {
-      login.mutate({ email: email.trim(), password });
-    } else {
-      login.mutate({ email: email.trim(), password, totp: totp.trim() });
-    }
+    login.mutate({
+      email: email.trim(),
+      password,
+      ...(stage === 'totp' ? { totp: totp.trim() } : {}),
+    });
   }
 
-  function handleDemo() {
-    loadDemo();
-    setAppMode('demo');
-    enableDemo();
-    navigate('/payments', { replace: true });
-  }
-
-  if (isAuthed) return <Navigate to={from} replace />;
+  if (isAuthenticated) return <Navigate to={from} replace />;
 
   return (
     <div className="auth-shell">
@@ -115,89 +93,60 @@ export default function LoginPage() {
                   type="password"
                   autoComplete="current-password"
                   required
-                  minLength={8}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
               </div>
             </>
           ) : (
-            <>
-              <p className="sub" style={{ marginTop: 0 }}>
-                Enter the 6-digit code from your authenticator app.
-              </p>
-              <div className="field">
-                <label htmlFor="totp">Authentication code</label>
-                <input
-                  id="totp"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  required
-                  pattern="[0-9]{6}"
-                  maxLength={6}
-                  value={totp}
-                  onChange={(e) => setTotp(e.target.value.replace(/\D/g, ''))}
-                  autoFocus
-                />
-              </div>
-            </>
+            <div className="field">
+              <label htmlFor="totp">Authentication code</label>
+              <input
+                id="totp"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                required
+                pattern="[0-9]{6}"
+                maxLength={6}
+                value={totp}
+                onChange={(e) => setTotp(e.target.value.replace(/\D/g, ''))}
+                autoFocus
+              />
+              <p className="sub">Enter the 6-digit code from your authenticator app.</p>
+            </div>
           )}
 
-          {login.error && <LoginError error={login.error} />}
+          {login.error && (
+            <div className="warnbar" role="alert">{loginErrorMessage(login.error)}</div>
+          )}
 
-          <button
-            className="btn"
-            type="submit"
-            disabled={login.isPending}
-            style={{ width: '100%', marginTop: 8 }}
-          >
-            {login.isPending ? 'Signing in\u2026' : stage === 'credentials' ? 'Sign in' : 'Verify'}
+          <button className="btn full-width" type="submit" disabled={login.isPending}>
+            {login.isPending ? 'Signing in…' : stage === 'credentials' ? 'Sign in' : 'Verify'}
           </button>
 
           {stage === 'totp' && (
             <button
               type="button"
-              className="btn ghost"
-              style={{ width: '100%', marginTop: 8 }}
+              className="btn ghost full-width"
               onClick={() => { setStage('credentials'); setTotp(''); }}
             >
               Back
             </button>
           )}
         </form>
-
-        <div className="auth-divider"><span>or</span></div>
-
-        <button className="btn ghost" style={{ width: '100%' }} onClick={handleDemo}>
-          Try the demo (no account needed)
-        </button>
-
-        <p className="auth-hint">
-          Local dev: the seeded owner is{' '}
-          <code>owner@example.com</code> / <code>change-me-please</code>.
-        </p>
       </div>
     </div>
   );
 }
 
-function LoginError({ error }: { error: unknown }) {
-  const message = mapError(error);
-  return (
-    <div className="warnbar" role="alert" style={{ marginTop: 12 }}>
-      {message}
-    </div>
-  );
-}
-
-function mapError(err: unknown): string {
+function loginErrorMessage(err: unknown): string {
   if (err instanceof HttpError) {
     if (err.status === 401) return 'Invalid email or password.';
     if (err.status === 400) return 'Please check the fields and try again.';
-    if (err.status === 0 || err.status >= 500) return 'The server is unreachable. Is the backend running?';
+    if (err.status >= 500) return 'The server is unavailable. Try again in a moment.';
     return err.message;
   }
-  if (err instanceof TypeError) return 'Cannot reach the server. Is the backend running on the API URL?';
+  if (err instanceof TypeError) return 'Cannot reach the server.';
   return 'Something went wrong. Please try again.';
 }
