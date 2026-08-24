@@ -171,47 +171,44 @@ api/
   http.ts            fetch wrapper — injects JWT, active workspace id, refresh-on-401
   types.ts           shared response types (AuthUser, AuthWorkspace, etc.)
   workspacePath.ts   builds /workspaces/:id/... URLs from the session
-business/            Pure money math (splitAmount, feeBreakdown, rateCard, timezone)
+business/            Pure client-side money math (feeBreakdown) + timezone arithmetic
 components/
   AppProviders.tsx   ErrorBoundary + QueryClientProvider
-  AuthGuard.tsx      redirects to /login if not authenticated and not in demo
-  Layout.tsx         sidebar (grouped Money in / Money out / People / Insight / Admin), demo ribbon, workspace picker
-  ui/                shared kit (PageHeader, StatCard, DataTable, Money, Pill, DateCell, etc.)
-demo/                Deterministic demo generators for offline demo mode
+  AuthGuard.tsx      redirects to /login when not authenticated
+  Layout.tsx         sidebar (grouped Money in / Money out / People / Insight / Admin), workspace picker
+  NotificationBell   in-app feed from /notifications
+  ui/                shared kit (PageHeader, StatCard, DataTable, Money, Pill, DateCell, EmptyState, LoadingCard, ErrorCard, …)
 hooks/
-  useCurrentSession  who am I + which workspace + demo or live?
+  useCurrentSession  who am I + which workspace
   useTimezone        resolves user's IANA TZ from preferences
-  useRateCard        active rate card (demo → workspace, live → API /fees)
-  usePermission      RBAC — useCan() now sources from useCurrentSession, so real role drives nav visibility
+  useRateCard        the workspace rate card from /platform-fee
+  usePermission      useCan() — effective permissions from /permissions (built-in matrix as fallback while loading)
 lib/format/          money/date/text formatters
-pages/               One folder per route: index.tsx + use<Page>Data.ts + filters.ts
-rbac/                Permission → role tables
+lib/toast.ts         toast() — fire-and-forget status messages
+pages/               One folder per route: index.tsx (view) + use<Page>Data.ts (React Query) + filters.ts
+rbac/                Permission vocabulary + built-in role matrix (mirrors backend/src/auth/permissions.js)
 store/
   auth.ts            JWT + AuthUser + workspaces (persisted)
   session.ts         activeWorkspaceId (persisted)
   preferences.ts     tzMode + tzManual (persisted)
-  demoMode.ts        transient "user opted into demo" flag; disabled on successful login
-  appStore.ts        Demo-mode dataset; used only by not-yet-live pages
 theme/               global.css + variables.css (ledger design system)
 ```
 
-### Two modes, one UI
+### One mode: live
 
-Every page works in two modes:
-
-- **Demo mode** — no backend, all data comes from `appStore` (populated
-  by `demo/generators.ts`). User opts in via "Try demo" on the login
-  screen. A persistent amber ribbon sits at the top of `main` so nothing
-  on screen can be mistaken for real money.
-- **Live mode** — user logged in, data comes from React Query hitting
-  the backend.
-
-The pattern: each page has a `use<Page>Data` hook that checks
-`useCurrentSession().isDemo` and either reads from `appStore` or fires
-an `api/endpoints/*` call. The page component itself is mode-agnostic.
+There is no demo mode and no generated data. Every page reads from the
+backend through React Query. The pattern: `pages/X/index.tsx` is a view;
+`pages/X/useXData.ts` owns the queries and mutations (query keys include
+the active workspace id; mutations invalidate). Pages use the API types
+from `api/endpoints/*` directly — there is no second, UI-side type system.
 
 **Reference implementations**: `Payments`, `Links`, `Payouts`,
 `Creators`, `Customers`, `Team`. Copy those. Do NOT invent a new pattern.
+
+Loading, error and empty states come from the UI kit (`DataTable`
+handles them for tables; `LoadingCard` / `ErrorCard` / `EmptyState` for
+card layouts). Styling is plain CSS classes from `theme/global.css`;
+pages carry no colours or inline layout of their own.
 
 ### Design system
 
@@ -225,29 +222,24 @@ an `api/endpoints/*` call. The page component itself is mode-agnostic.
 
 ---
 
-## 6. What's wired to the backend vs. still demo-only
+## 6. What each page is wired to
 
-### Wired (works in live mode)
+Every page is live. Per page:
 
-- **Auth**: login, refresh, logout, workspace listing.
-- **Payments**: transactions list, refund modal.
-- **Payment Links**: list, create, reconcile.
-- **Payouts**: breakdown, run payout, mark paid.
-- **Creators**: list, create, suspend/activate, edit rev-share splits.
-- **Customers**: list (with search, sort, segment filters).
-- **Team**: chatter list, edit commission %.
-- **Rate card** (fees %): via `useRateCard`.
+- **Login**: login, 2FA challenge, refresh, logout.
+- **Payments**: `GET /transactions`; record-only refund (`POST /transactions/:id/refund`).
+- **Payment links**: list, create (creator + optional customer + amount), reconcile.
+- **Payouts**: breakdown for the period; pay one payee or all of a type (`POST /payouts/run` with `targetId`).
+- **Creators**: list, create (+ assign chatters), suspend/activate, edit rev-share splits.
+- **Customers**: list with segment/creator/search filters, add customer, CSV export.
+- **Team**: chatter list, per-chatter commission %, invite member (role from `/roles`), pending invites.
+- **Analytics**: `GET /analytics` for the range (+ the previous period for deltas), scoped by creator or chatter for agency roles; CSV export.
+- **Settings**: workspace rename, fees (read-only from `/platform-fee`), link limits, 2FA setup/enable/disable, time zone (local preference), role permission matrix + custom roles, notification preferences, Telegram channels.
+- **Notification bell**: `GET /notifications`, mark read.
 
-### Still demo-only (page reads `appStore` directly)
-
-- `Analytics`, `Compare`, `Goals` — no backend endpoints yet.
-- `Platform` (super-admin) — needs `platform.routes.js` wiring.
-- `Workspaces` — needs `workspacesApi` wiring.
-- `Settings` — reads/writes demo-only. Backend fee/limit endpoints
-  exist (`workspacesApi.setLinkLimits`, `getPlatformFee`) — just not
-  consumed by the page yet.
-- `NotificationBell` — demo notifications only.
-- Team "Invite member" / Customer add-modal — no backend endpoints yet.
+Removed from the frontend (per `V1-ROADMAP.md`): Goals, Compare (folded
+into Analytics), Workspaces, Platform. The backend `platform.routes.js`
+still exists and is a later removal.
 
 ---
 
@@ -410,22 +402,13 @@ for `bad_signature` / `merchant_mismatch` / `unknown_endpoint` errors.
 Nine out of ten times it's a mismatch between the workspace's stored
 `mid` and the MantaPay portal's actual merchant id.
 
-### P1. Wire remaining pages to the backend
+### P1. V1 feature gaps
 
-Rough order of business value:
-
-1. **Settings** — reads `appStore.workspaces` and calls no API. Wire to
-   `workspacesApi.getPlatformFee`, `getLinkLimits`, `setLinkLimits`,
-   `rename`. Platform-level fee editing goes through
-   `platform.routes.js`.
-2. **Workspaces** — for multi-workspace agencies. `workspacesApi.*` +
-   `authApi.workspaces()`.
-3. **Analytics** — backend has `analytics.routes.js`. Build an
-   `api/endpoints/analytics.ts` client + `useAnalyticsData` hook. This
-   unlocks Goals and Compare too (both are demo-only until analytics is
-   live).
-4. **Platform** — super-admin views over all workspaces
-   (`platform.routes.js`).
+Every page is wired (see §6). What remains is the spec work listed in
+`V1-ROADMAP.md`: 4-role model, cancel-link status, server-side payment
+filters, period-over-period comparison inside Analytics, workspace audit
+log page, link-expired notifications, activate/deactivate users, CSV
+export for payments and links, and removal of `platform.routes.js`.
 
 ### P2. Real MantaPay features beyond happy-path
 
