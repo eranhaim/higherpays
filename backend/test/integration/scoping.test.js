@@ -150,6 +150,33 @@ test('a custom role with agent-equivalent permissions is scoped like an agent', 
   assert.ok(theirs.id);
 });
 
+test('an owner can add a second workspace to the same organization', async () => {
+  const owner = await createTenant(app);
+
+  const created = await request(app)
+    .post('/workspaces').set(owner.authHeaders).send({ name: 'Second Brand' }).expect(201);
+  assert.ok(created.body.id);
+  assert.ok(created.body.webhookEndpointId, 'it gets its own webhook endpoint');
+
+  const mine = (await request(app).get('/auth/me/workspaces')
+    .set({ Authorization: owner.authHeaders.Authorization }).expect(200)).body.workspaces;
+  assert.equal(mine.length, 2);
+  assert.equal(new Set(mine.map((w) => w.organization)).size, 1, 'both under one organization');
+  assert.ok(mine.every((w) => w.role === 'owner'));
+
+  // The new workspace is a separate tenant boundary: it starts empty.
+  const accounts = (await request(app).get(`/workspaces/${created.body.id}/accounts`)
+    .set({ Authorization: owner.authHeaders.Authorization, 'X-Workspace-Id': created.body.id })
+    .expect(200)).body.accounts;
+  assert.deepEqual(accounts, []);
+});
+
+test('an analyst cannot add a workspace', async () => {
+  const owner = await createTenant(app);
+  const analyst = await addMember(app, owner, 'analyst');
+  await request(app).post('/workspaces').set(analyst.headers).send({ name: 'Nope' }).expect(403);
+});
+
 test('a custom role granted data.view_all sees the whole workspace', async () => {
   const { owner, mine, theirs } = await fixture();
   await request(app).post(`/workspaces/${owner.workspaceId}/roles`).set(owner.authHeaders)

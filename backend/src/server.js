@@ -2,7 +2,7 @@
 const express = require('express');
 const path = require('path');
 const config = require('./config');
-const { pool, withSystem } = require('./db');
+const { pool, withSystem, withPlatformAdmin } = require('./db');
 const { log, requestLogger } = require('./lib/log');
 const authRoutes = require('./routes/auth.routes');
 const accountsRoutes = require('./routes/accounts.routes');
@@ -22,9 +22,10 @@ const feesRoutes = require('./routes/fees.routes');
 const meRoutes = require('./routes/me.routes');
 const webhooksRoutes = require('./routes/webhooks.routes');
 const { wsRouter: invitesWsRoutes, publicRouter: invitesPublicRoutes } = require('./routes/invites.routes');
-const { requireAuth, requireWorkspace, requirePlatformAdmin, errorHandler } = require('./middleware');
+const { requireAuth, requireWorkspace, requirePermission, requirePlatformAdmin, errorHandler } = require('./middleware');
 const { asyncHandler } = require('./lib/http');
-const { ROLE_PERMISSIONS } = require('./auth/permissions');
+const { ROLE_PERMISSIONS, seedRolesForWorkspace } = require('./auth/permissions');
+const { audit } = require('./util/audit');
 
 const app = express();
 
@@ -91,6 +92,46 @@ app.use('/auth', authRoutes);
 
 // Platform (Super-Admin) — HigherPays operator, above any single tenant.
 app.use('/platform', requireAuth, requirePlatformAdmin, platformRoutes);
+
+// POST /workspaces — a second brand/MID under the SAME organization. No
+// :workspaceId in the path: requireWorkspace resolves the source workspace from
+// X-Workspace-Id, and that is what identifies the organization to add to.
+// Runs in platform context like /auth/register does, because the new
+// workspace's RLS row does not admit the caller until the membership lands.
+app.post('/workspaces', requireAuth, requireWorkspace, requirePermission('workspaces.create'),
+  asyncHandler(async (req, res) => {
+    const name = req.body && req.body.name;
+    if (typeof name !== 'string' || !name.trim() || name.length > 120) {
+      return res.status(400).json({ error: 'validation_failed', message: 'name is required' });
+    }
+    const currency = String((req.body && req.body.currency) || 'EUR').toUpperCase();
+    if (!config.supportedCurrencies.includes(currency)) {
+      return res.status(400).json({ error: 'validation_failed', message: `currency ${currency} is not enabled` });
+    }
+
+    const created = await withPlatformAdmin(req.user.id, async (c) => {
+      const org = (await c.query(
+        'SELECT organization_id FROM workspaces WHERE id = $1', [req.membership.workspaceId])).rows[0];
+      const ws = (await c.query(
+        `INSERT INTO workspaces (organization_id, name, currency, provider_name)
+         VALUES ($1,$2,$3,'mantapay') RETURNING id, name, currency, webhook_endpoint_id`,
+        [org.organization_id, name.trim(), currency])).rows[0];
+      await c.query(
+        "INSERT INTO memberships (workspace_id, user_id, role) VALUES ($1,$2,'owner')",
+        [ws.id, req.user.id]);
+      await seedRolesForWorkspace(c, ws.id);
+      return ws;
+    });
+
+    await audit({
+      workspaceId: created.id, actorUserId: req.user.id, action: 'workspace.create',
+      entityType: 'workspace', entityId: created.id, metadata: { name: created.name },
+    });
+    res.status(201).json({
+      id: created.id, name: created.name, currency: created.currency,
+      webhookEndpointId: created.webhook_endpoint_id,
+    });
+  }));
 
 // Every workspace-scoped router runs behind auth + membership resolution.
 // Individual routes inside then gate on specific permissions.

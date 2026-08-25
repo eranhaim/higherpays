@@ -1,5 +1,6 @@
 export { authApi, type TwoFactorSetup, type Session } from './auth';
-export { workspacesApi, type PlatformFee, type LinkLimits, type WorkspacePermissions } from './workspaces';
+export { workspacesApi, type PlatformFee, type LinkLimits, type WorkspacePermissions, type MyWorkspace } from './workspaces';
+export { platformApi, type PlatformRole, type PlatformWorkspace } from './platform';
 export { commissionsApi, type CommissionConfig, type PlatformFeeBreakdown } from './commissions';
 export {
   accountsApi, REVENUE_MODEL_LABELS, ACCOUNT_STATUS_LABELS, canTakeLinks,

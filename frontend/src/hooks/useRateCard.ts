@@ -20,17 +20,20 @@ const EMPTY_RATE_CARD: RateCard = {
   reserveReleaseDays: 0,
 };
 
+// The reversal fees and the reserve reach only callers who see the whole
+// workspace. For an agent the fee preview still works: it needs the blended
+// rate and the fixed fee, which everyone who can read a link receives.
 function toRateCard(f: PlatformFee): RateCard {
   return {
     blended: f.blendedRatePct,
     psp: f.pspRatePct ?? null,
     margin: f.marginRatePct ?? null,
     fixed: f.pspFixedFee,
-    refundFee: f.refundFee,
-    chargebackFee: f.chargebackFee,
-    declineFee: f.declineFee,
-    reservePct: f.reservePct,
-    reserveReleaseDays: f.reserveReleaseDays,
+    refundFee: f.refundFee ?? 0,
+    chargebackFee: f.chargebackFee ?? 0,
+    declineFee: f.declineFee ?? 0,
+    reservePct: f.reservePct ?? 0,
+    reserveReleaseDays: f.reserveReleaseDays ?? 0,
   };
 }
 

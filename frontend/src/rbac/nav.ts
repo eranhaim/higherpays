@@ -40,6 +40,7 @@ export const NAV: NavGroup[] = [
   {
     label: 'Admin',
     items: [
+      { path: '/workspaces', label: 'Workspaces', perm: 'workspaces.view' },
       { path: '/settings', label: 'Settings', perm: 'settings.view' },
     ],
   },

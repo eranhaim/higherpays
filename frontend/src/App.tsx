@@ -14,7 +14,9 @@ import AccountsPage from './pages/Accounts';
 import CustomersPage from './pages/Customers';
 import TeamPage from './pages/Team';
 import AnalyticsPage from './pages/Analytics';
+import WorkspacesPage from './pages/Workspaces';
 import SettingsPage from './pages/Settings';
+import PlatformPage from './pages/Platform';
 
 /**
  * Where "/" and any unknown path land. Payments is right for most roles, but a
@@ -36,6 +38,9 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route element={<AuthGuard />}>
+            {/* The operator console is a tier above workspaces, so it sits
+                outside the workspace shell and gates on its own check. */}
+            <Route path="/platform" element={<PlatformPage />} />
             <Route element={<Layout />}>
               <Route element={<PermissionGuard />}>
                 <Route path="/payments" element={<PaymentsPage />} />
@@ -45,6 +50,7 @@ export default function App() {
                 <Route path="/customers" element={<CustomersPage />} />
                 <Route path="/team" element={<TeamPage />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />
+                <Route path="/workspaces" element={<WorkspacesPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
               </Route>
               <Route path="*" element={<HomeRedirect />} />

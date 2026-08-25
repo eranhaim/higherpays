@@ -21,6 +21,10 @@ const pct = (v) => typeof v === 'number' && v >= 0 && v <= 100;
 const superAdminOnly = requirePlatformRole('super_admin');
 const financeOrSuperAdmin = requirePlatformRole('super_admin', 'finance');
 
+// GET /platform/me — "am I an operator, and which kind". Lets the console ask
+// once instead of probing a data endpoint and reading a 403 as an answer.
+router.get('/me', (req, res) => res.json({ role: req.platformRole }));
+
 // GET /platform/overview — the real back office summary across all agencies.
 router.get('/overview', asyncHandler(async (req, res) => {
   const data = await withPlatformAdmin(uid(req), async (c) => {
