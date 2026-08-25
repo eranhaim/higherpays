@@ -36,20 +36,30 @@ router.post('/payment/:endpoint', asyncHandler(async (req, res) => {
 
   const merchantOk = !ws.mid || (ev.merchantId && ev.merchantId === ws.mid);
 
-  // Idempotency: record every event we receive (authentic or not, for audit),
-  // and short-circuit on duplicate provider_event_id. Non-authentic events are
-  // stored with signature_valid=false and never processed further.
-  const eventRowId = await withSystem((c) => c.query(
+  // Idempotency: record every event we receive (authentic or not, for audit).
+  // A duplicate provider_event_id is acknowledged only once the earlier
+  // delivery was fully processed; if processing failed, the provider's retry
+  // is our second chance and must run the outcome again. The no-op DO UPDATE
+  // is what makes RETURNING yield the existing row.
+  const event = await withSystem((c) => c.query(
     `INSERT INTO webhook_events (workspace_id, provider, event_type, provider_event_id, signature_valid, payload)
      VALUES ($1,$2,$3,$4,$5,$6)
-     ON CONFLICT (provider, provider_event_id) DO NOTHING
-     RETURNING id`,
+     ON CONFLICT (provider, provider_event_id) DO UPDATE SET provider = EXCLUDED.provider
+     RETURNING id, processed`,
     [ws.id, PROVIDER, ev.status, ev.providerEventId, signatureValid, ev.fields])
-    .then((r) => r.rows[0]?.id ?? null));
-  if (!eventRowId) return res.status(200).json({ ok: true, duplicate: true });
+    .then((r) => r.rows[0]));
+  const eventRowId = event.id;
+  if (event.processed) return res.status(200).json({ ok: true, duplicate: true });
 
-  if (!signatureValid) return res.status(401).json({ error: 'bad_signature' });
-  if (!merchantOk) return res.status(400).json({ error: 'merchant_mismatch' });
+  // Rejected events count as handled: a retry with the same bad signature
+  // should not keep them in the unprocessed backlog.
+  if (!signatureValid || !merchantOk) {
+    await withSystem((c) => c.query(
+      'UPDATE webhook_events SET processed=true, processed_at=now(), signature_valid=$2 WHERE id=$1',
+      [eventRowId, signatureValid]));
+    if (!signatureValid) return res.status(401).json({ error: 'bad_signature' });
+    return res.status(400).json({ error: 'merchant_mismatch' });
+  }
 
   if (ev.status !== 'approved' && ev.status !== 'declined') {
     await withSystem((c) => c.query(

@@ -47,7 +47,20 @@ app.use(express.json({ limit: '20mb' }));
 // lives in ../frontend and is served separately (Vite in dev, nginx in prod).
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-app.get('/health', (req, res) => res.json({ ok: true, env: config.env }));
+// Health reports on the database too: a green health check with Postgres down
+// hides the only failure that matters. Unprocessed webhooks older than an hour
+// mean a payment exists at the provider and not in the ledger.
+app.get('/health', asyncHandler(async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      "SELECT count(*)::int AS stale FROM webhook_events WHERE processed = false AND signature_valid = true AND created_at < now() - interval '1 hour'");
+    const staleWebhooks = rows[0].stale;
+    res.status(staleWebhooks ? 503 : 200).json({ ok: staleWebhooks === 0, env: config.env, db: 'up', staleWebhooks });
+  } catch (e) {
+    console.error('[health] database check failed:', e.message);
+    res.status(503).json({ ok: false, env: config.env, db: 'down' });
+  }
+}));
 
 app.use('/auth', authRoutes);
 
@@ -106,6 +119,10 @@ async function assertRlsEffective() {
 }
 
 assertRlsEffective().catch((e) => { console.error('[startup] ' + e.message); if (config.env === 'production') process.exit(1); });
+
+for (const i of config.integrations) {
+  console.log(`[startup] ${i.name}: ${i.enabled ? 'enabled' : `disabled (set ${i.needs})`}`);
+}
 
 app.listen(config.port, () => console.log(`HigherPays API on :${config.port} (${config.env})`));
 }

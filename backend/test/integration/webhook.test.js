@@ -10,6 +10,7 @@ const { app, pool } = require('../helpers/setup');
 const { withSystem } = require('../../src/db');
 const { createTenant, createCreator } = require('../helpers/tenant');
 const sig = require('../../src/providers/mantapay-signature');
+const paymentsService = require('../../src/services/payments.service');
 
 // `workspaces` is FORCE-RLS, so a bare pool query returns zero rows. Use the
 // same trusted system context the webhook itself uses.
@@ -156,4 +157,46 @@ test('webhook: duplicate provider_event_id is acknowledged, not re-processed', a
   const res = await request(app).post(`/webhooks/payment/${endpointId}`)
     .set('Content-Type', 'application/x-www-form-urlencoded').send(encodeForm(payload)).expect(200);
   assert.equal(res.body.duplicate, true);
+});
+
+test('webhook: a delivery that failed mid-processing is processed on the provider retry', async () => {
+  const t = await createTenant(app);
+  const creator = await createCreator(app, t);
+  await setMerchantId(t.workspaceId, '7374656');
+  const endpointId = await endpointFor(t.workspaceId);
+
+  const linkRes = await request(app)
+    .post(`/workspaces/${t.workspaceId}/links`)
+    .set(t.authHeaders)
+    .send({ creatorId: creator.id, pricingMode: 'fixed', amount: 40, currency: 'EUR' })
+    .expect(201);
+  const payload = buildPaidPayload({
+    reference: linkRes.body.reference_id,
+    transId: `mp_retry_${Date.now()}`,
+    amount: 40,
+    merchantId: '7374656',
+  });
+
+  // First delivery: the outcome handler blows up after the event row exists.
+  const real = paymentsService.recordPaymentOutcome;
+  paymentsService.recordPaymentOutcome = async () => { throw new Error('simulated db blip'); };
+  try {
+    await request(app).post(`/webhooks/payment/${endpointId}`)
+      .set('Content-Type', 'application/x-www-form-urlencoded').send(encodeForm(payload)).expect(500);
+  } finally {
+    paymentsService.recordPaymentOutcome = real;
+  }
+
+  // Provider retry: must process, not be waved through as a duplicate.
+  const retry = await request(app).post(`/webhooks/payment/${endpointId}`)
+    .set('Content-Type', 'application/x-www-form-urlencoded').send(encodeForm(payload)).expect(200);
+  assert.equal(retry.body.duplicate, undefined);
+  assert.equal(retry.body.status, 'approved');
+
+  const linkAfter = await withSystem((c) => c.query(
+    'SELECT status FROM payment_links WHERE id = $1', [linkRes.body.id]));
+  assert.equal(linkAfter.rows[0].status, 'paid');
+  const event = await withSystem((c) => c.query(
+    'SELECT processed FROM webhook_events WHERE provider_event_id = $1', [payload.trans_id]));
+  assert.equal(event.rows[0].processed, true);
 });
