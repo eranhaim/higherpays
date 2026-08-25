@@ -126,41 +126,11 @@ function safeEqual(a, b) {
   try { return crypto.timingSafeEqual(x, y); } catch { return false; }
 }
 
-/** Second regression: the live Signature Validator's expected output. */
-function testValidatorVector() {
-  const expectedConcat = '37710970120.00EURord-test-001PPV+bundleen-USJohn+Smithjohn@example.com'
-    + '+35799123456https://api.higherpays.com/webhooks/payment/abc'
-    + 'https://app.higherpays.com/thanks999999';
-  const expectedSig = '/o+QnAtvuyRHFRntTEtq879sWXq1oXl2P3I59ksTUkQ=';
-  const order = ['merchantID','trans_type','trans_installments','trans_amount','trans_currency',
-    'trans_refNum','disp_payFor','disp_lng','client_fullName','client_email','client_phoneNum',
-    'notification_url','url_redirect','Brand','ExpiredOn'];
-  const params = { merchantID:'3771097', trans_type:'0', trans_installments:'1',
-    trans_amount:'20.00', trans_currency:'EUR', trans_refNum:'ord-test-001',
-    disp_payFor:'PPV bundle', disp_lng:'en-US', client_fullName:'John Smith',
-    client_email:'john@example.com', client_phoneNum:'+35799123456',
-    notification_url:'https://api.higherpays.com/webhooks/payment/abc',
-    url_redirect:'https://app.higherpays.com/thanks', Brand:'', ExpiredOn:'' };
-  const r = signHosted(params, '999999', { order });
-  return { concat: r.signedString === expectedConcat, signature: r.base64 === expectedSig };
-}
-/** Regression test against the provider's own generator output. */
-function test() {
-  const s = '377109718015EURProduct-name0en-gbjohn+smithtest%40test.com'
-          + '%2b972547880123067823012barkat+13HOLON5447778DIL999999';
-  const expectedB64 = 'uaPyTpm63hyv0bdYfkfLspPXxr2lW6KOlfy4CExuRnQ=';
-  const expectedHex = 'b9a3f24e99bade1cafd1b7587e47cbb293d7c6bda55ba28e95fcb8084c6e4674';
-  const gotB64 = digest(s);
-  const gotHex = crypto.createHash('sha256').update(s, 'utf8').digest('hex');
-  return {
-    base64: gotB64 === expectedB64,
-    hex: gotHex === expectedHex,
-    encoded: encodeURIComponent(gotB64) === 'uaPyTpm63hyv0bdYfkfLspPXxr2lW6KOlfy4CExuRnQ%3D',
-  };
-}
+// The provider's own generator and validator vectors are asserted in
+// test/mantapay.test.js — if their scheme ever changes, that suite fails.
 
 module.exports = {
-  digest, urlEncodeDotNet, hashValue, signHosted, testValidatorVector, signServerToServer, safeEqual, test,
+  digest, urlEncodeDotNet, hashValue, signHosted, signServerToServer, safeEqual,
   HOSTED_FIELD_ORDER_REQUEST, HOSTED_FIELD_ORDER_JS, S2S_FIELD_ORDER,
 };
 

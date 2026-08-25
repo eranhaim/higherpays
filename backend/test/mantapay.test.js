@@ -21,17 +21,34 @@ const provider = require('../src/providers/mantapay');
 
 // ── Signature ────────────────────────────────────────────────────────────────
 
+// Vector captured from MantaPay's own Signature Generator page.
 test('hashing matches MantaPay Signature Generator output', () => {
-  const r = sig.test();
-  assert.equal(r.base64, true, 'base64 digest');
-  assert.equal(r.hex, true, 'hex digest');
-  assert.equal(r.encoded, true, 'url-encoded form');
+  const s = '377109718015EURProduct-name0en-gbjohn+smithtest%40test.com'
+          + '%2b972547880123067823012barkat+13HOLON5447778DIL999999';
+  const b64 = sig.digest(s);
+  assert.equal(b64, 'uaPyTpm63hyv0bdYfkfLspPXxr2lW6KOlfy4CExuRnQ=', 'base64 digest');
+  assert.equal(require('crypto').createHash('sha256').update(s, 'utf8').digest('hex'),
+    'b9a3f24e99bade1cafd1b7587e47cbb293d7c6bda55ba28e95fcb8084c6e4674', 'hex digest');
+  assert.equal(encodeURIComponent(b64), 'uaPyTpm63hyv0bdYfkfLspPXxr2lW6KOlfy4CExuRnQ%3D', 'url-encoded form');
 });
 
+// Vector captured from MantaPay's live Signature Validator.
 test('request signature matches MantaPay Signature Validator, byte for byte', () => {
-  const r = sig.testValidatorVector();
-  assert.equal(r.concat, true, 'concatenation string (168 chars)');
-  assert.equal(r.signature, true, 'signature /o+QnAtvuy...');
+  const order = ['merchantID', 'trans_type', 'trans_installments', 'trans_amount', 'trans_currency',
+    'trans_refNum', 'disp_payFor', 'disp_lng', 'client_fullName', 'client_email', 'client_phoneNum',
+    'notification_url', 'url_redirect', 'Brand', 'ExpiredOn'];
+  const params = { merchantID: '3771097', trans_type: '0', trans_installments: '1',
+    trans_amount: '20.00', trans_currency: 'EUR', trans_refNum: 'ord-test-001',
+    disp_payFor: 'PPV bundle', disp_lng: 'en-US', client_fullName: 'John Smith',
+    client_email: 'john@example.com', client_phoneNum: '+35799123456',
+    notification_url: 'https://api.higherpays.com/webhooks/payment/abc',
+    url_redirect: 'https://app.higherpays.com/thanks', Brand: '', ExpiredOn: '' };
+  const r = sig.signHosted(params, '999999', { order });
+  assert.equal(r.signedString,
+    '37710970120.00EURord-test-001PPV+bundleen-USJohn+Smithjohn@example.com'
+    + '+35799123456https://api.higherpays.com/webhooks/payment/abc'
+    + 'https://app.higherpays.com/thanks999999', 'concatenation string (168 chars)');
+  assert.equal(r.base64, '/o+QnAtvuyRHFRntTEtq879sWXq1oXl2P3I59ksTUkQ=', 'signature /o+QnAtvuy...');
 });
 
 test('hash input keeps + for spaces and does NOT escape anything else', () => {

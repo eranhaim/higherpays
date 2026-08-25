@@ -2,7 +2,16 @@
 const { Pool } = require('pg');
 const config = require('./config');
 
-const pool = new Pool({ connectionString: config.databaseUrl });
+// Sized for one API container against the default Postgres max_connections
+// (100), leaving room for migrations, backups and psql. A statement that runs
+// longer than the timeout is a bug or an attack, not a query to wait for.
+const pool = new Pool({
+  connectionString: config.databaseUrl,
+  max: parseInt(process.env.PG_POOL_MAX || '20', 10),
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 5_000,
+  statement_timeout: parseInt(process.env.PG_STATEMENT_TIMEOUT_MS || '30000', 10),
+});
 
 // Plain query — use for auth/global tables (users, refresh_tokens) and for
 // cross-workspace lookups like "which workspaces does this user belong to".

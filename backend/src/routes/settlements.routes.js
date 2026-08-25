@@ -117,32 +117,29 @@ router.get('/', requirePermission('commissions.view'), asyncHandler(async (req, 
         ORDER BY period_end DESC, id DESC LIMIT $4`,
       [wid(req), cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1])).rows;
     const { items: settlements, nextCursor } = page(fetched, limit, (r) => r.period_end, (r) => r.id);
+    if (!settlements.length) return { items: [], nextCursor };
+
+    // Our own numbers for every window in one round-trip, keyed by settlement id.
+    const ours = new Map((await c.query(
+      `SELECT s.id,
+              COALESCE(SUM(t.gross) FILTER (WHERE t.status='approved'), 0)          AS gross,
+              COUNT(t.id) FILTER (WHERE t.status='approved')                       AS sales,
+              COUNT(t.id) FILTER (WHERE t.status='declined')                       AS declined,
+              COALESCE(SUM(ce.psp_fee) FILTER (WHERE ce.entry_type='sale'), 0)     AS est_psp_fee,
+              COUNT(ce.id) FILTER (WHERE ce.entry_type='refund')                   AS refunds,
+              COUNT(ce.id) FILTER (WHERE ce.entry_type='chargeback')               AS chargebacks
+         FROM settlements s
+         LEFT JOIN transactions t
+           ON t.currency = s.currency AND t.occurred_at >= s.period_start::date AND t.occurred_at < (s.period_end::date + 1)
+         LEFT JOIN commission_entries ce ON ce.transaction_id = t.id
+        WHERE s.id = ANY($1::uuid[])
+        GROUP BY s.id`, [settlements.map((s) => s.id)])).rows.map((r) => [r.id, r]));
 
     const out = [];
     for (const s of settlements) {
-      // our own numbers for the same window + currency
-      const ours = (await c.query(
-        `SELECT COALESCE(SUM(t.gross)   FILTER (WHERE t.status='approved'), 0)  AS gross,
-                COUNT(*)               FILTER (WHERE t.status='approved')      AS sales,
-                COUNT(*)               FILTER (WHERE t.status='declined')      AS declined,
-                COALESCE(SUM(ce.psp_fee) FILTER (WHERE ce.entry_type='sale'), 0) AS est_psp_fee
-           FROM transactions t
-           LEFT JOIN commission_entries ce ON ce.transaction_id = t.id
-          WHERE t.currency = $1
-            AND t.occurred_at >= $2::date
-            AND t.occurred_at < ($3::date + 1)`,
-        [s.currency, s.period_start, s.period_end])).rows[0];
-
-      const reversals = (await c.query(
-        `SELECT COUNT(*) FILTER (WHERE entry_type='refund')     AS refunds,
-                COUNT(*) FILTER (WHERE entry_type='chargeback') AS chargebacks
-           FROM commission_entries ce
-           JOIN transactions t ON t.id = ce.transaction_id
-          WHERE t.currency = $1 AND t.occurred_at >= $2::date AND t.occurred_at < ($3::date + 1)`,
-        [s.currency, s.period_start, s.period_end])).rows[0];
-
+      const o = ours.get(s.id) || {};
       const reported = { volume: n(s.volume), sales: n(s.total_transactions), declined: n(s.declined), refunds: n(s.refunds), chargebacks: n(s.chargebacks), fees: n(s.total_fees) };
-      const mine = { volume: n(ours.gross), sales: n(ours.sales), declined: n(ours.declined), refunds: n(reversals.refunds), chargebacks: n(reversals.chargebacks), fees: n(ours.est_psp_fee) };
+      const mine = { volume: n(o.gross), sales: n(o.sales), declined: n(o.declined), refunds: n(o.refunds), chargebacks: n(o.chargebacks), fees: n(o.est_psp_fee) };
 
       out.push({
         id: s.id, currency: s.currency, periodStart: s.period_start, periodEnd: s.period_end,
