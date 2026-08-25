@@ -35,13 +35,11 @@ export default function LinksPage() {
   const { rateCard: rc } = useRateCard();
   const { links, isLoading, create, reconcile } = useLinksData();
   const { creators } = useCreatorsData();
-  const chatters = useAppStore((s) => s.chatters);
   const linkLimits = useAppStore((s) => s.linkLimits);
 
   const [filters, setFilters] = useState<LinksFilters>(DEFAULT_FILTERS);
   const [createOpen, setCreateOpen] = useState(false);
   const [plCreatorId, setPlCreatorId] = useState('');
-  const [plChatter, setPlChatter] = useState('');
   const [plName, setPlName] = useState('');
   const [plUser, setPlUser] = useState('');
   const [plAmt, setPlAmt] = useState('');
@@ -57,7 +55,6 @@ export default function LinksPage() {
   const openCreate = () => {
     const activeCreators = creators.filter((c) => c.status !== 'paused' && c.status !== 'suspended');
     setPlCreatorId(activeCreators[0]?.id ?? '');
-    setPlChatter(chatters[0]?.name ?? '');
     setPlName(''); setPlUser(''); setPlAmt('');
     setCreateOpen(true);
   };
@@ -82,7 +79,7 @@ export default function LinksPage() {
       const { url } = await create({
         creatorId: plCreatorId,
         creator: selected?.name ?? '',
-        chatter: plChatter,
+        chatter: '',
         customerName: plName,
         customerUsername: plUser,
         amount: amt,
@@ -157,7 +154,7 @@ export default function LinksPage() {
         </select>
         <select value={filters.chatter} onChange={(e) => setFilters((f) => ({ ...f, chatter: e.target.value }))}>
           <option value="">All chatters</option>
-          {[...new Set(chatters.map((c) => c.name))].map((n) => <option key={n}>{n}</option>)}
+          {[...new Set(links.map((l) => l.chatter).filter(Boolean) as string[])].map((n) => <option key={n}>{n}</option>)}
         </select>
         <select
           value={filters.status}
@@ -219,17 +216,11 @@ export default function LinksPage() {
           </select>
         </div>
         <div className="field">
-          <label>Chatter</label>
-          <select value={plChatter} onChange={(e) => setPlChatter(e.target.value)}>
-            {chatters.map((c) => <option key={c.id}>{c.name}</option>)}
-          </select>
-        </div>
-        <div className="field">
-          <label>Customer name</label>
+          <label>Customer name <span className="sub" style={{ marginLeft: 4 }}>(optional)</span></label>
           <input type="text" placeholder="Display name" value={plName} onChange={(e) => setPlName(e.target.value)} />
         </div>
         <div className="field">
-          <label>Customer username</label>
+          <label>Customer username <span className="sub" style={{ marginLeft: 4 }}>(optional)</span></label>
           <input
             type="text" placeholder="@username" value={plUser}
             onChange={(e) => setPlUser(e.target.value)}

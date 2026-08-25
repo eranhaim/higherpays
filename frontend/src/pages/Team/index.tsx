@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useAppStore } from '../../store/appStore';
 import { useCan } from '../../hooks/usePermission';
-import Modal from '../../components/Modal';
 import { toast } from '../../components/Toast';
 import { PageHeader } from '../../components/ui';
 import { useTeamData } from './useTeamData';
@@ -13,28 +12,7 @@ export default function TeamPage() {
   const can = useCan();
   const members = useAppStore(s => s.members);
   const { chatters, isLoading, isError, setCommission } = useTeamData();
-  const creators = useAppStore(s => s.creators);
   const commission = useAppStore(s => s.commission);
-  const mode = useAppStore(s => s.mode);
-  const updateState = useAppStore(s => s.updateState);
-
-  const [chatterModal, setChatterModal] = useState(false);
-  const [inviteModal, setInviteModal] = useState(false);
-
-  // chatter form state
-  const [hName, setHName] = useState('');
-  const [hEmail, setHEmail] = useState('');
-  const [hShift, setHShift] = useState<'Day' | 'Night'>('Day');
-  const [hAssigned, setHAssigned] = useState<string[]>([]);
-  const [hErrors, setHErrors] = useState<Record<string, boolean>>({});
-
-  // invite form state
-  const [invName, setInvName] = useState('');
-  const [invEmail, setInvEmail] = useState('');
-  const [invRole, setInvRole] = useState('admin');
-  const [invErrors, setInvErrors] = useState<Record<string, boolean>>({});
-
-  const canManage = can('team.manage');
 
   const people = [
     ...members.map(m => ({ name: m.name, email: m.email, role: m.role, extra: '' })),
@@ -44,7 +22,6 @@ export default function TeamPage() {
     })),
   ];
 
-  // --- Chatter commission ---
   const canViewComm = can('commissions.view');
   const canManageComm = can('commissions.manage');
   const [commEdits, setCommEdits] = useState<Record<string, number>>({});
@@ -64,57 +41,14 @@ export default function TeamPage() {
     }
   };
 
-  // --- Add chatter ---
-  const addChatter = () => {
-    const errors: Record<string, boolean> = {};
-    if (!hName.trim()) errors.name = true;
-    if (!hEmail.trim()) errors.email = true;
-    if (Object.keys(errors).length) { setHErrors(errors); return; }
-    const newChatter = {
-      id: 'ch' + (chatters.length + 1),
-      name: hName.trim(),
-      email: hEmail.trim(),
-      status: 'active' as const,
-      shift: hShift,
-      assigned: hAssigned,
-      commissionPct: commission.chatterPct,
-    };
-    updateState({ chatters: [...chatters, newChatter] });
-    setChatterModal(false);
-    setHName(''); setHEmail(''); setHShift('Day'); setHAssigned([]); setHErrors({});
-    toast('Chatter added.');
-  };
-
-  // --- Invite member ---
-  const inviteMember = () => {
-    const errors: Record<string, boolean> = {};
-    if (!invName.trim()) errors.name = true;
-    if (!invEmail.trim()) errors.email = true;
-    if (Object.keys(errors).length) { setInvErrors(errors); return; }
-    const newMember = { name: invName.trim(), email: invEmail.trim(), role: invRole };
-    updateState({ members: [...members, newMember] });
-    setInviteModal(false);
-    setInvName(''); setInvEmail(''); setInvRole('admin'); setInvErrors({});
-    toast(mode === 'demo' ? 'Invite sent (demo).' : 'Invite sent.');
-  };
-
   return (
     <div>
       <PageHeader
         eyebrow="People"
         title="Team"
         subtitle="Everyone with a seat in this workspace."
-        actions={
-          canManage ? (
-            <>
-              <button className="btn ghost" onClick={() => setChatterModal(true)}>Add chatter</button>
-              <button className="btn" onClick={() => setInviteModal(true)}>Invite member</button>
-            </>
-          ) : null
-        }
       />
 
-      {/* Team table */}
       <div className="card">
         <div className="tablewrap" style={{ border: 'none' }}>
           <table>
@@ -126,6 +60,8 @@ export default function TeamPage() {
                 <tr><td colSpan={3} style={{ padding: 36, textAlign: 'center', color: 'var(--muted)' }}>Loading team…</td></tr>
               ) : isError ? (
                 <tr><td colSpan={3} style={{ padding: 36, textAlign: 'center', color: 'var(--neg)' }}>Couldn't load team.</td></tr>
+              ) : people.length === 0 ? (
+                <tr><td colSpan={3} style={{ padding: 36, textAlign: 'center', color: 'var(--muted)' }}>No team members yet.</td></tr>
               ) : people.map((p, i) => (
                 <tr key={i}>
                   <td>
@@ -152,7 +88,6 @@ export default function TeamPage() {
         </div>
       </div>
 
-      {/* Chatter commission */}
       {canViewComm && chatters.length > 0 && (
         <div style={{ marginTop: 16 }}>
           <div className="card">
@@ -200,95 +135,6 @@ export default function TeamPage() {
           </div>
         </div>
       )}
-
-      {/* Add Chatter Modal */}
-      <Modal open={chatterModal} onClose={() => setChatterModal(false)}>
-        <h3>Add chatter</h3>
-        <p className="sub">An employee who handles messaging for assigned creators.</p>
-        <div className="field">
-          <label>Name</label>
-          <input
-            type="text" placeholder="Full name" value={hName}
-            onChange={e => { setHName(e.target.value); setHErrors(p => ({ ...p, name: false })); }}
-            style={hErrors.name ? { borderColor: 'var(--red)' } : undefined}
-          />
-        </div>
-        <div className="field">
-          <label>Work email</label>
-          <input
-            type="text" placeholder="name@company.com" value={hEmail}
-            onChange={e => { setHEmail(e.target.value); setHErrors(p => ({ ...p, email: false })); }}
-            style={hErrors.email ? { borderColor: 'var(--red)' } : undefined}
-          />
-        </div>
-        <div className="field">
-          <label>Shift</label>
-          <select value={hShift} onChange={e => setHShift(e.target.value as 'Day' | 'Night')}>
-            <option>Day</option>
-            <option>Night</option>
-          </select>
-        </div>
-        <div className="field">
-          <label>Assigned creators</label>
-          <div style={{ maxHeight: 130, overflow: 'auto' }}>
-            {creators.length > 0 ? creators.map(cr => (
-              <label key={cr.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '14.3px', padding: '6px 0', color: 'var(--text)' }}>
-                <input
-                  type="checkbox" value={cr.name}
-                  checked={hAssigned.includes(cr.name)}
-                  onChange={e => {
-                    setHAssigned(prev =>
-                      e.target.checked ? [...prev, cr.name] : prev.filter(n => n !== cr.name)
-                    );
-                  }}
-                  style={{ minWidth: 'auto', width: 'auto' }}
-                />
-                {cr.name} <span style={{ color: 'var(--muted)' }}>{cr.handle}</span>
-              </label>
-            )) : (
-              <span style={{ color: 'var(--muted)', fontSize: '14.3px' }}>Add a creator first.</span>
-            )}
-          </div>
-        </div>
-        <div className="modal-actions">
-          <button className="btn ghost" onClick={() => setChatterModal(false)}>Cancel</button>
-          <button className="btn" onClick={addChatter}>Add chatter</button>
-        </div>
-      </Modal>
-
-      {/* Invite Member Modal */}
-      <Modal open={inviteModal} onClose={() => setInviteModal(false)}>
-        <h3>Invite team member</h3>
-        <p className="sub">They'll receive an email with a login link.</p>
-        <div className="field">
-          <label>Name</label>
-          <input
-            type="text" placeholder="Full name" value={invName}
-            onChange={e => { setInvName(e.target.value); setInvErrors(p => ({ ...p, name: false })); }}
-            style={invErrors.name ? { borderColor: 'var(--red)' } : undefined}
-          />
-        </div>
-        <div className="field">
-          <label>Email</label>
-          <input
-            type="text" placeholder="name@company.com" value={invEmail}
-            onChange={e => { setInvEmail(e.target.value); setInvErrors(p => ({ ...p, email: false })); }}
-            style={invErrors.email ? { borderColor: 'var(--red)' } : undefined}
-          />
-        </div>
-        <div className="field">
-          <label>Role</label>
-          <select value={invRole} onChange={e => setInvRole(e.target.value)}>
-            <option value="admin">Admin</option>
-            <option value="manager">Manager</option>
-            <option value="analyst">Analyst</option>
-          </select>
-        </div>
-        <div className="modal-actions">
-          <button className="btn ghost" onClick={() => setInviteModal(false)}>Cancel</button>
-          <button className="btn" onClick={inviteMember}>Send invite</button>
-        </div>
-      </Modal>
     </div>
   );
 }

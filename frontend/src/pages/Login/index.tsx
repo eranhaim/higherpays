@@ -6,8 +6,6 @@ import { HttpError } from '../../api/http';
 import { isTwoFactorRequired, type LoginSuccess } from '../../api/types';
 import { useAuthStore, useIsAuthenticated } from '../../store/auth';
 import { useSessionStore } from '../../store/session';
-import { useDemoModeStore } from '../../store/demoMode';
-import { useAppStore } from '../../store/appStore';
 
 /**
  * Sign-in screen.
@@ -15,8 +13,6 @@ import { useAppStore } from '../../store/appStore';
  * States:
  *   - `credentials`: email + password
  *   - `totp`: 2FA required after the first submit — collect the 6-digit code
- *
- * Also exposes the escape hatch into the offline demo (no server needed).
  */
 
 type Stage = 'credentials' | 'totp';
@@ -30,16 +26,12 @@ export default function LoginPage() {
   const from = (location.state as LocationState | null)?.from?.pathname ?? '/payments';
 
   const [stage, setStage] = useState<Stage>('credentials');
-  const [email, setEmail] = useState('owner@example.com');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [totp, setTotp] = useState('');
 
   const setSession = useAuthStore((s) => s.setSession);
   const setActiveWorkspaceId = useSessionStore((s) => s.setActiveWorkspaceId);
-  const enableDemo = useDemoModeStore((s) => s.enable);
-  const disableDemo = useDemoModeStore((s) => s.disable);
-  const setAppMode = useAppStore((s) => s.setMode);
-  const loadDemo = useAppStore((s) => s.loadDemoState);
 
   const login = useMutation({
     mutationFn: (input: { email: string; password: string; totp?: string }) =>
@@ -57,10 +49,6 @@ export default function LoginPage() {
     setSession(response);
     const firstWorkspace = response.workspaces[0];
     if (firstWorkspace) setActiveWorkspaceId(firstWorkspace.id);
-    // Explicitly leave demo mode: without this, data hooks keep serving demo
-    // data even after a valid login (useCurrentSession checks demo first).
-    disableDemo();
-    setAppMode('live');
     navigate(from, { replace: true });
   }
 
@@ -71,13 +59,6 @@ export default function LoginPage() {
     } else {
       login.mutate({ email: email.trim(), password, totp: totp.trim() });
     }
-  }
-
-  function handleDemo() {
-    loadDemo();
-    setAppMode('demo');
-    enableDemo();
-    navigate('/payments', { replace: true });
   }
 
   if (isAuthed) return <Navigate to={from} replace />;
@@ -166,17 +147,6 @@ export default function LoginPage() {
             </button>
           )}
         </form>
-
-        <div className="auth-divider"><span>or</span></div>
-
-        <button className="btn ghost" style={{ width: '100%' }} onClick={handleDemo}>
-          Try the demo (no account needed)
-        </button>
-
-        <p className="auth-hint">
-          Local dev: the seeded owner is{' '}
-          <code>owner@example.com</code> / <code>change-me-please</code>.
-        </p>
       </div>
     </div>
   );

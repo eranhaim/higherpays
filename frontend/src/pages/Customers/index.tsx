@@ -1,6 +1,5 @@
 import { useState, useMemo } from 'react';
 import { useAppStore } from '../../store/appStore';
-import { useCan } from '../../hooks/usePermission';
 import Modal from '../../components/Modal';
 import { toast } from '../../components/Toast';
 import { tzParts } from '../../business/timezone';
@@ -34,12 +33,10 @@ const DEFAULT_COLS = new Set(['name', 'username', 'creator', 'chatter', 'spend',
 const SEGMENTS: CustomerSegment[] = ['New', 'Regular', 'High value', 'VIP', 'Inactive', 'At-risk'];
 
 export default function CustomersPage() {
-  const can = useCan();
   const { customers, isLoading, isError } = useCustomersData();
   const creators = useAppStore(s => s.creators);
   const chatters = useAppStore(s => s.chatters);
   const links = useAppStore(s => s.links);
-  const updateState = useAppStore(s => s.updateState);
   const tzMode = useAppStore(s => s.tzMode);
   const tzManual = useAppStore(s => s.tzManual);
 
@@ -68,15 +65,6 @@ export default function CustomersPage() {
 
   // Customer card
   const [cardId, setCardId] = useState<string | null>(null);
-
-  // Add customer
-  const [addModal, setAddModal] = useState(false);
-  const [cuName, setCuName] = useState('');
-  const [cuUser, setCuUser] = useState('');
-  const [cuCreator, setCuCreator] = useState(creators[0]?.name || '');
-  const [cuChatter, setCuChatter] = useState(chatters[0]?.name || '');
-  const [cuSeg, setCuSeg] = useState<CustomerSegment>('New');
-  const [cuError, setCuError] = useState(false);
 
   // Filtered list
   const filtered = useMemo(() => {
@@ -114,22 +102,6 @@ export default function CustomersPage() {
 
   const clearFilters = () => { setSeg(''); setSearch(''); setCrFilter(''); setChFilter(''); setSort('spend'); };
 
-  const addCustomer = () => {
-    if (!cuName.trim()) { setCuError(true); return; }
-    let u = cuUser.trim();
-    if (u && !u.startsWith('@')) u = '@' + u;
-    const newCust: Customer = {
-      id: 'cu' + (customers.length + 1),
-      name: cuName.trim(), username: u, email: '',
-      creator: cuCreator, chatter: cuChatter,
-      spend: 0, purchases: 0, last: Date.now(), seg: cuSeg,
-    };
-    updateState({ customers: [...customers, newCust] });
-    setAddModal(false);
-    setCuName(''); setCuUser(''); setCuError(false);
-    toast('Customer added.');
-  };
-
   const applyColumns = () => {
     if (colPick.size === 0) { toast('Pick at least one column.'); return; }
     setCols(new Set(colPick));
@@ -146,16 +118,6 @@ export default function CustomersPage() {
         eyebrow="People"
         title="Customers"
         subtitle="Everyone who paid, with what they spent and who they belong to."
-        actions={
-          <>
-            {can('customers.export') && (
-              <button className="btn ghost" onClick={() => toast('Export coming soon.')}>Export</button>
-            )}
-            {can('customers.manage') && (
-              <button className="btn" onClick={() => setAddModal(true)}>Add customer</button>
-            )}
-          </>
-        }
       />
 
       {/* Filters */}
@@ -277,44 +239,6 @@ export default function CustomersPage() {
         </div>
       </Modal>
 
-      {/* Add customer modal */}
-      <Modal open={addModal} onClose={() => setAddModal(false)}>
-        <h3>Add customer</h3>
-        <p className="sub">Fan CRM record. Keep only data you have a lawful basis to hold.</p>
-        <div className="field">
-          <label>Name</label>
-          <input type="text" placeholder="Display name" value={cuName}
-            onChange={e => { setCuName(e.target.value); setCuError(false); }}
-            style={cuError ? { borderColor: 'var(--red)' } : undefined} />
-        </div>
-        <div className="field">
-          <label>Username</label>
-          <input type="text" placeholder="@username" value={cuUser}
-            onChange={e => setCuUser(e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Creator</label>
-          <select value={cuCreator} onChange={e => setCuCreator(e.target.value)}>
-            {creators.map(c => <option key={c.id}>{c.name}</option>)}
-          </select>
-        </div>
-        <div className="field">
-          <label>Chatter</label>
-          <select value={cuChatter} onChange={e => setCuChatter(e.target.value)}>
-            {chatters.map(c => <option key={c.id}>{c.name}</option>)}
-          </select>
-        </div>
-        <div className="field">
-          <label>Segment</label>
-          <select value={cuSeg} onChange={e => setCuSeg(e.target.value as CustomerSegment)}>
-            {SEGMENTS.map(s => <option key={s}>{s}</option>)}
-          </select>
-        </div>
-        <div className="modal-actions">
-          <button className="btn ghost" onClick={() => setAddModal(false)}>Cancel</button>
-          <button className="btn" onClick={addCustomer}>Add customer</button>
-        </div>
-      </Modal>
     </div>
   );
 }
