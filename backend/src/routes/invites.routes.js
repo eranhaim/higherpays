@@ -3,13 +3,13 @@ const express = require('express');
 const crypto = require('crypto');
 const { withWorkspace, withPlatformAdmin } = require('../db');
 const { requireAuth, requireWorkspace, requirePermission } = require('../middleware');
-const { asyncHandler, audit } = require('../util/audit');
+const { asyncHandler } = require('../lib/http');
+const { audit } = require('../util/audit');
 const { hashPassword } = require('../auth/passwords');
 const { isStr, badRequest } = require('../util/validate');
 const { sendEmail } = require('../util/email');
 
-const wid = (req) => req.membership.workspaceId;
-const uid = (req) => req.user.id;
+const { wid, uid } = require('../lib/scope');
 const hashToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
 
 // ---- workspace-scoped: create + list invites (mounted under /workspaces/:id) ----

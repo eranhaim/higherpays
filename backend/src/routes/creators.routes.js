@@ -2,7 +2,8 @@
 const express = require('express');
 const { withWorkspace } = require('../db');
 const { requirePermission } = require('../middleware');
-const { asyncHandler, audit } = require('../util/audit');
+const { asyncHandler } = require('../lib/http');
+const { audit } = require('../util/audit');
 const { isStr, isOptStr, badRequest } = require('../util/validate');
 const { maxChatterPct } = require('../services/splits');
 
@@ -15,8 +16,7 @@ async function splitTooHigh(c, workspaceId, split) {
 
 // mergeParams so :workspaceId from the parent mount is visible here.
 const router = express.Router({ mergeParams: true });
-const wid = (req) => req.membership.workspaceId;
-const uid = (req) => req.user.id;
+const { wid, uid } = require('../lib/scope');
 
 // GET /workspaces/:workspaceId/creators
 router.get('/', requirePermission('creators.view'), asyncHandler(async (req, res) => {

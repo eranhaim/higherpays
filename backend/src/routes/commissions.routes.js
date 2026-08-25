@@ -2,13 +2,13 @@
 const express = require('express');
 const { withWorkspace } = require('../db');
 const { requirePermission } = require('../middleware');
-const { asyncHandler, audit } = require('../util/audit');
+const { asyncHandler } = require('../lib/http');
+const { audit } = require('../util/audit');
 const { badRequest } = require('../util/validate');
 const { maxCreatorSplitPct } = require('../services/splits');
 
 const router = express.Router({ mergeParams: true });
-const wid = (req) => req.membership.workspaceId;
-const uid = (req) => req.user.id;
+const { wid, uid } = require('../lib/scope');
 
 const pct = (v) => typeof v === 'number' && v >= 0 && v <= 100;
 

@@ -8,11 +8,10 @@
 const express = require('express');
 const { withWorkspace } = require('../db');
 const { requirePermission } = require('../middleware');
-const { asyncHandler } = require('../util/audit');
+const { asyncHandler } = require('../lib/http');
 
 const router = express.Router({ mergeParams: true });
-const wid = (req) => req.membership.workspaceId;
-const uid = (req) => req.user.id;
+const { wid, uid } = require('../lib/scope');
 const n = (v) => Number(v || 0);
 const r2 = (v) => Math.round(v * 100) / 100;
 

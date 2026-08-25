@@ -9,6 +9,7 @@
     "start": "node src/server.js",
     "migrate": "node src/util/migrate.js",
     "seed": "node src/util/seed.js",
+    "retention": "node src/util/redact.js",
     "setup": "node src/util/migrate.js && node src/util/seed.js",
     "test": "node --test test/*.test.js",
     "test:db": "node --test test/engine.test.js",

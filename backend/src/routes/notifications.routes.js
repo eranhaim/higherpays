@@ -2,12 +2,12 @@
 const express = require('express');
 const { withWorkspace } = require('../db');
 const { requirePermission } = require('../middleware');
-const { asyncHandler, audit } = require('../util/audit');
+const { asyncHandler } = require('../lib/http');
+const { audit } = require('../util/audit');
 const notify = require('../notify');
 
 const router = express.Router({ mergeParams: true });
-const wid = (req) => req.membership.workspaceId;
-const uid = (req) => req.user.id;
+const { wid, uid } = require('../lib/scope');
 const num = (v) => (v == null ? null : Number(v));
 
 

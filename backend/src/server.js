@@ -2,7 +2,7 @@
 const express = require('express');
 const path = require('path');
 const config = require('./config');
-const { pool } = require('./db');
+const { pool, withSystem } = require('./db');
 const { log, requestLogger } = require('./lib/log');
 const authRoutes = require('./routes/auth.routes');
 const creatorsRoutes = require('./routes/creators.routes');
@@ -35,6 +35,17 @@ app.disable('x-powered-by');
 
 app.use(requestLogger);
 
+// The API only ever returns JSON; these headers stop a browser treating a
+// response as anything else, or framing it.
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  res.setHeader('Cache-Control', 'no-store');
+  next();
+});
+
 // CORS — only the origins we serve the console from. Same-origin requests
 // (production, via the nginx /api proxy) carry no Origin and pass untouched.
 app.use((req, res, next) => {
@@ -65,8 +76,9 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 // mean a payment exists at the provider and not in the ledger.
 app.get('/health', asyncHandler(async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      "SELECT count(*)::int AS stale FROM webhook_events WHERE processed = false AND signature_valid = true AND created_at < now() - interval '1 hour'");
+    // webhook_events is tenant-scoped; the health check counts across tenants.
+    const { rows } = await withSystem((c) => c.query(
+      "SELECT count(*)::int AS stale FROM webhook_events WHERE processed = false AND signature_valid = true AND received_at < now() - interval '1 hour'"));
     const staleWebhooks = rows[0].stale;
     res.status(staleWebhooks ? 503 : 200).json({ ok: staleWebhooks === 0, env: config.env, db: 'up', staleWebhooks });
   } catch (e) {

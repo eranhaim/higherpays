@@ -1,9 +1,6 @@
 'use strict';
 const { query } = require('../db');
 const { log } = require('../lib/log');
-// Re-export from lib/http for backwards compatibility with existing route
-// files that do `require('../util/audit').asyncHandler`.
-const { asyncHandler } = require('../lib/http');
 
 // Append an entry to the audit log. Best-effort: never block the request path
 // on an audit write failure, but do log it.
@@ -21,4 +18,4 @@ async function audit({ workspaceId = null, actorUserId = null, action, entityTyp
   }
 }
 
-module.exports = { asyncHandler, audit };
+module.exports = { audit };

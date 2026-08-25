@@ -1,4 +1,5 @@
 'use strict';
+const crypto = require('crypto');
 const express = require('express');
 const { withWorkspace } = require('../db');
 const { requirePermission } = require('../middleware');
@@ -11,8 +12,7 @@ const provider = require('../providers/mantapay');
 const paymentsService = require('../services/payments.service');
 
 const router = express.Router({ mergeParams: true });
-const wid = (req) => req.membership.workspaceId;
-const uid = (req) => req.user.id;
+const { wid, uid } = require('../lib/scope');
 
 const MIN_FIXED_AMOUNT = 3;             // provider minimum: 3 USD/EUR
 const CHATTER_RATE_WINDOW_SECONDS = 30; // rate limit: one link per chatter per 30s
@@ -113,7 +113,9 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
   if (!config.supportedCurrencies.includes(cur)) {
     return badRequest(res, `currency ${cur} is not enabled (supported: ${config.supportedCurrencies.join(', ')})`, ['currency']);
   }
-  const referenceId = 'ord_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  // The provider echoes this back as the attribution key; 64 random bits and
+  // a UNIQUE constraint mean a collision cannot credit the wrong creator.
+  const referenceId = 'ord_' + crypto.randomBytes(8).toString('hex');
 
   const result = await withWorkspace(wid(req), uid(req), async (c) => {
     // Rate limit: only for chatters, one link per CHATTER_RATE_WINDOW_SECONDS.

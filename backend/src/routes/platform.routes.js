@@ -4,7 +4,8 @@ const express = require('express');
 const crypto = require('crypto');
 const { withPlatformAdmin } = require('../db');
 const { requirePlatformRole } = require('../middleware');
-const { asyncHandler, audit } = require('../util/audit');
+const { asyncHandler } = require('../lib/http');
+const { audit } = require('../util/audit');
 const { isStr, badRequest } = require('../util/validate');
 const { seedRolesForWorkspace } = require('../auth/permissions');
 const { sendEmail } = require('../util/email');
@@ -15,7 +16,7 @@ const hashToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
 // Reads are open to every platform role; `finance` may reprice an agency;
 // only `super_admin` may onboard or suspend one.
 const router = express.Router();
-const uid = (req) => req.user.id;
+const { uid } = require('../lib/scope');
 const pct = (v) => typeof v === 'number' && v >= 0 && v <= 100;
 const superAdminOnly = requirePlatformRole('super_admin');
 const financeOrSuperAdmin = requirePlatformRole('super_admin', 'finance');

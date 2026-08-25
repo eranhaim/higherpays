@@ -2,12 +2,13 @@
 const express = require('express');
 const { withWorkspace } = require('../db');
 const { requirePermission } = require('../middleware');
-const { asyncHandler, audit } = require('../util/audit');
+const { asyncHandler } = require('../lib/http');
+const { audit } = require('../util/audit');
 const { isStr, badRequest } = require('../util/validate');
+const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 
 const router = express.Router({ mergeParams: true });
-const wid = (req) => req.membership.workspaceId;
-const uid = (req) => req.user.id;
+const { wid, uid } = require('../lib/scope');
 
 // GET /workspaces/:workspaceId/platform-fee — the blended rate the agency sees.
 router.get('/platform-fee', requirePermission('payments.view'), asyncHandler(async (req, res) => {
@@ -78,6 +79,29 @@ router.patch('/link-limits', requirePermission('settings.edit'), asyncHandler(as
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'workspace.link_limits', metadata: { min, max } });
   res.json({ minLinkAmount: row.min_link_amount == null ? null : Number(row.min_link_amount),
              maxLinkAmount: row.max_link_amount == null ? null : Number(row.max_link_amount) });
+}));
+
+// GET /workspaces/:workspaceId/audit?limit&cursor — who did what, newest first.
+router.get('/audit', requirePermission('settings.view'), asyncHandler(async (req, res) => {
+  const limit = parseLimit(req.query.limit);
+  const cursor = decodeCursor(req.query.cursor);
+  const rows = await withWorkspace(wid(req), uid(req), async (c) => (await c.query(
+    `SELECT a.id, a.action, a.entity_type, a.entity_id, a.metadata, a.ip, a.created_at,
+            u.full_name AS actor_name, u.email AS actor_email
+       FROM audit_log a LEFT JOIN users u ON u.id = a.actor_user_id
+      WHERE a.workspace_id = $1
+        AND ($2::timestamptz IS NULL OR (a.created_at, a.id) < ($2::timestamptz, $3::bigint))
+      ORDER BY a.created_at DESC, a.id DESC LIMIT $4`,
+    [wid(req), cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1])).rows);
+  const result = page(rows, limit, (r) => r.created_at, (r) => r.id);
+  res.json({
+    items: result.items.map((r) => ({
+      id: r.id, action: r.action, entityType: r.entity_type, entityId: r.entity_id,
+      metadata: r.metadata, ip: r.ip, createdAt: r.created_at,
+      actor: r.actor_email ? { name: r.actor_name, email: r.actor_email } : null,
+    })),
+    nextCursor: result.nextCursor,
+  });
 }));
 
 module.exports = router;

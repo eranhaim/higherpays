@@ -50,6 +50,45 @@ test('a rev-share split that cannot fit next to the chatter commission is refuse
     .send({ creatorSplitPct: 70, chatterPct: 26 }).expect(400);
 });
 
+test('a recorded refund reverses the sale and the reversal cannot be posted twice', async () => {
+  const t = await createTenant(app);
+  const creator = await createCreator(app, t, { revenueSplitPct: 70 });
+  const { transId } = await paySale(app, t, creator, 50);
+  const txId = (await withSystem((c) => c.query(
+    'SELECT id FROM transactions WHERE provider_transaction_id = $1', [transId]))).rows[0].id;
+
+  const refund = await request(app).post(`/workspaces/${t.workspaceId}/transactions/${txId}/refund`)
+    .set(t.authHeaders).send({ external: true }).expect(200);
+  assert.equal(refund.body.refunded, 50);
+  assert.ok(refund.body.creatorAdjustment < 0, 'the creator gives back her share');
+
+  const net = await withSystem((c) => c.query(
+    `SELECT SUM(creator_amount) c, SUM(chatter_amount) ch, SUM(gross) g FROM commission_entries WHERE transaction_id = $1`, [txId]));
+  assert.equal(Number(net.rows[0].g), 0, 'gross nets to zero after the reversal');
+  assert.equal(Number(net.rows[0].ch), 0);
+
+  const again = await request(app).post(`/workspaces/${t.workspaceId}/transactions/${txId}/refund`)
+    .set(t.authHeaders).send({ external: true }).expect(409);
+  assert.equal(again.body.error, 'already_reversed');
+
+  const tx = await withSystem((c) => c.query('SELECT status FROM transactions WHERE id = $1', [txId]));
+  assert.equal(tx.rows[0].status, 'refunded');
+});
+
+test('a chargeback cannot be posted on top of a refund', async () => {
+  const t = await createTenant(app);
+  const creator = await createCreator(app, t);
+  const { transId } = await paySale(app, t, creator, 20);
+  const txId = (await withSystem((c) => c.query(
+    'SELECT id FROM transactions WHERE provider_transaction_id = $1', [transId]))).rows[0].id;
+
+  await request(app).post(`/workspaces/${t.workspaceId}/transactions/${txId}/refund`)
+    .set(t.authHeaders).send({ external: true }).expect(200);
+  const cb = await request(app).post(`/workspaces/${t.workspaceId}/transactions/${txId}/chargeback`)
+    .set(t.authHeaders).expect(409);
+  assert.equal(cb.body.error, 'already_charged_back');
+});
+
 test('a declined outcome arriving after an approved one does not un-approve the sale', async () => {
   const t = await createTenant(app);
   const creator = await createCreator(app, t);

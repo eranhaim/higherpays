@@ -1,4 +1,5 @@
 'use strict';
+const crypto = require('crypto');
 const express = require('express');
 const { query, withPlatformAdmin, withUser } = require('../db');
 const { hashPassword, verifyPassword } = require('../auth/passwords');
@@ -6,7 +7,8 @@ const { signAccessToken, generateRefreshToken, hashRefreshToken } = require('../
 const { seedRolesForWorkspace } = require('../auth/permissions');
 const { requireAuth } = require('../middleware');
 const { generateSecret, verifyTotp, otpauthUrl } = require('../auth/totp');
-const { asyncHandler, audit } = require('../util/audit');
+const { asyncHandler } = require('../lib/http');
+const { audit } = require('../util/audit');
 const { createLimiter } = require('../lib/rateLimit');
 const { TooManyRequestsError } = require('../lib/errors');
 const config = require('../config');
@@ -50,7 +52,7 @@ router.post('/register', asyncHandler(async (req, res) => {
 
   const created = await withPlatformAdmin(null, async (client) => {
     const pwHash = await hashPassword(password);
-    const slug = organizationName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + Math.random().toString(36).slice(2, 7);
+    const slug = organizationName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '-' + crypto.randomBytes(4).toString('hex');
 
     const org = (await client.query(
       'INSERT INTO organizations (name, slug) VALUES ($1,$2) RETURNING id', [organizationName, slug]
@@ -255,14 +257,16 @@ router.get('/me', requireAuth, asyncHandler(async (req, res) => {
 
 
 // GET /auth/me/workspaces — every workspace this user belongs to (multi-workspace).
+// Runs in the user context: workspaces and organizations are RLS tables whose
+// policies admit a member's own rows once app.user_id is set.
 router.get('/me/workspaces', requireAuth, asyncHandler(async (req, res) => {
-  const rows = (await query(
+  const rows = await withUser(req.user.id, async (c) => (await c.query(
     `SELECT m.workspace_id AS id, m.role, m.status, w.name, w.currency, o.name AS organization
        FROM memberships m
        JOIN workspaces w ON w.id = m.workspace_id
        JOIN organizations o ON o.id = w.organization_id
       WHERE m.user_id = $1 AND m.status = 'active'
-      ORDER BY o.name, w.name`, [req.user.id])).rows;
+      ORDER BY o.name, w.name`, [req.user.id])).rows);
   res.json({ workspaces: rows });
 }));
 

@@ -2,13 +2,13 @@
 const express = require('express');
 const { withWorkspace } = require('../db');
 const { requirePermission } = require('../middleware');
-const { asyncHandler, audit } = require('../util/audit');
+const { asyncHandler } = require('../lib/http');
+const { audit } = require('../util/audit');
 const { badRequest } = require('../util/validate');
 const { revokeUserSessions } = require('../auth/sessions');
 const { maxCreatorSplitPct } = require('../services/splits');
 const router = express.Router({ mergeParams: true });
-const wid = (req) => req.membership.workspaceId;
-const uid = (req) => req.user.id;
+const { wid, uid } = require('../lib/scope');
 
 // The memberships policy also admits the caller's own rows from OTHER
 // workspaces (so login can list them), so every query here filters on

@@ -15,6 +15,24 @@ test('every SECURITY DEFINER function pins its search_path', async () => {
   assert.deepEqual(rows.map((r) => r.proname), []);
 });
 
+test('every table with a workspace_id column is protected by RLS', async () => {
+  // invites are looked up by secret token before any workspace is known.
+  const documentedExceptions = ['invites'];
+  const { rows } = await withSystem((c) => c.query(`
+    SELECT c.table_name
+      FROM information_schema.columns c JOIN pg_tables t ON t.tablename = c.table_name AND t.schemaname = 'public'
+     WHERE c.table_schema = 'public' AND c.column_name = 'workspace_id'
+       AND (NOT t.rowsecurity OR NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.tablename = c.table_name))`));
+  assert.deepEqual(rows.map((r) => r.table_name).filter((n) => !documentedExceptions.includes(n)), []);
+});
+
+test('the audit log is readable by the workspace and paginated', async () => {
+  const t = await createTenant(app);
+  const res = await request(app).get(`/workspaces/${t.workspaceId}/audit?limit=5`).set(t.authHeaders).expect(200);
+  assert.ok(res.body.items.some((a) => a.action === 'auth.register'));
+  assert.ok(res.body.items.every((a) => a.actor && a.actor.email === t.email));
+});
+
 test('replaying a rotated refresh token revokes the whole session', async () => {
   const t = await createTenant(app);
   const rotated = await request(app).post('/auth/refresh').send({ refreshToken: t.refreshToken }).expect(200);

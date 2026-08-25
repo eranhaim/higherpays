@@ -8,14 +8,14 @@
 const express = require('express');
 const { withWorkspace } = require('../db');
 const { requirePermission } = require('../middleware');
-const { asyncHandler, audit } = require('../util/audit');
+const { asyncHandler } = require('../lib/http');
+const { audit } = require('../util/audit');
 const { parseInWorker } = require('../settlement/parse');
 const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const config = require('../config');
 
 const router = express.Router({ mergeParams: true });
-const wid = (req) => req.membership.workspaceId;
-const uid = (req) => req.user.id;
+const { wid, uid } = require('../lib/scope');
 const n = (v) => Number(v || 0);
 const round2 = (v) => Math.round(v * 100) / 100;
 

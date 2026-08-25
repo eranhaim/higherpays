@@ -2,12 +2,12 @@
 const express = require('express');
 const { withWorkspace } = require('../db');
 const { requirePermission } = require('../middleware');
-const { asyncHandler, audit } = require('../util/audit');
+const { asyncHandler } = require('../lib/http');
+const { audit } = require('../util/audit');
 const { isStr, isOptStr, badRequest, toCSV } = require('../util/validate');
 
 const router = express.Router({ mergeParams: true });
-const wid = (req) => req.membership.workspaceId;
-const uid = (req) => req.user.id;
+const { wid, uid } = require('../lib/scope');
 const SEGMENTS = ['new', 'regular', 'high_value', 'vip', 'inactive', 'at_risk'];
 
 // GET /workspaces/:workspaceId/customers?segment=&q=&creatorId=&limit=&offset=

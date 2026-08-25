@@ -12,12 +12,11 @@
 const express = require('express');
 const { withWorkspace } = require('../db');
 const { requirePermission } = require('../middleware');
-const { asyncHandler } = require('../util/audit');
+const { asyncHandler } = require('../lib/http');
 const config = require('../config');
 
 const router = express.Router({ mergeParams: true });
-const wid = (req) => req.membership.workspaceId;
-const uid = (req) => req.user.id;
+const { wid, uid } = require('../lib/scope');
 const num = (v) => Number(v || 0);
 
 function range(req) {

@@ -2,13 +2,13 @@
 const express = require('express');
 const { withWorkspace } = require('../db');
 const { requirePermission } = require('../middleware');
-const { asyncHandler, audit } = require('../util/audit');
+const { asyncHandler } = require('../lib/http');
+const { audit } = require('../util/audit');
 const { PERMISSIONS } = require('../auth/permissions');
 const { isStr, badRequest } = require('../util/validate');
 
 const router = express.Router({ mergeParams: true });
-const wid = (req) => req.membership.workspaceId;
-const uid = (req) => req.user.id;
+const { wid, uid } = require('../lib/scope');
 
 const cleanPerms = (arr) => Array.isArray(arr) ? [...new Set(arr.filter((p) => PERMISSIONS.includes(p)))] : null;
 

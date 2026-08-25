@@ -2,15 +2,15 @@
 const express = require('express');
 const { withWorkspace } = require('../db');
 const { requirePermission } = require('../middleware');
-const { asyncHandler, audit } = require('../util/audit');
+const { asyncHandler } = require('../lib/http');
+const { audit } = require('../util/audit');
 const provider = require('../providers/mantapay');
 const config = require('../config');
 const { cashPosition } = require('../services/cash');
 const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 
 const router = express.Router({ mergeParams: true });
-const wid = (req) => req.membership.workspaceId;
-const uid = (req) => req.user.id;
+const { wid, uid } = require('../lib/scope');
 
 // POST /workspaces/:wid/transactions/:txId/post-sale
 // Normally the webhook handler calls this when a payment settles. Exposed here
