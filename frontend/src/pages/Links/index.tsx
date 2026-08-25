@@ -27,7 +27,9 @@ const STATUS_TONE: Record<LinkStatus, 'ok' | 'no' | 'muted'> = {
 export default function LinksPage() {
   const can = useCan();
   const { rateCard } = useRateCard();
-  const { links, creators, customers, linkLimits, isLoading, isError, createLink, reconcile } = useLinksData();
+  const {
+    links, creators, customers, linkLimits, isLoading, isError, hasMore, isLoadingMore, loadMore, createLink, reconcile,
+  } = useLinksData();
 
   const [filters, setFilters] = useState<LinksFilters>(DEFAULT_FILTERS);
   const [createOpen, setCreateOpen] = useState(false);
@@ -173,7 +175,16 @@ export default function LinksPage() {
         isLoading={isLoading}
         emptyTitle={isError ? "Couldn't load payment links." : 'No links match these filters.'}
         emptyHint={isError ? 'Try again in a moment.' : can('links.create') ? 'Create one from the header.' : 'Ask a chatter to create one.'}
-        footer={`Showing ${filtered.length} of ${links.length}`}
+        footer={
+          <span className="table-foot-row">
+            Showing {filtered.length} of {links.length} loaded
+            {hasMore && (
+              <button className="btn ghost small" onClick={loadMore} disabled={isLoadingMore}>
+                {isLoadingMore ? 'Loading…' : 'Load more'}
+              </button>
+            )}
+          </span>
+        }
       />
 
       <Modal open={createOpen} onClose={() => setCreateOpen(false)}>

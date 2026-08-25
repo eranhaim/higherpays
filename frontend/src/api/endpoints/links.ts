@@ -1,5 +1,6 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
+import type { Page } from './payouts';
 
 /** Mirrors the `link_status` enum. `expired` is computed server-side from the link TTL. */
 export type LinkStatus = 'created' | 'opened' | 'paid' | 'failed' | 'expired' | 'refunded';
@@ -83,9 +84,11 @@ export interface CreatedLink extends PaymentLink {
 }
 
 export const linksApi = {
-  async list(): Promise<PaymentLink[]> {
-    const raw = await api.get<{ links: RawLink[] }>(workspacePath('/links'));
-    return raw.links.map(normalize);
+  async list(cursor: string | null = null): Promise<Page<PaymentLink>> {
+    const qs = new URLSearchParams({ limit: '50' });
+    if (cursor) qs.set('cursor', cursor);
+    const raw = await api.get<Page<RawLink>>(workspacePath(`/links?${qs.toString()}`));
+    return { items: raw.items.map(normalize), nextCursor: raw.nextCursor };
   },
 
   async create(input: CreateLinkInput): Promise<CreatedLink> {

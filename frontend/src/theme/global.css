@@ -303,6 +303,7 @@ tbody tr.clickable { cursor: pointer; transition: background 0.12s ease; }
 tbody tr.clickable:hover { background: var(--surface-2); }
 .table-note { padding: 40px; text-align: center; color: var(--muted); }
 .table-foot { padding: 8px 12px; font-size: 13px; color: var(--muted); }
+.table-foot-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 
 .ref { font-size: 13px; color: var(--ink-2); }
 .cname { font-weight: 600; }

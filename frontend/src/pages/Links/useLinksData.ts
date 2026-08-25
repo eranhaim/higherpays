@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
   linksApi, creatorsApi, customersApi, workspacesApi,
@@ -23,6 +23,9 @@ export interface UseLinksDataResult {
   linkLimits: LinkLimits | null;
   isLoading: boolean;
   isError: boolean;
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  loadMore: () => void;
   createLink: (input: CreateLinkFormInput) => Promise<CreatedLink>;
   reconcile: () => Promise<ReconcileSummary>;
 }
@@ -32,9 +35,11 @@ export function useLinksData(): UseLinksDataResult {
   const queryClient = useQueryClient();
   const enabled = Boolean(activeWorkspaceId);
 
-  const links = useQuery({
+  const links = useInfiniteQuery({
     queryKey: ['links', activeWorkspaceId],
-    queryFn: () => linksApi.list(),
+    queryFn: ({ pageParam }) => linksApi.list(pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
     enabled,
   });
   const creators = useQuery({
@@ -75,12 +80,15 @@ export function useLinksData(): UseLinksDataResult {
   });
 
   return {
-    links: links.data ?? [],
+    links: links.data?.pages.flatMap((p) => p.items) ?? [],
     creators: creators.data ?? [],
     customers: customers.data ?? [],
     linkLimits: linkLimits.data ?? null,
     isLoading: links.isLoading,
     isError: links.isError,
+    hasMore: links.hasNextPage,
+    isLoadingMore: links.isFetchingNextPage,
+    loadMore: () => { void links.fetchNextPage(); },
     createLink: (input) => create.mutateAsync(input),
     reconcile: async () => {
       const result = await reconcile.mutateAsync();

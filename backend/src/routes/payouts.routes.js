@@ -6,6 +6,7 @@ const { asyncHandler, audit } = require('../util/audit');
 const provider = require('../providers/mantapay');
 const config = require('../config');
 const { cashPosition } = require('../services/cash');
+const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 
 const router = express.Router({ mergeParams: true });
 const wid = (req) => req.membership.workspaceId;
@@ -94,8 +95,10 @@ router.get('/creators/:id/earnings', requirePermission('commissions.view'), asyn
   res.json(data);
 }));
 
-// GET /workspaces/:wid/transactions — the Payments tab feed.
+// GET /workspaces/:wid/transactions?limit&cursor — the Payments tab feed, newest first.
 router.get('/transactions', requirePermission('payments.view'), asyncHandler(async (req, res) => {
+  const limit = parseLimit(req.query.limit);
+  const cursor = decodeCursor(req.query.cursor);
   const rows = await withWorkspace(wid(req), uid(req), async (c) => (await c.query(
     `SELECT t.id, t.provider_transaction_id, t.gross, t.platform_fee, t.status, t.occurred_at,
             cr.stage_name AS creator, cu.alias AS customer, u.full_name AS chatter
@@ -105,8 +108,10 @@ router.get('/transactions', requirePermission('payments.view'), asyncHandler(asy
      LEFT JOIN memberships m ON m.id = t.attributed_membership_id
      LEFT JOIN users u ON u.id = m.user_id
      WHERE t.workspace_id = $1
-     ORDER BY t.occurred_at DESC LIMIT 500`, [wid(req)])).rows);
-  res.json({ transactions: rows });
+       AND ($2::timestamptz IS NULL OR (t.occurred_at, t.id) < ($2::timestamptz, $3::uuid))
+     ORDER BY t.occurred_at DESC, t.id DESC LIMIT $4`,
+    [wid(req), cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1])).rows);
+  res.json(page(rows, limit, (r) => r.occurred_at, (r) => r.id));
 }));
 
 // GET /workspaces/:wid/payouts/breakdown?from&to — accrued owed per creator + per chatter

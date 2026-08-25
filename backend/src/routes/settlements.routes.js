@@ -9,7 +9,8 @@ const express = require('express');
 const { withWorkspace } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler, audit } = require('../util/audit');
-const { parseSettlementWorkbook } = require('../settlement/parse');
+const { parseInWorker } = require('../settlement/parse');
+const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const config = require('../config');
 
 const router = express.Router({ mergeParams: true });
@@ -18,6 +19,11 @@ const uid = (req) => req.user.id;
 const n = (v) => Number(v || 0);
 const round2 = (v) => Math.round(v * 100) / 100;
 
+// A daily export is a few hundred KB; anything near the JSON body limit is
+// not a settlement report.
+const MAX_WORKBOOK_BYTES = 4 * 1024 * 1024;
+const XLSX_MAGIC = Buffer.from('PK');
+
 // POST /import  { filename, contentBase64 }
 router.post('/import', requirePermission('commissions.manage'), asyncHandler(async (req, res) => {
   const { filename, contentBase64 } = req.body || {};
@@ -25,10 +31,11 @@ router.post('/import', requirePermission('commissions.manage'), asyncHandler(asy
   let buf;
   try { buf = Buffer.from(contentBase64, 'base64'); }
   catch { return res.status(400).json({ error: 'bad_base64' }); }
-  if (!buf.length || buf.length > 15 * 1024 * 1024) return res.status(400).json({ error: 'bad_file_size' });
+  if (!buf.length || buf.length > MAX_WORKBOOK_BYTES) return res.status(400).json({ error: 'bad_file_size' });
+  if (!buf.subarray(0, 2).equals(XLSX_MAGIC)) return res.status(400).json({ error: 'not_a_workbook' });
 
   let parsed;
-  try { parsed = parseSettlementWorkbook(buf); }
+  try { parsed = await parseInWorker(buf); }
   catch (e) { return res.status(e.status || 400).json({ error: e.message, detail: e.detail }); }
 
   // EUR-only for now: the report carries one sheet per currency, so skip any we
@@ -98,11 +105,18 @@ router.post('/import', requirePermission('commissions.manage'), asyncHandler(asy
   });
 }));
 
-// GET / — imported settlements, each reconciled against our own ledger
+// GET /?limit&cursor — imported settlements, each reconciled against our own ledger
 router.get('/', requirePermission('commissions.view'), asyncHandler(async (req, res) => {
-  const rows = await withWorkspace(wid(req), uid(req), async (c) => {
-    const settlements = (await c.query(
-      'SELECT * FROM settlements ORDER BY period_end DESC, currency LIMIT 200')).rows;
+  const limit = parseLimit(req.query.limit);
+  const cursor = decodeCursor(req.query.cursor);
+  const result = await withWorkspace(wid(req), uid(req), async (c) => {
+    const fetched = (await c.query(
+      `SELECT * FROM settlements
+        WHERE workspace_id = $1
+          AND ($2::timestamptz IS NULL OR (period_end::timestamptz, id) < ($2::timestamptz, $3::uuid))
+        ORDER BY period_end DESC, id DESC LIMIT $4`,
+      [wid(req), cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1])).rows;
+    const { items: settlements, nextCursor } = page(fetched, limit, (r) => r.period_end, (r) => r.id);
 
     const out = [];
     for (const s of settlements) {
@@ -152,9 +166,9 @@ router.get('/', requirePermission('commissions.view'), asyncHandler(async (req, 
         },
       });
     }
-    return out;
+    return { items: out, nextCursor };
   });
-  res.json({ settlements: rows });
+  res.json(result);
 }));
 
 // GET /reserve — held vs released, per currency, using the negotiated release schedule

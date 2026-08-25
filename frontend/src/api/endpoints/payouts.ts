@@ -89,10 +89,18 @@ export interface RunPayoutInput {
   to?: string;
 }
 
+/** One page of a keyset-paginated list. `nextCursor` is null on the last page. */
+export interface Page<T> {
+  items: T[];
+  nextCursor: string | null;
+}
+
 export const payoutsApi = {
-  async listTransactions(): Promise<Transaction[]> {
-    const raw = await api.get<{ transactions: RawTransaction[] }>(workspacePath('/transactions'));
-    return raw.transactions.map(normalizeTransaction);
+  async listTransactions(cursor: string | null = null): Promise<Page<Transaction>> {
+    const qs = new URLSearchParams({ limit: '50' });
+    if (cursor) qs.set('cursor', cursor);
+    const raw = await api.get<Page<RawTransaction>>(workspacePath(`/transactions?${qs.toString()}`));
+    return { items: raw.items.map(normalizeTransaction), nextCursor: raw.nextCursor };
   },
 
   getBreakdown(from: string, to: string): Promise<PayoutBreakdown> {

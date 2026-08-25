@@ -26,7 +26,7 @@ function StatusPill({ status }: { status: Transaction['status'] }) {
 
 export default function PaymentsPage() {
   const can = useCan();
-  const { transactions, isLoading, isError, recordRefund } = usePaymentsData();
+  const { transactions, isLoading, isError, hasMore, isLoadingMore, loadMore, recordRefund } = usePaymentsData();
   const { rateCard } = useRateCard();
 
   const [filters, setFilters] = useState<PaymentsFilters>(DEFAULT_FILTERS);
@@ -130,7 +130,16 @@ export default function PaymentsPage() {
         isLoading={isLoading}
         emptyTitle={isError ? "Couldn't load payments." : 'No payments match these filters.'}
         emptyHint={isError ? 'Try again in a moment.' : 'Widen the date range or clear the filters.'}
-        footer={`Showing ${filtered.length} of ${transactions.length}`}
+        footer={
+          <span className="table-foot-row">
+            Showing {filtered.length} of {transactions.length} loaded
+            {hasMore && (
+              <button className="btn ghost small" onClick={loadMore} disabled={isLoadingMore}>
+                {isLoadingMore ? 'Loading…' : 'Load more'}
+              </button>
+            )}
+          </span>
+        }
       />
 
       <Modal open={!!detail && !refunding} onClose={() => setDetail(null)}>

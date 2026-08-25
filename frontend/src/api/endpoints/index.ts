@@ -1,4 +1,4 @@
-export { authApi, type TwoFactorSetup } from './auth';
+export { authApi, type TwoFactorSetup, type Session } from './auth';
 export { workspacesApi, type PlatformFee, type LinkLimits, type WorkspacePermissions } from './workspaces';
 export { commissionsApi, type CommissionConfig, type PlatformFeeBreakdown } from './commissions';
 export {
@@ -16,7 +16,7 @@ export {
 } from './links';
 export {
   payoutsApi, isReversed, TRANSACTION_STATUS_LABELS,
-  type Transaction, type TransactionStatus, type PayoutBreakdown, type RefundResult, type RunPayoutInput,
+  type Transaction, type TransactionStatus, type PayoutBreakdown, type RefundResult, type RunPayoutInput, type Page,
 } from './payouts';
 export { feesApi, type FeesSummary } from './fees';
 export { analyticsApi, type AnalyticsReport, type AnalyticsQuery } from './analytics';

@@ -5,6 +5,7 @@ const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { badRequest } = require('../util/validate');
+const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const config = require('../config');
 const provider = require('../providers/mantapay');
 const paymentsService = require('../services/payments.service');
@@ -43,16 +44,15 @@ async function generateProviderLink({ ws, currency, amount, referenceId, descrip
   return { providerLinkId: referenceId, url: checkoutUrl, expiresAt };
 }
 
-// GET /workspaces/:workspaceId/links
+// GET /workspaces/:workspaceId/links?limit&cursor — newest first.
 // Chatters see only the links they created; everyone else sees all in-workspace.
 router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) => {
-  const chatterScoped = req.membership.role === 'chatter';
-  const vals = [wid(req)];
-  let scope = '';
-  if (chatterScoped) { vals.push(req.membership.id); scope = `AND pl.created_by = $${vals.length}`; }
+  const limit = parseLimit(req.query.limit);
+  const cursor = decodeCursor(req.query.cursor);
+  const chatterOnly = req.membership.role === 'chatter' ? req.membership.id : null;
   const rows = await withWorkspace(wid(req), uid(req), async (c) => (await c.query(
     `SELECT pl.id, pl.pricing_mode, pl.amount, pl.currency, pl.provider_link_id,
-            CASE WHEN pl.status = 'created' AND pl.created_at < now() - ($${vals.length + 1} || ' minutes')::interval
+            CASE WHEN pl.status = 'created' AND pl.created_at < now() - ($2 || ' minutes')::interval
                  THEN 'expired' ELSE pl.status END AS status,
             pl.reference_id, pl.created_at, pl.paid_at,
             cr.stage_name AS creator, cu.alias AS customer,
@@ -62,9 +62,12 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
      LEFT JOIN customers cu ON cu.id = pl.customer_id
      LEFT JOIN memberships m ON m.id = pl.created_by
      LEFT JOIN users u ON u.id = m.user_id
-     WHERE pl.workspace_id = $1 ${scope}
-     ORDER BY pl.created_at DESC LIMIT 200`, [...vals, config.linkTtlMinutes])).rows);
-  res.json({ links: rows });
+     WHERE pl.workspace_id = $1
+       AND ($3::uuid IS NULL OR pl.created_by = $3::uuid)
+       AND ($4::timestamptz IS NULL OR (pl.created_at, pl.id) < ($4::timestamptz, $5::uuid))
+     ORDER BY pl.created_at DESC, pl.id DESC LIMIT $6`,
+    [wid(req), config.linkTtlMinutes, chatterOnly, cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1])).rows);
+  res.json(page(rows, limit, (r) => r.created_at, (r) => r.id));
 }));
 
 // GET /workspaces/:workspaceId/links/:id
