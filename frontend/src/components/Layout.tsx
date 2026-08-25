@@ -45,7 +45,7 @@ function NavSection({ group, onNavigate }: NavSectionProps) {
 }
 
 export default function Layout() {
-  const { user, workspaces, activeWorkspaceId } = useCurrentSession();
+  const { user, role, workspaces, activeWorkspaceId } = useCurrentSession();
   const setActiveWorkspaceId = useSessionStore((s) => s.setActiveWorkspaceId);
   const clearAuth = useAuthStore((s) => s.clear);
   const clearSession = useSessionStore((s) => s.clear);
@@ -125,7 +125,10 @@ export default function Layout() {
         <div className="side-foot">
           {user && (
             <div className="user-block">
-              <div className="user-name">{user.fullName}</div>
+              <div className="user-name">
+                {user.fullName}
+                {role && <span className="rolebadge">{role}</span>}
+              </div>
               <div className="user-email">{user.email}</div>
             </div>
           )}
