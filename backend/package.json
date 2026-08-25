@@ -10,8 +10,7 @@
     "migrate": "node src/util/migrate.js",
     "seed": "node src/util/seed.js",
     "setup": "node src/util/migrate.js && node src/util/seed.js",
-    "test": "node --test test/*.test.js test/integration/*.test.js",
-    "test:unit": "node --test test/mantapay.test.js",
+    "test": "node --test test/mantapay.test.js",
     "test:db": "node --test test/engine.test.js",
     "test:integration": "node --test test/integration/*.test.js"
   },

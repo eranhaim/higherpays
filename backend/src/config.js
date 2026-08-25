@@ -72,8 +72,11 @@ const config = {
   linkTtlMinutes: parseInt(process.env.LINK_TTL_MINUTES || '10', 10),
 };
 
-if (config.env === 'production' && config.jwtSecret === 'dev-only-insecure-secret-change-me') {
-  throw new Error('JWT_SECRET must be set in production');
+// Check the property, not a specific string: a guard that matches one exact
+// dev value is routed around by any other weak default.
+const MIN_JWT_SECRET_LENGTH = 32;
+if (config.env === 'production' && String(config.jwtSecret || '').length < MIN_JWT_SECRET_LENGTH) {
+  throw new Error(`JWT_SECRET must be at least ${MIN_JWT_SECRET_LENGTH} characters in production`);
 }
 
 // Row-Level Security IS the tenant boundary. Booting production without it would
@@ -81,5 +84,15 @@ if (config.env === 'production' && config.jwtSecret === 'dev-only-insecure-secre
 if (config.env === 'production' && !config.useRls) {
   throw new Error('USE_RLS must be true in production (tenant isolation depends on it)');
 }
+
+// Optional integrations, with the env var that turns each one on. Logged at
+// boot so a missing value is a visible line in the logs, not a silent gap.
+config.integrations = [
+  { name: 'MantaPay checkout', enabled: Boolean(config.mantapayMerchantId && config.mantapayHashKey), needs: 'MANTAPAY_MERCHANT_ID, MANTAPAY_HASH_KEY' },
+  { name: 'MantaPay webhook URL', enabled: Boolean(config.webhookPublicBase), needs: 'WEBHOOK_PUBLIC_BASE' },
+  { name: 'MantaPay fee reconciliation', enabled: Boolean(config.mantapayApiEmail && config.mantapayApiPassword && config.mantapayAppToken), needs: 'MANTAPAY_API_EMAIL, MANTAPAY_API_PASSWORD, MANTAPAY_APP_TOKEN' },
+  { name: 'MantaPay refunds', enabled: config.mantapayRefundEnabled, needs: 'MANTAPAY_REFUND_ENABLED=true' },
+  { name: 'Telegram notifications', enabled: Boolean(config.telegramBotToken), needs: 'TELEGRAM_BOT_TOKEN' },
+];
 
 module.exports = config;
