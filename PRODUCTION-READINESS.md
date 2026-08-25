@@ -588,11 +588,12 @@ read. It becomes exploitable the moment P1.6 introduces a cookie.
 Neither Dockerfile has a `USER` directive. A Node payments API and an nginx frontend both run as
 uid 0. Any RCE is immediately root inside the container.
 
-- [ ] `USER node` in the backend image after `COPY`
-- [ ] Use `nginx-unprivileged` for the frontend
-- [ ] Add `read_only: true` with explicit `tmpfs` mounts
-- [ ] Add `mem_limit` / `cpus` so one runaway container cannot take the box down
-- [ ] Add a backend healthcheck so `depends_on` waits for readiness rather than start
+- [x] Backend image runs as `node`
+- [x] Frontend image is `nginxinc/nginx-unprivileged` on port 8080 (host mapping is now `8083:8080`)
+- [x] Both containers are `read_only` with `tmpfs` for `/tmp` (and nginx's cache/run dirs);
+      `no-new-privileges`
+- [x] `mem_limit` / `cpus` on both
+- [x] Backend healthcheck hits `/health`; the frontend waits for `service_healthy`
 
 ### P2.3 Missing security headers
 
@@ -600,10 +601,11 @@ Neither nginx config sets CSP, `X-Frame-Options`, `X-Content-Type-Options`, or `
 The API has no `helmet`. For an app holding tokens in `localStorage`, a missing CSP is the
 difference between an XSS being contained and an XSS being total.
 
-- [ ] `helmet` on the API
-- [ ] CSP, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
-      `Referrer-Policy: strict-origin-when-cross-origin` in `frontend/nginx.conf`
-- [ ] Enable gzip while you are in there
+- [x] The API sets `nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, a
+      deny-all CSP and `Cache-Control: no-store` on every response (five headers, no dependency)
+- [x] `frontend/nginx.conf`: CSP (`script-src 'self'`; inline styles allowed for data-driven
+      widths; Google Fonts), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`
+- [x] gzip on
 
 ### P2.4 Migrations run automatically on every deploy, as superuser
 
@@ -615,10 +617,12 @@ The runner also tracks only filenames (`migrate.js:21`), not checksums. "Never e
 migration" is honour-system; an edited file applies silently on a fresh database and diverges from
 production forever.
 
-- [ ] Add a `checksum` column; fail loudly when an applied file changed
+- [x] `schema_migrations.checksum` (migration 030); the runner refuses to continue when an
+      applied file no longer matches, and back-fills checksums for files applied before 030
 - [ ] Separate migrate from deploy — an explicit step you can run and verify
 - [ ] Write down the rollback procedure for each risky migration
-- [ ] Take a backup immediately before migrating (depends on P0.4)
+- [ ] Take a backup immediately before migrating (`deploy/backup-postgres.sh` exists; add it to
+      the deploy recipe in HANDOFF §3)
 
 ### P2.5 Two more tables outside RLS
 
@@ -628,8 +632,11 @@ tenant route reads either table — but the protection here is "nobody wrote tha
 is not a control. (`invites`, `users`, `refresh_tokens` and `platform_admins` are deliberately
 excluded and documented as such.)
 
-- [ ] Add tenant policies to both, matching the `is_platform_context()` pattern from migration 006
-- [ ] Add a test that fails when a new table with a `workspace_id` column has no policy
+- [x] Migration 030 adds tenant policies to both (`organizations` also lets a member read the
+      organizations behind their own workspaces, which login needs); `/auth/me/workspaces` and
+      `/health` moved to the right DB context
+- [x] `security.test.js` fails when a table with a `workspace_id` column has no RLS policy
+      (`invites` is the documented exception)
 
 ### P2.6 PII has no lifecycle
 
@@ -637,10 +644,12 @@ Full provider payloads are stored verbatim in `transactions.raw_payload` and
 `webhook_events.payload` — customer email, name, phone. No redaction, no retention limit, no
 deletion path. EU customers, EUR, GDPR.
 
-- [ ] Decide a retention period and enforce it with a scheduled job
-- [ ] Redact payloads after reconciliation completes — keep the fields you reconcile against, drop
-      the rest
-- [ ] Build data export and erasure for DSAR requests
+- [x] `npm run retention` (`src/util/redact.js`, cron line in the file header): after
+      `RETENTION_DAYS` (default 90) the stored payloads keep only the fields reconciliation
+      uses (ids, amount, currency, reply code, merchant, date) and drop the rest
+- [ ] Add the cron line on the EC2
+- [ ] Build data export and erasure for DSAR requests (`DELETE /customers/:id` already
+      anonymises a customer; export is missing)
 - [ ] Write down what you store, why, and for how long
 
 ### P2.7 Audit log is write-only for tenants
@@ -651,7 +660,8 @@ A workspace owner cannot see who changed a commission rate in their own workspac
 Separately, `ipOf()` (`auth.routes.js:13`) reads `X-Forwarded-For` directly and Express never sets
 `trust proxy`. A client can send that header and choose the IP recorded in the audit log.
 
-- [ ] `GET /workspaces/:id/audit` behind `settings.view`
+- [x] `GET /workspaces/:id/audit?limit&cursor` behind `settings.view`, with the actor resolved
+      (frontend page is roadmap item 8)
 - [x] `app.set('trust proxy', 1)`; audit rows and rate limits use `req.ip`
 - [ ] Log which permission gate allowed each sensitive action, not just the action
 
@@ -662,11 +672,11 @@ key MantaPay echoes back for attribution — a collision misattributes a payment
 customer, and chatter. `auth.routes.js:40` has the same pattern for the org slug against a UNIQUE
 constraint, where a collision throws a raw 500 during signup.
 
-- [ ] `crypto.randomUUID()` in both places
+- [x] `crypto.randomBytes` in both places: 64 random bits for the reference (short enough for
+      the provider field), 32 for the slug
 - [x] A UNIQUE constraint on `payment_links.reference_id` already exists
       (`idx_links_reference` on `(workspace_id, reference_id)`), so a collision raises rather than
-      misattributing. The generator still needs fixing — the failure mode is a 500 on link
-      creation, not silent corruption.
+      misattributing; with 64 random bits it will not happen in practice.
 
 ### P2.9 Three abstractions built and never adopted
 
@@ -681,8 +691,10 @@ Each of these was written specifically to stop duplication, and is imported by n
 The error middleware handles both shapes, which is exactly why the drift went unnoticed. Every new
 route file is currently a coin flip.
 
-- [ ] Pick one convention per pair and delete the loser
-- [ ] Convert the route files in one pass, not gradually — gradual is how this happened
+- [x] `asyncHandler` comes from `lib/http` only (the `util/audit` re-export is gone); `wid`/`uid`
+      come from `lib/scope` in every route file — converted in one pass
+- [ ] `HttpError` vs `res.status().json()`: both shapes still exist. The error middleware
+      normalises them, so pick one when the routes are next touched as a whole
 - [ ] Add a lint rule so the dead convention cannot come back
 
 ### P2.10 Accessibility is absent
@@ -695,11 +707,13 @@ Data tables, filter bars and the notification bell have no accessible structure 
 This blocks enterprise and public-sector sales, and in the EU it is increasingly a legal
 requirement rather than a nice-to-have.
 
-- [ ] Fix `Modal`: `role="dialog"`, `aria-modal`, focus trap, focus restore, scroll lock
-- [ ] `htmlFor` on every form input
-- [ ] Table semantics: `scope` on headers, captions
+- [x] `Modal`: `role="dialog"`, `aria-modal`, Tab trapped inside, focus returned to the opener,
+      body scroll locked
+- [x] `htmlFor` on every labelled input; the notification bell's unread rows are buttons;
+      `autoFocus` removed
+- [x] `scope="col"` on `DataTable` headers
 - [ ] Keyboard-only pass over the primary flows
-- [ ] `eslint-plugin-jsx-a11y` in CI
+- [x] `eslint-plugin-jsx-a11y` (recommended) is part of `npm run lint`, which CI runs — zero findings
 
 ### P2.11 Test coverage is thin where the money is
 
@@ -707,9 +721,11 @@ requirement rather than a nice-to-have.
 tests). The payout engine, the settlement importer, refunds, chargebacks, and the payout run — the
 parts that move money — have almost none.
 
-- [ ] Integration tests for: payout run (including concurrency), refund, chargeback, settlement
-      import, reconcile
-- [ ] Property tests on the commission split — amounts must sum to gross for any input
+- [x] Integration tests: payout run (concurrency), refund (and its idempotency), chargeback after
+      refund, webhook retry; settlement parsing is unit-tested with a generated workbook
+- [ ] Integration tests for settlement import and reconcile (both need a MantaPay-shaped fixture)
+- [x] The split sum is asserted on every posted sale by the database CHECK; `money.test.js`
+      covers the awkward-rounding case
 - [ ] Coverage reporting in CI, with a floor on `services/` and `business/`
 
 ### P2.12 Commission rate changes are not audited
@@ -782,7 +798,7 @@ Current results, so you can tell whether a change helped:
 
 ```bash
 cd backend  && npm test                    # 41 pass (unit; engine suite skips without TEST_DATABASE_URL)
-cd backend  && npm run test:integration    # 35 pass — needs the local Postgres, see HANDOFF §10
+cd backend  && npm run test:integration    # 39 pass — needs the local Postgres, see HANDOFF §10
 cd backend  && npm run test:db             # 12 pass — TEST_DATABASE_URL as the postgres owner
 cd backend  && npm audit --omit=dev        # 1 moderate (uuid via exceljs), not reachable
 cd frontend && npx vitest run              # 27 pass

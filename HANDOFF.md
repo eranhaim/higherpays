@@ -85,7 +85,7 @@ Three containers, all built from this repo:
 |-------------------|-----------------------|-----------------------------------------------------------------------------------------------|--------------|
 | `higherpays-pg`   | `postgres:16-alpine`  | Data. On first boot creates a restricted `hp_app` role via `deploy/postgres-init.sh`.         | Not exposed  |
 | `higherpays-api`  | `node:22-alpine`      | Express API on `:3000`. Runs migrations as the DB owner, then serves as `hp_app`.             | Not exposed  |
-| `higherpays`      | `nginx:alpine`        | Serves the built React app + proxies `/api/*` → backend container.                            | `8083`       |
+| `higherpays`      | `nginx-unprivileged`  | Serves the built React app + proxies `/api/*` → backend container. Listens on 8080 inside.    | `8083`       |
 
 In front of those, the **EC2's system nginx** (not a container) fronts
 every project on the box. Its config for HigherPays lives at:
@@ -102,6 +102,11 @@ the compose file (never committed — `.env.example` lists all of them). The
 backend container receives the whole file; compose refuses to start
 without `POSTGRES_PASSWORD`, `HP_APP_PASSWORD` and `JWT_SECRET`. Changing a
 value in `.env` takes effect on the next `docker compose up -d`.
+
+**Retention.** `docker compose exec -T backend npm run retention` strips
+customer details from provider payloads older than `RETENTION_DAYS`
+(default 90), keeping the ids and amounts reconciliation needs. Cron line in
+`backend/src/util/redact.js`.
 
 **Backups.** `deploy/backup-postgres.sh` dumps the database nightly (cron
 line in the script header), keeps 30 local copies under
@@ -128,8 +133,13 @@ docker compose down              # stop all (data survives)
 # locally
 git push origin main
 # on EC2
-cd ~/higherpays && git pull && docker compose up -d --build
+cd ~/higherpays && sh deploy/backup-postgres.sh && git pull && docker compose up -d --build
 ```
+
+Migrations run automatically when the API container starts (as the DB
+owner), and the runner refuses to continue if an already-applied migration
+file has changed. Take the backup first: a bad migration is the one failure
+that keeps production down.
 
 Then hard-refresh the browser (Ctrl+Shift+R) so it doesn't serve stale
 JS/CSS from cache.
