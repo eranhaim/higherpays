@@ -95,6 +95,15 @@ export default function LinksPage() {
     }
   };
 
+  const copyLink = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('Link copied.');
+    } catch {
+      toast('Copy failed — long-press to copy manually.');
+    }
+  };
+
   const showSplit = can('platform.view');
   const columns: Column<PaymentLink>[] = [
     { key: 'ref', header: 'Ref', render: (l) => <span className="ref">{l.id}</span> },
@@ -118,6 +127,20 @@ export default function LinksPage() {
       },
     },
     { key: 'date', header: 'Date', render: (l) => <DateCell ts={l.ts} /> },
+    {
+      key: 'link', header: 'Link', align: 'right',
+      render: (l) => l.checkoutUrl ? (
+        <button
+          type="button"
+          className="btn ghost"
+          style={{ padding: '4px 10px', fontSize: 12 }}
+          onClick={() => copyLink(l.checkoutUrl!)}
+          title={l.checkoutUrl}
+        >
+          Copy
+        </button>
+      ) : <span style={{ color: 'var(--muted)' }}>—</span>,
+    },
   ];
 
   return (

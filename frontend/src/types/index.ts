@@ -95,6 +95,7 @@ export interface PaymentLink {
   unit: string;
   status: LinkStatus;
   ts: number;
+  checkoutUrl?: string | null;
 }
 
 export interface Transaction {

@@ -17,6 +17,7 @@ export interface PaymentLink {
   creator: string | null;
   customer: string | null;
   chatter: string | null;
+  checkoutUrl: string | null;
 }
 
 interface RawLink {
@@ -32,6 +33,7 @@ interface RawLink {
   creator: string | null;
   customer: string | null;
   chatter: string | null;
+  checkout_url: string | null;
 }
 
 function toNullableNumber(v: unknown): number | null {
@@ -54,6 +56,7 @@ function normalize(l: RawLink): PaymentLink {
     creator: l.creator,
     customer: l.customer,
     chatter: l.chatter,
+    checkoutUrl: l.checkout_url,
   };
 }
 

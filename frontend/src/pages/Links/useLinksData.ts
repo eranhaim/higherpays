@@ -25,6 +25,7 @@ function apiToLegacyLink(l: ApiLink): PaymentLink {
     unit: l.currency ?? 'EUR',
     status: API_TO_UI_STATUS[l.status] ?? 'Created',
     ts: Date.parse(l.createdAt),
+    checkoutUrl: l.checkoutUrl,
   };
 }
 

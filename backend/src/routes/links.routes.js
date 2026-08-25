@@ -54,7 +54,7 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
     `SELECT pl.id, pl.pricing_mode, pl.amount, pl.currency, pl.provider_link_id,
             CASE WHEN pl.status = 'created' AND pl.created_at < now() - ($${vals.length + 1} || ' minutes')::interval
                  THEN 'expired' ELSE pl.status END AS status,
-            pl.reference_id, pl.created_at, pl.paid_at,
+            pl.reference_id, pl.created_at, pl.paid_at, pl.checkout_url,
             cr.stage_name AS creator, cu.alias AS customer,
             u.full_name AS chatter
      FROM payment_links pl
@@ -146,11 +146,11 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
 
     const link = (await c.query(
       `INSERT INTO payment_links
-         (workspace_id, creator_id, customer_id, created_by, pricing_mode, amount, currency, status, provider_link_id, reference_id, description, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'created',$8,$9,$10,$11)
-       RETURNING id, pricing_mode, amount, currency, status, provider_link_id, reference_id, created_at, expires_at`,
+         (workspace_id, creator_id, customer_id, created_by, pricing_mode, amount, currency, status, provider_link_id, reference_id, description, expires_at, checkout_url)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'created',$8,$9,$10,$11,$12)
+       RETURNING id, pricing_mode, amount, currency, status, provider_link_id, reference_id, created_at, expires_at, checkout_url`,
       [wid(req), creatorId, customerId || null, req.membership.id, 'fixed', amt, cur,
-       built.providerLinkId, referenceId, description || null, built.expiresAt])).rows[0];
+       built.providerLinkId, referenceId, description || null, built.expiresAt, built.url])).rows[0];
     return { link, url: built.url };
   });
 
