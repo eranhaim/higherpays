@@ -15,7 +15,8 @@ WORKDIR /app
 ARG VITE_API_URL=/api
 ENV VITE_API_URL=$VITE_API_URL
 
-COPY package.json package-lock.json ./
+# .npmrc carries legacy-peer-deps for the a11y lint plugin; npm ci needs it too.
+COPY package.json package-lock.json .npmrc ./
 RUN npm ci
 COPY . .
 RUN npm run build
