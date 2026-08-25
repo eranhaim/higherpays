@@ -100,8 +100,8 @@ export function RolesPane() {
         <h3>New custom role</h3>
         <p className="sub">Starts with no permissions. Grant them in the table.</p>
         <div className="field">
-          <label>Role name</label>
-          <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)} />
+          <label htmlFor="role-name">Role name</label>
+          <input id="role-name" type="text" value={newName} onChange={(e) => setNewName(e.target.value)} />
         </div>
         <div className="modal-actions">
           <button className="btn ghost" onClick={closeAdd}>Cancel</button>

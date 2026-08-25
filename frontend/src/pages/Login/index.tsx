@@ -83,7 +83,7 @@ export default function LoginPage() {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  autoFocus
+                 
                 />
               </div>
               <div className="field">
@@ -111,7 +111,7 @@ export default function LoginPage() {
                 maxLength={6}
                 value={totp}
                 onChange={(e) => setTotp(e.target.value.replace(/\D/g, ''))}
-                autoFocus
+               
               />
               <p className="sub">Enter the 6-digit code from your authenticator app.</p>
             </div>

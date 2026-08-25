@@ -38,7 +38,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
           <thead>
             <tr>
               {columns.map((c) => (
-                <th key={c.key} style={{ textAlign: c.align, width: c.width }}>{c.header}</th>
+                <th key={c.key} scope="col" style={{ textAlign: c.align, width: c.width }}>{c.header}</th>
               ))}
             </tr>
           </thead>

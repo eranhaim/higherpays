@@ -198,12 +198,12 @@ function AddChannelForm({ availableEvents, onCreate }: {
       <div className="sechead">Add a chat</div>
       <div className="form-row">
         <div className="field">
-          <label>Telegram chat ID</label>
-          <input type="text" value={target} onChange={(e) => setTarget(e.target.value)} />
+          <label htmlFor="telegram-chat-id">Telegram chat ID</label>
+          <input id="telegram-chat-id" type="text" value={target} onChange={(e) => setTarget(e.target.value)} />
         </div>
         <div className="field">
-          <label>Label</label>
-          <input type="text" value={label} onChange={(e) => setLabel(e.target.value)} />
+          <label htmlFor="telegram-label">Label</label>
+          <input id="telegram-label" type="text" value={label} onChange={(e) => setLabel(e.target.value)} />
         </div>
       </div>
       <div className="check-inline">

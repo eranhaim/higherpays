@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { MONTHS_SHORT } from '../../lib/format';
 
 export interface DateRange {
@@ -22,6 +22,7 @@ function formatLabel(v: string): string {
  */
 export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
   const [open, setOpen] = useState(false);
+  const id = useId();
   const label =
     !value.from && !value.to ? 'All time' :
     value.from && value.to ? `${formatLabel(value.from)} – ${formatLabel(value.to)}` :
@@ -36,16 +37,18 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
       {open ? (
         <div className="rangepop open">
           <div className="rp-row">
-            <label>From</label>
+            <label htmlFor={`${id}-from`}>From</label>
             <input
+              id={`${id}-from`}
               type="date"
               value={value.from}
               onChange={(e) => onChange({ ...value, from: e.target.value })}
             />
           </div>
           <div className="rp-row">
-            <label>To</label>
+            <label htmlFor={`${id}-to`}>To</label>
             <input
+              id={`${id}-to`}
               type="date"
               value={value.to}
               onChange={(e) => onChange({ ...value, to: e.target.value })}

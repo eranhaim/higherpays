@@ -141,6 +141,10 @@ select:hover:not(:disabled) { border-color: var(--muted); }
   letter-spacing: 0.08em; font-weight: 600; padding-left: 2px;
 }
 .field > .sub { margin-top: 2px; }
+.field-label {
+  font-size: 10.5px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: 0.08em; font-weight: 600; padding-left: 2px;
+}
 .form-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
 .form-row .field { flex: 1; min-width: 150px; }
 .check-row {
@@ -517,7 +521,11 @@ tbody tr.clickable:hover { background: var(--surface-2); }
 .bell-panel.on { display: block; }
 .bell-head { display: flex; align-items: center; gap: 6px; padding: 6px 10px 8px; }
 .bell-head strong { margin-right: auto; font-size: 13px; }
-.nrow { display: flex; gap: 10px; padding: 10px; border-radius: var(--radius); }
+.nrow {
+  display: flex; gap: 10px; padding: 10px; border-radius: var(--radius);
+  width: 100%; text-align: left; background: none; border: none;
+  font: inherit; color: inherit;
+}
 .nrow.clickable { cursor: pointer; }
 .nrow.clickable:hover { background: var(--surface-2); }
 .nrow.unread { background: var(--accent-soft); }

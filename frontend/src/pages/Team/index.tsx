@@ -185,7 +185,7 @@ export default function TeamPage() {
         <p className="sub">They receive an email with a link to set their password.</p>
         <div className="field">
           <label htmlFor="invite-email">Email</label>
-          <input id="invite-email" type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} autoFocus />
+          <input id="invite-email" type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
         </div>
         <div className="field">
           <label htmlFor="invite-role">Role</label>

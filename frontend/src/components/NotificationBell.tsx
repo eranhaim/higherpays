@@ -23,9 +23,8 @@ function timeAgo(iso: string): string {
 
 function NotificationRow({ notification, onRead }: { notification: Notification; onRead: () => void }) {
   const tag = EVENT_TAGS[notification.event];
-  const className = ['nrow', notification.read ? '' : 'unread clickable'].filter(Boolean).join(' ');
-  return (
-    <div className={className} onClick={notification.read ? undefined : onRead}>
+  const body = (
+    <>
       <span className="nic"><Pill tone={tag.tone}>{tag.label}</Pill></span>
       <div>
         <div className="ntitle">
@@ -39,8 +38,12 @@ function NotificationRow({ notification, onRead }: { notification: Notification;
           {timeAgo(notification.createdAt)}
         </div>
       </div>
-    </div>
+    </>
   );
+  // An unread row is an action (mark read), so it is a button; a read row is just text.
+  return notification.read
+    ? <div className="nrow">{body}</div>
+    : <button type="button" className="nrow unread clickable" onClick={onRead} aria-label={`Mark read: ${notification.title}`}>{body}</button>;
 }
 
 export default function NotificationBell() {

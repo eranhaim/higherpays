@@ -206,7 +206,7 @@ export default function CreatorsPage() {
         <p className="sub">A content creator operating under this workspace.</p>
         <div className="field">
           <label htmlFor="creator-name">Name</label>
-          <input id="creator-name" type="text" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+          <input id="creator-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="field">
           <label htmlFor="creator-handle">Handle</label>
@@ -242,8 +242,8 @@ export default function CreatorsPage() {
           </>
         )}
         {model === 'ai' && <p className="sub">AI creators have no payout. The agency keeps the distributable amount.</p>}
-        <div className="field">
-          <label>Assign chatters</label>
+        <div className="field" role="group" aria-labelledby="assign-chatters-label">
+          <div className="field-label" id="assign-chatters-label">Assign chatters</div>
           <div className="check-list">
             {chatters.length === 0 ? (
               <span className="sub">No chatters in this workspace yet.</span>

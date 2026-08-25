@@ -173,7 +173,7 @@ export default function CustomersPage() {
         <p className="sub">Keep only data you have a lawful basis to hold.</p>
         <div className="field">
           <label htmlFor="customer-alias">Name or username</label>
-          <input id="customer-alias" type="text" value={alias} onChange={(e) => setAlias(e.target.value)} autoFocus />
+          <input id="customer-alias" type="text" value={alias} onChange={(e) => setAlias(e.target.value)} />
         </div>
         <div className="field">
           <label htmlFor="customer-email">Email</label>

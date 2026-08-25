@@ -271,18 +271,18 @@ function EnableTwoFactorModal({ onClose }: { onClose: () => void }) {
       ) : (
         <>
           <div className="field">
-            <label>Setup key</label>
-            <input type="text" readOnly value={setup.data?.secret ?? ''}
+            <label htmlFor="tfa-secret">Setup key</label>
+            <input id="tfa-secret" type="text" readOnly value={setup.data?.secret ?? ''}
               onFocus={(e) => e.target.select()} />
           </div>
           <div className="field">
-            <label>Setup link</label>
-            <input type="text" readOnly value={setup.data?.otpauthUrl ?? ''}
+            <label htmlFor="tfa-link">Setup link</label>
+            <input id="tfa-link" type="text" readOnly value={setup.data?.otpauthUrl ?? ''}
               onFocus={(e) => e.target.select()} />
           </div>
           <div className="field">
-            <label>6-digit code from your app</label>
-            <input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+            <label htmlFor="tfa-enable-code">6-digit code from your app</label>
+            <input id="tfa-enable-code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
               value={code} onChange={(e) => setCode(e.target.value)} />
           </div>
         </>
@@ -317,8 +317,8 @@ function DisableTwoFactorModal({ onClose }: { onClose: () => void }) {
       <h3>Disable two-factor?</h3>
       <p className="sub">Your account will then be protected by password only. Enter a current code to confirm.</p>
       <div className="field">
-        <label>6-digit code from your app</label>
-        <input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+        <label htmlFor="tfa-disable-code">6-digit code from your app</label>
+        <input id="tfa-disable-code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
           value={code} onChange={(e) => setCode(e.target.value)} />
       </div>
       <div className="modal-actions">
