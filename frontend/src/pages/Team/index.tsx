@@ -1,11 +1,18 @@
 import { useState } from 'react';
 import { useCan } from '../../hooks/usePermission';
+import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { initials } from '../../lib/format';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
-import { PageHeader, DateCell, DataTable, FilterBar, type Column } from '../../components/ui';
+import { PageHeader, DateCell, DataTable, FilterBar, Pill, type Column } from '../../components/ui';
 import type { Member, Invite } from '../../api/endpoints';
 import { useTeamData } from './useTeamData';
+
+/** A token past its expiry no longer resolves, so the invite is dead. */
+function isExpired(i: Invite): boolean {
+  const ts = Date.parse(i.expiresAt);
+  return Number.isFinite(ts) && ts < Date.now();
+}
 
 function clampPct(v: number): number {
   return Math.min(100, Math.max(0, v));
@@ -21,7 +28,7 @@ export default function TeamPage() {
   const can = useCan();
   const {
     agents, members, pendingInvites, roles, isLoading, isError,
-    setCommission, setRole, removeMember, invite,
+    setCommission, setRole, removeMember, invite, cancelInvite,
   } = useTeamData();
   const canManage = can('team.manage');
   const canViewCommission = can('commissions.view');
@@ -39,6 +46,8 @@ export default function TeamPage() {
   const [roleChange, setRoleChange] = useState<{ member: Member; role: string } | null>(null);
   const [isChangingRole, setIsChangingRole] = useState(false);
   const [search, setSearch] = useState('');
+  const [cancelling, setCancelling] = useState<Invite | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   const saveCommission = async () => {
     const dirty = Object.entries(commissionEdits);
@@ -82,6 +91,19 @@ export default function TeamPage() {
   };
 
   const closeInvite = () => { setInviteOpen(false); setInviteEmail(''); setInviteRole('agent'); };
+
+  const confirmCancelInvite = async (i: Invite) => {
+    setIsCancelling(true);
+    try {
+      await cancelInvite(i.id);
+      setCancelling(null);
+      toast(isExpired(i) ? 'Expired invite cleared.' : `Invite to ${i.email} cancelled.`);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not cancel the invite.');
+    } finally {
+      setIsCancelling(false);
+    }
+  };
 
   const submitInvite = async () => {
     const email = inviteEmail.trim();
@@ -136,6 +158,8 @@ export default function TeamPage() {
     },
   ];
 
+  useUnsavedChanges('agent-commission', Object.keys(commissionEdits).length > 0);
+
   const query = search.trim().toLowerCase();
   const visibleMembers = query
     ? members.filter((m) => `${m.name} ${m.email}`.toLowerCase().includes(query))
@@ -144,7 +168,26 @@ export default function TeamPage() {
   const inviteColumns: Column<Invite>[] = [
     { key: 'email', header: 'Email', render: (i) => <span className="cemail">{i.email}</span> },
     { key: 'role', header: 'Role', render: (i) => <span className="rolebadge">{i.role}</span> },
-    { key: 'expires', header: 'Expires', render: (i) => <DateCell ts={i.expiresAt} /> },
+    {
+      key: 'expires',
+      header: 'Expires',
+      // An expired invite's token no longer resolves, so say so rather than
+      // showing a past date under a "Pending" heading.
+      render: (i) => (isExpired(i)
+        ? <Pill tone="muted">Expired</Pill>
+        : <DateCell ts={i.expiresAt} />),
+    },
+    ...(canManage ? [{
+      key: 'cancel',
+      header: 'Cancel invite',
+      hideHeader: true,
+      align: 'right' as const,
+      render: (i: Invite) => (
+        <button className="btn ghost small" onClick={() => setCancelling(i)}>
+          {isExpired(i) ? 'Clear' : 'Cancel'}
+        </button>
+      ),
+    }] : []),
   ];
 
   return (
@@ -292,6 +335,24 @@ export default function TeamPage() {
             <button className="btn ghost" onClick={() => setRoleChange(null)}>Cancel</button>
             <button className="btn" disabled={isChangingRole} onClick={() => confirmRoleChange(roleChange)}>
               {isChangingRole ? 'Changing…' : `Change to ${roleChange.role}`}
+            </button>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={cancelling !== null}
+        onClose={() => setCancelling(null)}
+        title={cancelling ? (isExpired(cancelling) ? 'Clear this invite?' : `Cancel the invite to ${cancelling.email}?`) : ''}
+        subtitle={cancelling && isExpired(cancelling)
+          ? 'It has already expired, so this just removes it from the list.'
+          : 'The link stops working immediately. You can always send a new one.'}
+      >
+        {cancelling && (
+          <div className="modal-actions">
+            <button className="btn ghost" onClick={() => setCancelling(null)}>Keep it</button>
+            <button className="btn danger" disabled={isCancelling} onClick={() => confirmCancelInvite(cancelling)}>
+              {isCancelling ? 'Cancelling…' : isExpired(cancelling) ? 'Clear invite' : 'Cancel invite'}
             </button>
           </div>
         )}

@@ -5,6 +5,7 @@ import {
 } from '../../api/endpoints';
 import { HttpError } from '../../api/http';
 import { useCan } from '../../hooks/usePermission';
+import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { toast } from '../../lib/toast';
 import Modal from '../../components/Modal';
 import { EmptyState, ErrorCard, LoadingCard, Pill } from '../../components/ui';
@@ -28,11 +29,24 @@ export function NotificationsPane() {
   const [removing, setRemoving] = useState<NotificationChannel | null>(null);
   const {
     preferences, channels,
-    savePreferences, createChannel, setChannelActive, deleteChannel, testChannel,
+    savePreferences, createChannel, setChannelActive, setChannelEvents, deleteChannel, testChannel,
   } = useNotificationSettings();
 
   if (preferences.isLoading || channels.isLoading) return <LoadingCard />;
   if (preferences.isError || channels.isError || !preferences.data || !channels.data) return <ErrorCard />;
+
+  // Which events a chat receives is editable — the API has always accepted it,
+  // the table just never offered it. Each tick is one write, so there is no
+  // half-saved state to reconcile.
+  const toggleChannelEvent = async (c: NotificationChannel, event: NotificationEvent, on: boolean) => {
+    const next = toggleEvent(c.events, event, on);
+    if (next.length === 0) { toast('A chat needs at least one event, or pause it instead.'); return; }
+    try {
+      await setChannelEvents.mutateAsync({ id: c.id, events: next });
+    } catch (err) {
+      toast(errorMessage(err, 'Could not change what this chat receives.'));
+    }
+  };
 
   const test = async (channel: NotificationChannel) => {
     try {
@@ -97,7 +111,21 @@ export function NotificationsPane() {
                       <div className="cemail">{c.target}</div>
                     </td>
                     <td>
-                      {c.events.map((e, i) => (
+                      {editable ? (
+                        <div className="controls">
+                          {channels.data.availableEvents.map((e) => (
+                            <label key={e} className="check-row inline">
+                              <input
+                                type="checkbox"
+                                checked={c.events.includes(e)}
+                                disabled={setChannelEvents.isPending}
+                                onChange={(ev) => toggleChannelEvent(c, e, ev.target.checked)}
+                              />
+                              <span>{NOTIFICATION_EVENT_LABELS[e]}</span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : c.events.map((e, i) => (
                         <Fragment key={e}>
                           {i > 0 && ' '}
                           <span className="seg">{NOTIFICATION_EVENT_LABELS[e]}</span>
@@ -163,6 +191,8 @@ function PreferencesCard({ preferences, onSave }: {
 }) {
   const [events, setEvents] = useState<NotificationEvent[]>(preferences.events);
   const [isSaving, setIsSaving] = useState(false);
+  const saved = [...preferences.events].sort().join();
+  useUnsavedChanges('notification-preferences', [...events].sort().join() !== saved);
 
   const save = async () => {
     setIsSaving(true);
@@ -207,6 +237,7 @@ function AddChannelForm({ availableEvents, onCreate }: {
   const [label, setLabel] = useState('');
   const [events, setEvents] = useState<NotificationEvent[]>(['payment.paid']);
   const [isConnecting, setIsConnecting] = useState(false);
+  useUnsavedChanges('telegram-chat', target.trim() !== '' || label.trim() !== '');
 
   const connect = async () => {
     if (!target.trim()) { toast('Paste the Telegram chat ID.'); return; }

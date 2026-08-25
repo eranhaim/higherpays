@@ -97,16 +97,23 @@ export function Heatmap({ grid, currency }: HeatmapProps) {
       {HOURS.map((h) => <div key={h} className="hh">{h % 3 === 0 ? h : ''}</div>)}
       {grid.map((row, day) => [
         <div key={`l${day}`} className="hl">{DAY_LABELS[day]}</div>,
-        ...row.map((v, h) => (
-          <div
-            key={`${day}-${h}`}
-            className={v > 0 ? 'hc on' : 'hc'}
-            // Floored at 0.4: below that a filled cell is indistinguishable
-            // from an empty one on the paper background.
-            style={v > 0 ? { opacity: 0.4 + 0.6 * (v / max) } : undefined}
-            title={`${DAY_LABELS[day]} ${h}:00 · ${formatMoney(v, currency)}`}
-          />
-        )),
+        ...row.map((v, h) => {
+          const reading = `${DAY_LABELS[day]} ${h}:00 · ${formatMoney(v, currency)}`;
+          return (
+            <div
+              key={`${day}-${h}`}
+              className={v > 0 ? 'hc on' : 'hc'}
+              // Floored at 0.4: below that a filled cell is indistinguishable
+              // from an empty one on the paper background.
+              style={v > 0 ? { opacity: 0.4 + 0.6 * (v / max) } : undefined}
+              // role=img carries the value to a screen reader without putting
+              // 168 cells in the tab order; title covers pointer users.
+              role="img"
+              aria-label={reading}
+              title={reading}
+            />
+          );
+        }),
       ])}
     </div>
   );

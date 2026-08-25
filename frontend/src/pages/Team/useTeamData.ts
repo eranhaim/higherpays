@@ -16,6 +16,7 @@ export interface UseTeamDataResult {
   setRole: (membershipId: string, role: string) => Promise<void>;
   removeMember: (membershipId: string) => Promise<void>;
   invite: (input: { email: string; role: string }) => Promise<void>;
+  cancelInvite: (id: string) => Promise<void>;
 }
 
 export function useTeamData(): UseTeamDataResult {
@@ -68,10 +69,17 @@ export function useTeamData(): UseTeamDataResult {
     mutationFn: (input: { email: string; role: string }) => invitesApi.create(input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['invites', activeWorkspaceId] }),
   });
+  const cancelInvite = useMutation({
+    mutationFn: (id: string) => invitesApi.remove(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['invites', activeWorkspaceId] }),
+  });
 
   return {
     agents: agents.data ?? [],
     members: members.data ?? [],
+    // An expired invite is no longer pending — its token stops resolving, so
+    // listing it under "Pending" invites a wait for something that will never
+    // arrive. It stays withdrawable until someone clears it.
     pendingInvites: (invites.data ?? []).filter((i) => !i.acceptedAt),
     roles: roles.data ?? [],
     isLoading: agents.isLoading || members.isLoading,
@@ -84,6 +92,9 @@ export function useTeamData(): UseTeamDataResult {
     },
     removeMember: async (membershipId) => {
       await remove.mutateAsync(membershipId);
+    },
+    cancelInvite: async (id) => {
+      await cancelInvite.mutateAsync(id);
     },
     invite: async (input) => {
       await invite.mutateAsync(input);

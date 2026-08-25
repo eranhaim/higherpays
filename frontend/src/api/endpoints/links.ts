@@ -92,10 +92,31 @@ export interface CreatedLink extends PaymentLink {
   url: string;
 }
 
+/** Server-side filters for the link list. Empty fields are simply not sent. */
+export interface ListLinksQuery {
+  status?: string;
+  min?: string;
+  max?: string;
+  /** YYYY-MM-DD, inclusive. */
+  from?: string;
+  to?: string;
+  /** Matches reference, customer alias or agent name. */
+  q?: string;
+  accountId?: string;
+}
+
 export const linksApi = {
-  async list(cursor: string | null = null): Promise<Page<PaymentLink>> {
+  async list(cursor: string | null = null, filters: ListLinksQuery = {}): Promise<Page<PaymentLink>> {
     const qs = new URLSearchParams({ limit: '50' });
     if (cursor) qs.set('cursor', cursor);
+    // The date inputs give a day; the server compares timestamps, so the upper
+    // bound has to cover the whole of that day.
+    for (const [k, v] of Object.entries(filters)) {
+      if (!v) continue;
+      if (k === 'from') qs.set('from', `${v}T00:00:00`);
+      else if (k === 'to') qs.set('to', `${v}T23:59:59.999`);
+      else qs.set(k, v);
+    }
     const raw = await api.get<Page<RawLink>>(workspacePath(`/links?${qs.toString()}`));
     return { items: raw.items.map(normalize), nextCursor: raw.nextCursor };
   },

@@ -3,6 +3,7 @@ import { HttpError } from '../../api/http';
 import type { WorkspaceRole } from '../../api/endpoints';
 import { ALL_PERMISSIONS, PERMISSION_LABELS, type Permission } from '../../rbac/permissions';
 import { useCan } from '../../hooks/usePermission';
+import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import { ErrorCard, LoadingCard, Pill } from '../../components/ui';
@@ -15,7 +16,7 @@ function normalizeRoleName(name: string): string {
 export function RolesPane() {
   const can = useCan();
   const editable = can('team.manage');
-  const { roles, setPermissions, createRole } = useRoles();
+  const { roles, setPermissions, createRole, deleteRole } = useRoles();
   const [addOpen, setAddOpen] = useState(false);
   const [newName, setNewName] = useState('');
   // Edited permission sets per role, held until Save. Granting a role a
@@ -23,6 +24,11 @@ export function RolesPane() {
   // model the account splits and agent commission tables use.
   const [edits, setEdits] = useState<Record<string, Permission[]>>({});
   const [isSaving, setIsSaving] = useState(false);
+  const [removing, setRemoving] = useState<WorkspaceRole | null>(null);
+  const [isRemoving, setIsRemoving] = useState(false);
+
+  // Before the early returns below: hooks cannot sit behind a conditional.
+  useUnsavedChanges('role-permissions', Object.keys(edits).length > 0);
 
   if (roles.isLoading) return <LoadingCard />;
   if (roles.isError || !roles.data) return <ErrorCard />;
@@ -58,6 +64,27 @@ export function RolesPane() {
 
   const closeAdd = () => { setAddOpen(false); setNewName(''); };
 
+  const confirmRemove = async (role: WorkspaceRole) => {
+    setIsRemoving(true);
+    try {
+      await deleteRole.mutateAsync(role.name);
+      setRemoving(null);
+      toast(`Role "${role.name}" deleted.`);
+    } catch (err) {
+      // The server refuses a role someone still holds; say which, rather than
+      // echoing `role_in_use` at the user.
+      if (err instanceof HttpError && err.status === 409) {
+        toast(`Someone still has the "${role.name}" role. Move them off it first.`);
+      } else if (err instanceof HttpError && err.status === 403) {
+        toast('Built-in roles cannot be deleted.');
+      } else {
+        toast(err instanceof Error ? err.message : 'Could not delete the role.');
+      }
+    } finally {
+      setIsRemoving(false);
+    }
+  };
+
   const add = async () => {
     const name = normalizeRoleName(newName);
     if (!name) { toast('Role name is required.'); return; }
@@ -87,7 +114,22 @@ export function RolesPane() {
             <thead>
               <tr>
                 <th scope="col">Permission</th>
-                {ordered.map((r) => <th key={r.name} scope="col">{r.name}</th>)}
+                {ordered.map((r) => (
+                  <th key={r.name} scope="col">
+                    {r.name}
+                    {/* Built-in roles are a product guarantee; only a custom
+                        one can be removed, and only while it is unused. */}
+                    {editable && !r.isSystem && (
+                      <button
+                        className="btn ghost small"
+                        aria-label={`Delete the ${r.name} role`}
+                        onClick={() => setRemoving(r)}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -145,6 +187,22 @@ export function RolesPane() {
           <button className="btn ghost" onClick={closeAdd}>Cancel</button>
           <button className="btn" disabled={createRole.isPending} onClick={add}>Create role</button>
         </div>
+      </Modal>
+
+      <Modal
+        open={removing !== null}
+        onClose={() => setRemoving(null)}
+        title={removing ? `Delete the "${removing.name}" role?` : ''}
+        subtitle="Anyone still holding it keeps their seat, so move them to another role first — the delete is refused otherwise."
+      >
+        {removing && (
+          <div className="modal-actions">
+            <button className="btn ghost" onClick={() => setRemoving(null)}>Keep it</button>
+            <button className="btn danger" disabled={isRemoving} onClick={() => confirmRemove(removing)}>
+              {isRemoving ? 'Deleting…' : 'Delete role'}
+            </button>
+          </div>
+        )}
       </Modal>
     </>
   );

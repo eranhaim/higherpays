@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useDebounced } from '../../hooks/useDebounced';
 import { useCan } from '../../hooks/usePermission';
 import { useRateCard } from '../../hooks/useRateCard';
 import { feeBreakdown } from '../../business/feeBreakdown';
@@ -14,7 +15,7 @@ import {
   type PaymentLink, type LinkStatus,
 } from '../../api/endpoints';
 import { useLinksData } from './useLinksData';
-import { filterLinks, DEFAULT_FILTERS, type LinksFilters } from './filters';
+import { DEFAULT_FILTERS, hasActiveFilters, rangeIsInverted, type LinksFilters } from './filters';
 
 const STATUS_TONE: Record<LinkStatus, 'ok' | 'no' | 'muted'> = {
   created: 'muted',
@@ -28,11 +29,25 @@ const STATUS_TONE: Record<LinkStatus, 'ok' | 'no' | 'muted'> = {
 export default function LinksPage() {
   const can = useCan();
   const { rateCard } = useRateCard();
+  const [filters, setFilters] = useState<LinksFilters>(DEFAULT_FILTERS);
+
+  // Sent to the server, not applied to the loaded page: the list is paginated,
+  // so filtering in the browser would only ever search the rows already
+  // fetched. Debounced for the free-text box so typing doesn't refetch per key.
+  const search = useDebounced(filters.search, 300);
+  const query = useMemo(() => ({
+    status: filters.status || undefined,
+    min: filters.min || undefined,
+    max: filters.max || undefined,
+    from: filters.from || undefined,
+    to: filters.to || undefined,
+    q: search.trim() || undefined,
+    accountId: filters.accountId || undefined,
+  }), [filters.status, filters.min, filters.max, filters.from, filters.to, filters.accountId, search]);
+
   const {
     links, accounts, customers, linkLimits, isLoading, isError, hasMore, isLoadingMore, loadMore, createLink, reconcile,
-  } = useLinksData();
-
-  const [filters, setFilters] = useState<LinksFilters>(DEFAULT_FILTERS);
+  } = useLinksData(query);
   const [createOpen, setCreateOpen] = useState(false);
   const [accountId, setAccountId] = useState('');
   const [customerId, setCustomerId] = useState('');
@@ -41,9 +56,9 @@ export default function LinksPage() {
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
   const [isReconciling, setIsReconciling] = useState(false);
 
-  const filtered = useMemo(() => filterLinks(links, filters), [links, filters]);
-  const paid = filtered.filter((l) => l.status === 'paid');
-  const conversion = filtered.length ? Math.round((paid.length / filtered.length) * 100) : 0;
+  // The server already applied the filters, so these describe what is loaded.
+  const paid = links.filter((l) => l.status === 'paid');
+  const conversion = links.length ? Math.round((paid.length / links.length) * 100) : 0;
   const revenue = sum(paid.map((l) => l.amount ?? 0));
   // Nothing loaded means every total below is 0, which reads as a real figure.
   const statsUnknown = isLoading || isError;
@@ -52,7 +67,7 @@ export default function LinksPage() {
   const setRange = (r: DateRange) => setFilters((f) => ({ ...f, ...r }));
 
   const activeAccounts = accounts.filter((c) => canTakeLinks(c.status));
-  const accountNames = [...new Set(links.map((l) => l.account).filter((n): n is string => Boolean(n)))];
+  const inverted = rangeIsInverted(filters);
 
   const minAmount = linkLimits?.minLinkAmount ?? linkLimits?.providerMinimum ?? 0;
   const maxAmount = linkLimits?.maxLinkAmount ?? null;
@@ -144,8 +159,14 @@ export default function LinksPage() {
         </div>
       )}
 
+      {inverted && (
+        <div className="warnbar" role="alert">
+          The maximum amount is below the minimum, so nothing can match. Swap them or clear one.
+        </div>
+      )}
+
       <StatGrid>
-        <StatCard isUnknown={statsUnknown} label="Links" value={filtered.length} sub="In view" />
+        <StatCard isUnknown={statsUnknown} label="Links" value={links.length} sub={hasMore ? 'Loaded so far' : 'Matching'} />
         <StatCard isUnknown={statsUnknown} label="Paid" value={paid.length} sub="Conversions" />
         <StatCard isUnknown={statsUnknown} label="Conversion" value={`${conversion}%`} sub="Paid ÷ links" />
         <StatCard isUnknown={statsUnknown} label="Revenue" value={<Money amount={revenue} direction="in" emphasis />} sub="From paid links" />
@@ -154,11 +175,11 @@ export default function LinksPage() {
       <FilterBar>
         <select
           aria-label="Filter by account"
-          value={filters.account}
-          onChange={(e) => setFilters((f) => ({ ...f, account: e.target.value }))}
+          value={filters.accountId}
+          onChange={(e) => setFilters((f) => ({ ...f, accountId: e.target.value }))}
         >
           <option value="">All accounts</option>
-          {accountNames.map((n) => <option key={n} value={n}>{n}</option>)}
+          {accounts.map((a) => <option key={a.id} value={a.id}>{a.stageName}</option>)}
         </select>
         <select
           aria-label="Filter by status"
@@ -170,10 +191,12 @@ export default function LinksPage() {
         </select>
         <input
           type="number" className="amount-input" aria-label="Minimum amount" placeholder="Min" value={filters.min}
+          aria-invalid={inverted || undefined}
           onChange={(e) => setFilters((f) => ({ ...f, min: e.target.value }))}
         />
         <input
           type="number" className="amount-input" aria-label="Maximum amount" placeholder="Max" value={filters.max}
+          aria-invalid={inverted || undefined}
           onChange={(e) => setFilters((f) => ({ ...f, max: e.target.value }))}
         />
         <DateRangePicker value={range} onChange={setRange} />
@@ -187,14 +210,14 @@ export default function LinksPage() {
 
       <DataTable
         columns={columns}
-        rows={filtered}
+        rows={links}
         rowKey={(l) => l.id}
         isLoading={isLoading}
         emptyTitle={isError ? "Couldn't load payment links." : 'No links match these filters.'}
         emptyHint={isError ? 'Try again in a moment.' : can('links.create') ? 'Create one from the header.' : 'Ask a agent to create one.'}
         footer={
           <span className="table-foot-row">
-            Showing {filtered.length} of {links.length} loaded
+            {hasActiveFilters(filters) ? 'Matching links' : 'All links'}: {links.length} loaded
             {hasMore && (
               <button className="btn ghost small" onClick={loadMore} disabled={isLoadingMore}>
                 {isLoadingMore ? 'Loading…' : 'Load more'}

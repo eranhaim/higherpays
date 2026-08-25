@@ -50,6 +50,29 @@ wsRouter.get('/', requireAuth, requireWorkspace, requirePermission('team.view'),
   res.json({ invites: rows });
 }));
 
+// DELETE /workspaces/:wid/invites/:id — withdraw an invite that has not been
+// used. The row is removed rather than flagged: the token is the credential, so
+// the only way to make it useless is for it to stop resolving. An already
+// accepted invite is left alone — the seat it created is revoked through
+// DELETE /memberships/:id, not here.
+wsRouter.delete('/:id', requireAuth, requireWorkspace, requirePermission('team.manage'), asyncHandler(async (req, res) => {
+  const out = await withWorkspace(wid(req), uid(req), async (c) => {
+    const inv = (await c.query(
+      'SELECT id, email, role, accepted_at FROM invites WHERE id=$1 AND workspace_id=$2',
+      [req.params.id, wid(req)])).rows[0];
+    if (!inv) return { err: 'not_found', code: 404 };
+    if (inv.accepted_at) return { err: 'invite_already_accepted', code: 409 };
+    await c.query('DELETE FROM invites WHERE id=$1 AND workspace_id=$2', [req.params.id, wid(req)]);
+    return { inv };
+  });
+  if (out.err) return res.status(out.code).json({ error: out.err });
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'invite.revoke',
+    metadata: { email: out.inv.email, role: out.inv.role },
+  });
+  res.status(204).end();
+}));
+
 // ---- public: validate + accept an invite (no auth; keyed by secret token) ----
 const publicRouter = express.Router();
 

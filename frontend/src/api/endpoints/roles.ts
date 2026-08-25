@@ -33,4 +33,7 @@ export const rolesApi = {
     const raw = await api.patch<RawRole>(workspacePath(`/roles/${name}`), { permissions });
     return normalize(raw);
   },
+
+  /** Custom roles only, and only while nobody holds them. */
+  remove: (name: string) => api.del<void>(workspacePath(`/roles/${name}`)),
 };

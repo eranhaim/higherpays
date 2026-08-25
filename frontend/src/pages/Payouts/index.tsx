@@ -5,6 +5,7 @@ import { toast } from '../../lib/toast';
 import Modal from '../../components/Modal';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DetailRow, EmptyState, LoadingCard, ErrorCard,
+  DateRangePicker, type DateRange,
 } from '../../components/ui';
 import { REVENUE_MODEL_LABELS } from '../../api/endpoints';
 import { usePayoutsData, type PayoutPeriod } from './usePayoutsData';
@@ -22,24 +23,41 @@ interface PendingPayout {
 export default function PayoutsPage() {
   const can = useCan();
   const [period, setPeriod] = useState<PayoutPeriod>('month');
+  // A custom range overrides the preset. Setting one clears the other so the
+  // header never claims a period the figures don't come from — and a payout
+  // settles exactly the entries in the window on screen.
+  const [custom, setCustom] = useState<DateRange>({ from: '', to: '' });
   const [pending, setPending] = useState<PendingPayout | null>(null);
-  const { data, isLoading, isError, pay, isPaying } = usePayoutsData(period);
+  const { data, isLoading, isError, pay, isPaying } = usePayoutsData(period, custom);
   const canPay = can('commissions.manage');
+
+  const usingCustom = Boolean(custom.from || custom.to);
+  const periodLabel = usingCustom
+    ? 'the selected range'
+    : period === 'month' ? 'this month' : period === 'week' ? 'this week' : 'the last 12 months';
 
   const header = (
     <PageHeader
       eyebrow="Money out"
       title="Payouts"
-      subtitle="What you owe your accounts and team for the period."
+      subtitle={`What you owe your accounts and team for ${periodLabel}.`}
       actions={
-        <div className="field">
-          <label htmlFor="payout-period">Period</label>
-          <select id="payout-period" value={period} onChange={(e) => setPeriod(e.target.value as PayoutPeriod)}>
-            <option value="month">This month</option>
-            <option value="week">This week</option>
-            <option value="all">Last 12 months</option>
-          </select>
-        </div>
+        <>
+          <div className="field">
+            <label htmlFor="payout-period">Period</label>
+            <select
+              id="payout-period"
+              value={usingCustom ? '' : period}
+              onChange={(e) => { setCustom({ from: '', to: '' }); setPeriod(e.target.value as PayoutPeriod); }}
+            >
+              {usingCustom && <option value="">Custom range</option>}
+              <option value="month">This month</option>
+              <option value="week">This week</option>
+              <option value="all">Last 12 months</option>
+            </select>
+          </div>
+          <DateRangePicker value={custom} onChange={setCustom} />
+        </>
       }
     />
   );

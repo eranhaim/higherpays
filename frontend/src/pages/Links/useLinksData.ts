@@ -2,6 +2,7 @@ import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tansta
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
   linksApi, accountsApi, customersApi, workspacesApi,
+  type ListLinksQuery,
   type PaymentLink, type Account, type Customer, type LinkLimits, type CreatedLink,
 } from '../../api/endpoints';
 
@@ -30,14 +31,16 @@ export interface UseLinksDataResult {
   reconcile: () => Promise<ReconcileSummary>;
 }
 
-export function useLinksData(): UseLinksDataResult {
+export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
   const { activeWorkspaceId, currency } = useCurrentSession();
   const queryClient = useQueryClient();
   const enabled = Boolean(activeWorkspaceId);
 
+  // Filters are part of the key: changing one starts a fresh paginated result
+  // from the server rather than re-filtering whatever happens to be loaded.
   const links = useInfiniteQuery({
-    queryKey: ['links', activeWorkspaceId],
-    queryFn: ({ pageParam }) => linksApi.list(pageParam),
+    queryKey: ['links', activeWorkspaceId, filters],
+    queryFn: ({ pageParam }) => linksApi.list(pageParam, filters),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
     enabled,

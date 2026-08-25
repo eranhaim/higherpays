@@ -31,4 +31,7 @@ export const invitesApi = {
     const raw = await api.post<RawInvite>(workspacePath('/invites'), input);
     return normalize(raw);
   },
+
+  /** Withdraws a pending invite; its token stops resolving immediately. */
+  remove: (id: string) => api.del<void>(workspacePath(`/invites/${id}`)),
 };

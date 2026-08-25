@@ -1,7 +1,15 @@
-import type { PaymentLink, LinkStatus } from '../../api/endpoints';
+import type { LinkStatus } from '../../api/endpoints';
 
+/**
+ * Link list filters. These are sent to the server — the list is cursor
+ * paginated, so filtering in the browser would only ever search the rows
+ * already loaded and would report "no matches" for anything older.
+ *
+ * `min`/`max` are kept as raw text so a cleared box stays cleared rather than
+ * collapsing to 0.
+ */
 export interface LinksFilters {
-  account: string;
+  accountId: string;
   status: '' | LinkStatus;
   min: string;
   max: string;
@@ -11,29 +19,17 @@ export interface LinksFilters {
 }
 
 export const DEFAULT_FILTERS: LinksFilters = {
-  account: '', status: '', min: '', max: '', from: '', to: '', search: '',
+  accountId: '', status: '', min: '', max: '', from: '', to: '', search: '',
 };
 
-export function filterLinks(rows: PaymentLink[], f: LinksFilters): PaymentLink[] {
-  const q = f.search.trim().toLowerCase();
+/** True when the user has narrowed the list at all. */
+export function hasActiveFilters(f: LinksFilters): boolean {
+  return Object.values(f).some((v) => v !== '');
+}
+
+/** The one rule the server cannot infer: an inverted range matches nothing. */
+export function rangeIsInverted(f: LinksFilters): boolean {
   const min = parseFloat(f.min);
   const max = parseFloat(f.max);
-  const fromTs = f.from ? new Date(`${f.from}T00:00:00`).getTime() : null;
-  const toTs = f.to ? new Date(`${f.to}T23:59:59`).getTime() : null;
-
-  return rows.filter((l) => {
-    const amount = l.amount ?? 0;
-    const ts = Date.parse(l.createdAt);
-    if (f.account && l.account !== f.account) return false;
-    if (f.status && l.status !== f.status) return false;
-    if (!Number.isNaN(min) && amount < min) return false;
-    if (!Number.isNaN(max) && amount > max) return false;
-    if (fromTs && ts < fromTs) return false;
-    if (toTs && ts > toTs) return false;
-    if (q) {
-      const hay = [l.referenceId, l.customer, l.agent].filter(Boolean).join(' ').toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
+  return !Number.isNaN(min) && !Number.isNaN(max) && max < min;
 }

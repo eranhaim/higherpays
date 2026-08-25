@@ -4,7 +4,7 @@
  * caller's real permissions, so a agent only sees what they can act on.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../store/auth';
@@ -13,9 +13,16 @@ import { useCurrentSession } from '../hooks/useCurrentSession';
 import { useCan } from '../hooks/usePermission';
 import { authApi } from '../api/endpoints';
 import { NAV, type NavGroup } from '../rbac/nav';
+import { hasUnsavedChanges, clearUnsavedChanges } from '../lib/unsavedChanges';
+import Modal from './Modal';
 import NotificationBell from './NotificationBell';
 
-function NavSection({ group }: { group: NavGroup }) {
+interface NavSectionProps {
+  group: NavGroup;
+  onNavigate: (e: MouseEvent, path: string) => void;
+}
+
+function NavSection({ group, onNavigate }: NavSectionProps) {
   const can = useCan();
   const visible = group.items.filter((i) => can(i.perm));
   if (visible.length === 0) return null;
@@ -28,6 +35,7 @@ function NavSection({ group }: { group: NavGroup }) {
           key={item.path}
           to={item.path}
           className={({ isActive }) => `navitem${isActive ? ' active' : ''}`}
+          onClick={(e) => onNavigate(e, item.path)}
         >
           {item.label}
         </NavLink>
@@ -45,6 +53,22 @@ export default function Layout() {
   const queryClient = useQueryClient();
   const { pathname } = useLocation();
   const mainRef = useRef<HTMLElement>(null);
+  const [pendingPath, setPendingPath] = useState<string | null>(null);
+
+  // Leaving the page throws away whatever the current form is holding, so ask
+  // first. Registered by useUnsavedChanges in the forms themselves.
+  const guardNavigation = (e: MouseEvent, path: string) => {
+    if (path === pathname || !hasUnsavedChanges()) return;
+    e.preventDefault();
+    setPendingPath(path);
+  };
+
+  const leaveWithoutSaving = () => {
+    const path = pendingPath;
+    setPendingPath(null);
+    clearUnsavedChanges();
+    if (path) navigate(path);
+  };
 
   // A new page starts at the top. <main> is the scroll container on wide
   // screens; below 900px the layout is auto-height and the window scrolls.
@@ -95,7 +119,7 @@ export default function Layout() {
         )}
 
         <nav>
-          {NAV.map((g) => <NavSection key={g.label} group={g} />)}
+          {NAV.map((g) => <NavSection key={g.label} group={g} onNavigate={guardNavigation} />)}
         </nav>
 
         <div className="side-foot">
@@ -118,6 +142,18 @@ export default function Layout() {
       <main ref={mainRef}>
         <Outlet />
       </main>
+
+      <Modal
+        open={pendingPath !== null}
+        onClose={() => setPendingPath(null)}
+        title="Leave without saving?"
+        subtitle="This page has changes you haven't saved. Leaving now discards them."
+      >
+        <div className="modal-actions">
+          <button className="btn ghost" onClick={() => setPendingPath(null)}>Stay on this page</button>
+          <button className="btn danger" onClick={leaveWithoutSaving}>Discard and leave</button>
+        </div>
+      </Modal>
     </div>
   );
 }

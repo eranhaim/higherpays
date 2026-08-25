@@ -198,7 +198,9 @@ export default function PaymentsPage() {
           <>
             <div className="callout">
               <DetailRow label="Refund to customer"><Money amount={refunding.gross} direction="out" /></DetailRow>
-              <DetailRow label="Refund fee"><Money amount={rateCard.refundFee} direction="out" /></DetailRow>
+              {rateCard.refundFee !== undefined && (
+                <DetailRow label="Refund fee"><Money amount={rateCard.refundFee} direction="out" /></DetailRow>
+              )}
               <p className="sub">Platform fees already taken ({formatMoney(refunding.platformFee)}) are not returned by the provider.</p>
             </div>
             <label className="check-row">

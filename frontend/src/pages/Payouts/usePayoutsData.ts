@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTimezone } from '../../hooks/useTimezone';
 import { payoutsApi, type PayoutBreakdown, type RunPayoutInput } from '../../api/endpoints';
+import type { DateRange } from '../../components/ui';
 import { startOfMonthTZ, startOfWeekTZ } from '../../business/timezone';
 import { DAY_MS } from '../../lib/format';
 
@@ -17,7 +18,7 @@ export interface UsePayoutsDataResult {
   isPaying: boolean;
 }
 
-export function usePayoutsData(period: PayoutPeriod): UsePayoutsDataResult {
+export function usePayoutsData(period: PayoutPeriod, custom?: DateRange): UsePayoutsDataResult {
   const { activeWorkspaceId } = useCurrentSession();
   const tz = useTimezone();
   const queryClient = useQueryClient();
@@ -25,12 +26,20 @@ export function usePayoutsData(period: PayoutPeriod): UsePayoutsDataResult {
   // Fixed at mount so the range does not drift between renders.
   const [now] = useState(() => Date.now());
   const range = useMemo(() => {
+    if (custom && (custom.from || custom.to)) {
+      // The picker yields whole days; the ledger compares timestamps, so the
+      // upper bound has to cover all of the closing day.
+      return {
+        from: custom.from ? new Date(`${custom.from}T00:00:00`).toISOString() : new Date(0).toISOString(),
+        to: custom.to ? new Date(`${custom.to}T23:59:59.999`).toISOString() : new Date(now).toISOString(),
+      };
+    }
     const from =
       period === 'week' ? startOfWeekTZ(now, tz) :
       period === 'month' ? startOfMonthTZ(now, tz) :
       now - 365 * DAY_MS;
     return { from: new Date(from).toISOString(), to: new Date(now).toISOString() };
-  }, [period, now, tz]);
+  }, [period, now, tz, custom]);
 
   const query = useQuery({
     queryKey: ['payouts-breakdown', activeWorkspaceId, range.from, range.to],

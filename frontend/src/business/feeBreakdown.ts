@@ -7,11 +7,14 @@ export interface RateCard {
   margin: number | null;
   /** Fixed fee per transaction. */
   fixed: number;
-  refundFee: number;
-  chargebackFee: number;
-  declineFee: number;
-  reservePct: number;
-  reserveReleaseDays: number;
+  // Agency treasury settings. Undefined — not zero — when the caller is scoped
+  // to their own rows and the server withheld them; a 0 here would read as a
+  // real "no chargeback fee" rather than "not shown to you".
+  refundFee?: number;
+  chargebackFee?: number;
+  declineFee?: number;
+  reservePct?: number;
+  reserveReleaseDays?: number;
 }
 
 export interface FeeBreakdown {

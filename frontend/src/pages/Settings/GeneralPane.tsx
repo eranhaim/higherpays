@@ -5,6 +5,7 @@ import { HttpError } from '../../api/http';
 import { feeBreakdown, type RateCard } from '../../business/feeBreakdown';
 import { TZ_LIST, detectedTZ, tzTimeLabel } from '../../business/timezone';
 import { useCan } from '../../hooks/usePermission';
+import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useRateCard } from '../../hooks/useRateCard';
 import { usePreferencesStore } from '../../store/preferences';
@@ -51,6 +52,7 @@ function WorkspaceCard({ editable, onRename }: {
   const { activeWorkspace, currency } = useCurrentSession();
   const [name, setName] = useState(activeWorkspace?.name ?? '');
   const [isSaving, setIsSaving] = useState(false);
+  useUnsavedChanges('workspace-name', name.trim() !== (activeWorkspace?.name ?? ''));
 
   const save = async () => {
     const trimmed = name.trim();
@@ -96,9 +98,14 @@ function WorkspaceCard({ editable, onRename }: {
 }
 
 function FeesCard({ rateCard }: { rateCard: RateCard }) {
-  const reserve = rateCard.reservePct > 0
-    ? `${rateCard.reservePct}% · released after ${rateCard.reserveReleaseDays} days`
-    : 'none';
+  // The reversal fees and the reserve are the agency's treasury: the server
+  // sends them only to callers who see the whole workspace. Rendering a
+  // withheld value as 0 would claim there is no chargeback fee, so the row is
+  // dropped instead.
+  const reserve = rateCard.reservePct === undefined ? null
+    : rateCard.reservePct > 0
+      ? `${rateCard.reservePct}% · released after ${rateCard.reserveReleaseDays ?? 0} days`
+      : 'none';
 
   return (
     <div className="card">
@@ -112,22 +119,30 @@ function FeesCard({ rateCard }: { rateCard: RateCard }) {
         <div><div className="k">Fixed fee</div><div className="d">Charged on every transaction, on top of the blended rate.</div></div>
         <Money amount={rateCard.fixed} />
       </div>
-      <div className="setrow">
-        <div><div className="k">Refund fee</div><div className="d">Charged when a payment is refunded.</div></div>
-        <Money amount={rateCard.refundFee} />
-      </div>
-      <div className="setrow">
-        <div><div className="k">Chargeback fee</div><div className="d">Charged when a customer disputes a payment.</div></div>
-        <Money amount={rateCard.chargebackFee} />
-      </div>
-      <div className="setrow">
-        <div><div className="k">Decline fee</div><div className="d">Charged on declined attempts.</div></div>
-        <Money amount={rateCard.declineFee} />
-      </div>
-      <div className="setrow">
-        <div><div className="k">Rolling reserve</div><div className="d">Share of each payment held back and released later.</div></div>
-        <span className="mono-val">{reserve}</span>
-      </div>
+      {rateCard.refundFee !== undefined && (
+        <div className="setrow">
+          <div><div className="k">Refund fee</div><div className="d">Charged when a payment is refunded.</div></div>
+          <Money amount={rateCard.refundFee} />
+        </div>
+      )}
+      {rateCard.chargebackFee !== undefined && (
+        <div className="setrow">
+          <div><div className="k">Chargeback fee</div><div className="d">Charged when a customer disputes a payment.</div></div>
+          <Money amount={rateCard.chargebackFee} />
+        </div>
+      )}
+      {rateCard.declineFee !== undefined && (
+        <div className="setrow">
+          <div><div className="k">Decline fee</div><div className="d">Charged on declined attempts.</div></div>
+          <Money amount={rateCard.declineFee} />
+        </div>
+      )}
+      {reserve !== null && (
+        <div className="setrow">
+          <div><div className="k">Rolling reserve</div><div className="d">Share of each payment held back and released later.</div></div>
+          <span className="mono-val">{reserve}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -142,9 +157,12 @@ function LinkLimitsCard({ editable, limits, rateCard, onSave }: {
   rateCard: RateCard;
   onSave: (input: { minLinkAmount: number | null; maxLinkAmount: number | null }) => Promise<unknown>;
 }) {
-  const [min, setMin] = useState(limits.minLinkAmount == null ? '' : String(limits.minLinkAmount));
-  const [max, setMax] = useState(limits.maxLinkAmount == null ? '' : String(limits.maxLinkAmount));
+  const savedMin = limits.minLinkAmount == null ? '' : String(limits.minLinkAmount);
+  const savedMax = limits.maxLinkAmount == null ? '' : String(limits.maxLinkAmount);
+  const [min, setMin] = useState(savedMin);
+  const [max, setMax] = useState(savedMax);
   const [isSaving, setIsSaving] = useState(false);
+  useUnsavedChanges('link-limits', min !== savedMin || max !== savedMax);
 
   const minAmount = parseFloat(min);
   const feeAtMin = minAmount > 0 ? effectivePct(minAmount, rateCard) : '—';

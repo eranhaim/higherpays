@@ -45,35 +45,68 @@ async function generateProviderLink({ ws, currency, amount, referenceId, descrip
   return { providerLinkId: referenceId, url: checkoutUrl, expiresAt };
 }
 
-// GET /workspaces/:workspaceId/links?limit&cursor — newest first.
-// An agent sees the links they created; an account sees the links issued
-// against it; everyone else sees the whole workspace.
+// GET /workspaces/:workspaceId/links?limit&cursor&status&min&max&from&to&q&accountId
+// Newest first. An agent sees the links they created; an account sees the links
+// issued against it; everyone else sees the whole workspace.
+//
+// Filtering is done HERE, not in the browser. The list is cursor-paginated, so a
+// client-side filter can only ever search the page it happens to have loaded —
+// which reads as "no results" for anything older than the first page.
+//
+// `status` is matched against the EFFECTIVE status, so filtering for `expired`
+// finds links the TTL has aged out even though the column still says 'created'.
 router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) => {
   const limit = parseLimit(req.query.limit);
   const cursor = decodeCursor(req.query.cursor);
+  const num = (v) => (v === undefined || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
+  const min = num(req.query.min);
+  const max = num(req.query.max);
+  if (min != null && max != null && max < min) {
+    return badRequest(res, 'max must be greater than or equal to min', ['min', 'max']);
+  }
+  const q = typeof req.query.q === 'string' && req.query.q.trim() ? `%${req.query.q.trim().toLowerCase()}%` : null;
+
   const rows = await withWorkspace(wid(req), uid(req), async (c) => {
     const scope = await resolveDataScope(c, req);
     return (await c.query(
-      `SELECT pl.id, pl.pricing_mode, pl.amount, pl.currency, pl.provider_link_id,
-              CASE WHEN pl.status = 'created' AND pl.created_at < now() - ($2 || ' minutes')::interval
-                   THEN 'expired' ELSE pl.status END AS status,
+      `WITH effective AS (
+         SELECT pl.*,
+                CASE WHEN pl.status = 'created' AND pl.created_at < now() - ($2 || ' minutes')::interval
+                     THEN 'expired' ELSE pl.status::text END AS effective_status
+           FROM payment_links pl
+          WHERE pl.workspace_id = $1
+       )
+       SELECT pl.id, pl.pricing_mode, pl.amount, pl.currency, pl.provider_link_id,
+              pl.effective_status AS status,
               pl.reference_id, pl.created_at, pl.paid_at, pl.checkout_url,
               a.stage_name AS account, cu.alias AS customer,
               u.full_name AS agent
-       FROM payment_links pl
+       FROM effective pl
        LEFT JOIN accounts a ON a.id = pl.account_id
        LEFT JOIN customers cu ON cu.id = pl.customer_id
        LEFT JOIN memberships m ON m.id = pl.created_by
        LEFT JOIN users u ON u.id = m.user_id
-       WHERE pl.workspace_id = $1
-         AND ($3::uuid IS NULL OR pl.created_by = $3::uuid)
+       WHERE ($3::uuid IS NULL OR pl.created_by = $3::uuid)
          AND ($4::uuid IS NULL OR pl.account_id = $4::uuid)
          AND ($5::timestamptz IS NULL OR (pl.created_at, pl.id) < ($5::timestamptz, $6::uuid))
+         AND ($8::text IS NULL OR pl.effective_status = $8::text)
+         -- An open-priced link has no amount, so an amount filter cannot
+         -- include it. NULL fails both comparisons, which is what we want.
+         AND ($9::numeric IS NULL OR pl.amount >= $9::numeric)
+         AND ($10::numeric IS NULL OR pl.amount <= $10::numeric)
+         AND ($11::timestamptz IS NULL OR pl.created_at >= $11::timestamptz)
+         AND ($12::timestamptz IS NULL OR pl.created_at <= $12::timestamptz)
+         AND ($13::uuid IS NULL OR pl.account_id = $13::uuid)
+         AND ($14::text IS NULL OR lower(pl.reference_id) LIKE $14::text
+              OR lower(cu.alias) LIKE $14::text OR lower(u.full_name) LIKE $14::text)
        ORDER BY pl.created_at DESC, pl.id DESC LIMIT $7`,
       [wid(req), config.linkTtlMinutes,
         scope.kind === 'agent' ? scope.membershipId : null,
         scope.kind === 'account' ? scope.accountId : null,
-        cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1])).rows;
+        cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1,
+        req.query.status || null, min, max,
+        req.query.from || null, req.query.to || null,
+        req.query.accountId || null, q])).rows;
   });
   res.json(page(rows, limit, (r) => r.created_at, (r) => r.id));
 }));

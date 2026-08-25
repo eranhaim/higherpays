@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useCan } from '../../hooks/usePermission';
+import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { initials } from '../../lib/format';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
@@ -52,8 +53,11 @@ export default function AccountsPage() {
 
   // Raw text, not numbers: parsing on every keystroke turns a cleared field
   // into 0 and makes the box impossible to retype.
-  const [splitEdits, setSplitEdits] = useState<Record<string, string>>({});
-  const [isSavingSplits, setIsSavingSplits] = useState(false);
+  const [editing, setEditing] = useState<AccountWithTerms | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editHandle, setEditHandle] = useState('');
+  const [editSplitText, setEditSplitText] = useState('');
+  const [isEditing, setIsEditing] = useState(false);
   const [pausing, setPausing] = useState<Account | null>(null);
   const [isPausing, setIsPausing] = useState(false);
   const [search, setSearch] = useState('');
@@ -108,23 +112,40 @@ export default function AccountsPage() {
     }
   };
 
-  const saveSplits = async () => {
-    const dirty = Object.entries(splitEdits);
-    if (dirty.length === 0) return;
-    setIsSavingSplits(true);
-    // allSettled, not all: one rejected update must not strand the rows that
-    // did save, or the table keeps offering to re-save them.
-    const results = await Promise.allSettled(
-      dirty.map(([id, text]) => updateAccount(id, { revenueSplitPct: clampPct(parsePct(text)) })),
-    );
-    setIsSavingSplits(false);
-
-    const failed = dirty.filter((_, i) => results[i].status === 'rejected').map(([id]) => id);
-    setSplitEdits(Object.fromEntries(failed.map((id) => [id, splitEdits[id]])));
-    toast(failed.length === 0
-      ? 'Account splits saved.'
-      : `Saved ${dirty.length - failed.length} of ${dirty.length}. Try the rest again.`);
+  const openEdit = (c: AccountWithTerms) => {
+    setEditing(c);
+    setEditName(c.stageName);
+    setEditHandle(c.handle ?? '');
+    setEditSplitText(c.revenueSplitPct === undefined ? '' : String(c.revenueSplitPct));
   };
+
+  const editSplit = parsePct(editSplitText);
+  const editSplitInvalid = editing?.revenueModel === 'revshare' && Number.isNaN(editSplit);
+
+  const submitEdit = async () => {
+    if (!editing) return;
+    if (!editName.trim()) { toast('Name is required.'); return; }
+    if (editSplitInvalid) { toast('Account share must be 0–100.'); return; }
+    const cleanHandle = editHandle.trim();
+    setIsEditing(true);
+    try {
+      await updateAccount(editing.id, {
+        stageName: editName.trim(),
+        handle: cleanHandle ? (cleanHandle.startsWith('@') ? cleanHandle : `@${cleanHandle}`) : '',
+        // Only a rev-share account has a split to change; the server rejects
+        // one on a salary/AI account anyway.
+        ...(editing.revenueModel === 'revshare' ? { revenueSplitPct: clampPct(editSplit) } : {}),
+      });
+      setEditing(null);
+      toast('Account updated.');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not update the account.');
+    } finally {
+      setIsEditing(false);
+    }
+  };
+
+  useUnsavedChanges('account-edit', editing !== null);
 
   const query = search.trim().toLowerCase();
   const visibleAccounts = query
@@ -189,9 +210,14 @@ export default function AccountsPage() {
                     <div className="ws-meta">{c.handle ?? '—'}</div>
                   </div>
                   {canManage && (
-                    <button className="btn ghost small" onClick={() => requestStatusChange(c)}>
-                      {canTakeLinks(c.status) ? 'Pause' : 'Activate'}
-                    </button>
+                    <>
+                      {hasTerms(c) && (
+                        <button className="btn ghost small" onClick={() => openEdit(c)}>Edit</button>
+                      )}
+                      <button className="btn ghost small" onClick={() => requestStatusChange(c)}>
+                        {canTakeLinks(c.status) ? 'Pause' : 'Activate'}
+                      </button>
+                    </>
                   )}
                 </div>
                 <div>
@@ -205,6 +231,14 @@ export default function AccountsPage() {
                   {modelSummary(c) && (
                     <div className="ws-row"><span>Terms</span><span>{modelSummary(c)}</span></div>
                   )}
+                  {/* The split, broken out the way the old separate table showed
+                      it, so the whole deal reads from one card. */}
+                  {canViewSplits && c.revenueModel === 'revshare' && c.revenueSplitPct !== undefined && (
+                    <>
+                      <div className="ws-row"><span>Account share</span><span className="mono">{c.revenueSplitPct}%</span></div>
+                      <div className="ws-row"><span>Agency share</span><span className="mono">{100 - c.revenueSplitPct}%</span></div>
+                    </>
+                  )}
                   {c.agentsAssigned !== undefined && (
                     <div className="ws-row"><span>Agents assigned</span><span className="mono">{c.agentsAssigned}</span></div>
                   )}
@@ -213,83 +247,6 @@ export default function AccountsPage() {
             ))}
           </div>
         )}
-
-      {canViewSplits && accounts.length > 0 && (
-        <div className="card section">
-          <div className="sechead">Account revenue splits <span className="sechead-note">share of distributable, per account</span></div>
-          <div className="tablewrap flush">
-            <table>
-              <thead>
-                <tr>
-                  <th scope="col">Account</th>
-                  <th scope="col">Model</th>
-                  <th scope="col">Account share</th>
-                  <th scope="col">Agency share</th>
-                </tr>
-              </thead>
-              <tbody>
-                {/* This table is only about terms, so an account whose terms
-                    were withheld has no row here. */}
-                {accounts.filter(hasTerms).map((c) => {
-                  if (c.revenueModel !== 'revshare') {
-                    return (
-                      <tr key={c.id}>
-                        <td className="cname">{c.stageName}</td>
-                        <td><Pill>{REVENUE_MODEL_LABELS[c.revenueModel]}</Pill></td>
-                        <td colSpan={2} className="sub">
-                          {c.revenueModel === 'salary'
-                            ? <>Fixed <Money amount={c.salary ?? 0} /> per month, no per-sale split</>
-                            : 'Agency keeps the distributable amount'}
-                        </td>
-                      </tr>
-                    );
-                  }
-                  const text = splitEdits[c.id] ?? String(c.revenueSplitPct);
-                  const pct = parsePct(text);
-                  return (
-                    <tr key={c.id}>
-                      <td className="cname">{c.stageName}</td>
-                      <td><Pill>{REVENUE_MODEL_LABELS.revshare}</Pill></td>
-                      <td>
-                        <div className="pct-input">
-                          <input
-                            type="number" min={0} max={100} value={text}
-                            aria-label={`${c.stageName} account share, percent`}
-                            aria-invalid={Number.isNaN(pct)}
-                            disabled={!canEditSplits}
-                            onChange={(e) => setSplitEdits((prev) => ({ ...prev, [c.id]: e.target.value }))}
-                          />
-                          <span className="sub">%</span>
-                        </div>
-                      </td>
-                      <td className="mono">
-                        {Number.isNaN(pct)
-                          ? <span className="text-neg">0–100 only</span>
-                          : `${100 - pct}%`}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {canEditSplits && (
-            <div className="actions-right">
-              <button
-                className="btn"
-                onClick={saveSplits}
-                disabled={
-                  isSavingSplits
-                  || Object.keys(splitEdits).length === 0
-                  || Object.values(splitEdits).some((t) => Number.isNaN(parsePct(t)))
-                }
-              >
-                {isSavingSplits ? 'Saving…' : 'Save splits'}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
 
       <Modal
         open={createOpen}
@@ -372,6 +329,64 @@ export default function AccountsPage() {
               {isPausing ? 'Pausing…' : 'Pause account'}
             </button>
           </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={editing !== null}
+        onClose={() => setEditing(null)}
+        title={editing ? `Edit ${editing.stageName}` : ''}
+        subtitle="Changing the share only affects sales posted from now on; the ledger keeps what it already recorded."
+      >
+        {editing && (
+          <form onSubmit={(e) => { e.preventDefault(); void submitEdit(); }}>
+            <div className="field">
+              <label htmlFor="edit-account-name">Name</label>
+              <input id="edit-account-name" type="text" value={editName} onChange={(e) => setEditName(e.target.value)} />
+            </div>
+            <div className="field">
+              <label htmlFor="edit-account-handle">Handle</label>
+              <input
+                id="edit-account-handle" type="text" placeholder="@handle"
+                value={editHandle} onChange={(e) => setEditHandle(e.target.value)}
+              />
+            </div>
+            {editing.revenueModel === 'revshare' ? (
+              <div className="field">
+                <label htmlFor="edit-account-split">Account share of distributable</label>
+                <div className="pct-input">
+                  <input
+                    id="edit-account-split" type="number" min={0} max={100} value={editSplitText}
+                    aria-invalid={editSplitInvalid || undefined}
+                    // Renaming an account is accounts.manage; changing what it
+                    // is paid is a commissions decision.
+                    disabled={!canEditSplits}
+                    onChange={(e) => setEditSplitText(e.target.value)}
+                  />
+                  <span className="sub">%</span>
+                </div>
+                <p className="sub">
+                  {editSplitInvalid
+                    ? <span className="text-neg">0–100 only</span>
+                    : !canEditSplits
+                      ? 'You can rename this account but not change its share.'
+                      : `Agency keeps ${100 - clampPct(editSplit)}%.`}
+                </p>
+              </div>
+            ) : (
+              <p className="sub">
+                {editing.revenueModel === 'salary'
+                  ? <>On a fixed salary of <Money amount={editing.salary ?? 0} /> per month — no per-sale split.</>
+                  : 'The agency keeps the distributable amount for this account.'}
+              </p>
+            )}
+            <div className="modal-actions">
+              <button type="button" className="btn ghost" onClick={() => setEditing(null)}>Cancel</button>
+              <button type="submit" className="btn" disabled={isEditing || editSplitInvalid}>
+                {isEditing ? 'Saving…' : 'Save changes'}
+              </button>
+            </div>
+          </form>
         )}
       </Modal>
     </div>

@@ -81,7 +81,12 @@ export function useRoles() {
     onSuccess: invalidate,
   });
 
-  return { roles, setPermissions, createRole };
+  const deleteRole = useMutation({
+    mutationFn: (name: string) => rolesApi.remove(name),
+    onSuccess: invalidate,
+  });
+
+  return { roles, setPermissions, createRole, deleteRole };
 }
 
 export function useNotificationSettings() {
@@ -115,6 +120,12 @@ export function useNotificationSettings() {
     onSuccess: invalidateChannels,
   });
 
+  const setChannelEvents = useMutation({
+    mutationFn: (input: { id: string; events: NotificationEvent[] }) =>
+      notificationsApi.updateChannel(input.id, { events: input.events }),
+    onSuccess: invalidateChannels,
+  });
+
   const setChannelActive = useMutation({
     mutationFn: (input: { id: string; active: boolean }) =>
       notificationsApi.updateChannel(input.id, { active: input.active }),
@@ -134,6 +145,6 @@ export function useNotificationSettings() {
 
   return {
     preferences, channels,
-    savePreferences, createChannel, setChannelActive, deleteChannel, testChannel,
+    savePreferences, createChannel, setChannelActive, setChannelEvents, deleteChannel, testChannel,
   };
 }

@@ -35,6 +35,15 @@
   --sans:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --mono:    'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
 
+  /* Type scale. Sizes are in px because the ledger look depends on the small
+     end staying exactly where it is at any root font size. */
+  --text-micro: 10.5px;  /* uppercase section and field labels             */
+  --text-xs:    11.5px;  /* pills, secondary metadata                      */
+  --text-sm:    12.5px;  /* table meta, fee lines                          */
+  --text-md:    13.5px;  /* hints and sub-copy                             */
+  --text-base:  14px;    /* body, table cells, controls                    */
+  --tracking-label: 0.1em;
+
   /* ── Shape ───────────────────────────────────────────────────────── */
   --radius:     6px;    /* interactive elements                         */
   --radius-lg:  10px;   /* cards, modals                                */

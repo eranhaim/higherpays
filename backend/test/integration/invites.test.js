@@ -105,3 +105,51 @@ test('an unknown role is rejected as a bad request, not a permission error', asy
   assert.equal(res.status, 400);
   assert.equal(res.body.error, 'unknown_role');
 });
+
+test('a pending invite can be withdrawn, and its token stops working', async () => {
+  const owner = await createTenant(app);
+  const email = uniqueEmail();
+  const created = await request(app)
+    .post(`/workspaces/${owner.workspaceId}/invites`).set(owner.authHeaders)
+    .send({ email, role: 'agent' }).expect(201);
+  const token = inviteTokenFor(email);
+
+  await request(app)
+    .delete(`/workspaces/${owner.workspaceId}/invites/${created.body.id}`)
+    .set(owner.authHeaders).expect(204);
+
+  await request(app).get(`/invites/${token}`).expect(404);
+  await request(app).post(`/invites/${token}/accept`)
+    .send({ password: 'passwordtest', fullName: 'Nope' }).expect(404);
+
+  const left = (await request(app)
+    .get(`/workspaces/${owner.workspaceId}/invites`).set(owner.authHeaders).expect(200)).body.invites;
+  assert.equal(left.find((i) => i.email === email), undefined);
+});
+
+test('an accepted invite cannot be withdrawn', async () => {
+  const owner = await createTenant(app);
+  const email = uniqueEmail();
+  const created = await request(app)
+    .post(`/workspaces/${owner.workspaceId}/invites`).set(owner.authHeaders)
+    .send({ email, role: 'agent' }).expect(201);
+  await request(app).post(`/invites/${inviteTokenFor(email)}/accept`)
+    .send({ password: 'passwordtest', fullName: 'Member' }).expect(201);
+
+  const res = await request(app)
+    .delete(`/workspaces/${owner.workspaceId}/invites/${created.body.id}`).set(owner.authHeaders);
+  assert.equal(res.status, 409);
+  assert.equal(res.body.error, 'invite_already_accepted');
+});
+
+test('an analyst cannot withdraw an invite', async () => {
+  const owner = await createTenant(app);
+  const analyst = await addMember(app, owner, 'analyst');
+  const created = await request(app)
+    .post(`/workspaces/${owner.workspaceId}/invites`).set(owner.authHeaders)
+    .send({ email: uniqueEmail(), role: 'agent' }).expect(201);
+
+  await request(app)
+    .delete(`/workspaces/${owner.workspaceId}/invites/${created.body.id}`)
+    .set(analyst.headers).expect(403);
+});

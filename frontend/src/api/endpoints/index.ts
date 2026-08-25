@@ -13,6 +13,7 @@ export {
 } from './customers';
 export {
   linksApi, LINK_STATUSES, LINK_STATUS_LABELS, isShareable,
+  type ListLinksQuery,
   type PaymentLink, type LinkStatus, type PricingMode, type CreateLinkInput, type CreatedLink,
 } from './links';
 export {

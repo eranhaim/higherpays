@@ -64,6 +64,9 @@ function toNullableNumber(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// A withheld field must stay undefined, not become 0. The server omits the pay
+// deal and the assignment count for scoped callers; coercing those to a number
+// would show an agent a confident "Agents assigned 0" and a 0% split.
 function normalize(a: RawAccount): Account {
   return {
     id: a.id,
@@ -71,12 +74,12 @@ function normalize(a: RawAccount): Account {
     handle: a.handle,
     country: a.country,
     status: a.status,
-    revenueSplitPct: toNumber(a.revenue_split_pct),
-    revenueModel: a.revenue_model,
-    salary: toNullableNumber(a.salary),
-    salaryIncreasePct: toNullableNumber(a.salary_increase_pct),
     createdAt: a.created_at,
-    agentsAssigned: toNumber(a.agents_assigned),
+    ...(a.revenue_split_pct !== undefined ? { revenueSplitPct: toNumber(a.revenue_split_pct) } : {}),
+    ...(a.revenue_model !== undefined ? { revenueModel: a.revenue_model } : {}),
+    ...(a.salary !== undefined ? { salary: toNullableNumber(a.salary) } : {}),
+    ...(a.salary_increase_pct !== undefined ? { salaryIncreasePct: toNullableNumber(a.salary_increase_pct) } : {}),
+    ...(a.agents_assigned !== undefined ? { agentsAssigned: toNumber(a.agents_assigned) } : {}),
   };
 }
 

@@ -93,29 +93,39 @@ function buildCSV(report: AnalyticsReport, workspaceName: string, filters: Analy
   push('');
   push('SUMMARY');
   push('Metric', 'Value');
+  // The export mirrors the page: a scoped caller's report has no agency-side
+  // figures and no per-party tables, so writing those headings would produce
+  // blank rows under empty sections rather than an honest smaller file.
+  const seesAgencyFigures = report.scope === 'agency';
+
   push('Gross', h.gross);
   push('Net', h.net);
-  push('Take rate %', h.takeRatePct);
   push('Avg order', h.aov);
   push('Paid sales', h.paidCount);
   push('Unique buyers', h.uniqueBuyers);
-  push('Platform fee', h.platformFee);
-  push('Account payout', h.accountPayout);
-  push('Agent payout', h.agentPayout);
-  push('Agency keep', h.agencyKeep);
+  if (seesAgencyFigures) {
+    push('Take rate %', h.takeRatePct);
+    push('Platform fee', h.platformFee);
+    push('Account payout', h.accountPayout);
+    push('Agent payout', h.agentPayout);
+    push('Agency keep', h.agencyKeep);
+  }
   push('Chargeback rate %', c.ratePct);
   push('');
   push('REVENUE OVER TIME');
   push('Date', 'Gross', 'Net');
   report.timeseries.forEach((t) => push(t.d, t.gross, t.net));
-  push('');
-  push('AGENT LEADERBOARD');
-  push('Agent', 'Revenue', 'Sales', 'Conversion %', 'Avg order');
-  report.agents.forEach((r) => push(r.name, r.revenue, r.sales, r.conversionPct ?? '', r.aov));
-  push('');
-  push('ACCOUNT PERFORMANCE');
-  push('Account', 'Model', 'Revenue', 'Account payout', 'Agency profit');
-  report.accounts.forEach((r) => push(r.name, r.model, r.revenue, r.accountPayout, r.agencyProfit));
+
+  if (seesAgencyFigures) {
+    push('');
+    push('AGENT LEADERBOARD');
+    push('Agent', 'Revenue', 'Sales', 'Conversion %', 'Avg order');
+    report.agents.forEach((r) => push(r.name, r.revenue, r.sales, r.conversionPct ?? '', r.aov));
+    push('');
+    push('ACCOUNT PERFORMANCE');
+    push('Account', 'Model', 'Revenue', 'Account payout', 'Agency profit');
+    report.accounts.forEach((r) => push(r.name, r.model, r.revenue, r.accountPayout, r.agencyProfit));
+  }
   return rows.join('\n');
 }
 
