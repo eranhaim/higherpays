@@ -12,7 +12,8 @@ const { TooManyRequestsError } = require('../lib/errors');
 const config = require('../config');
 
 const router = express.Router();
-const ipOf = (req) => (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim() || null;
+// req.ip honours X-Forwarded-For only from the trusted proxy (see server.js).
+const ipOf = (req) => req.ip || null;
 
 // Brute-force protection. Per-IP limits cap the request rate; the per-account
 // limiter counts only failed sign-ins so a correct password is never blocked
@@ -23,13 +24,14 @@ const accountFailures = createLimiter({ windowMs: FIFTEEN_MINUTES, max: 10 });
 const limitByIp = ipLimiter.middleware((req) => ipOf(req) || 'unknown');
 const accountKey = (email) => String(email || '').trim().toLowerCase();
 
-async function issueRefreshToken(userId, req) {
+// A new sign-in starts a token family; rotation continues the same one.
+async function issueRefreshToken(userId, req, familyId = null) {
   const token = generateRefreshToken();
   const expires = new Date(Date.now() + config.refreshTokenDays * 86400 * 1000);
   await query(
-    `INSERT INTO refresh_tokens (user_id, token_hash, expires_at, user_agent, ip)
-     VALUES ($1,$2,$3,$4,$5)`,
-    [userId, hashRefreshToken(token), expires, req.headers['user-agent'] || null, ipOf(req)]
+    `INSERT INTO refresh_tokens (user_id, token_hash, expires_at, user_agent, ip, family_id)
+     VALUES ($1,$2,$3,$4,$5,COALESCE($6, gen_random_uuid()))`,
+    [userId, hashRefreshToken(token), expires, req.headers['user-agent'] || null, ipOf(req), familyId]
   );
   return token;
 }
@@ -168,17 +170,23 @@ router.post('/refresh', limitByIp, asyncHandler(async (req, res) => {
   const hash = hashRefreshToken(refreshToken);
 
   const { rows } = await query(
-    `SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked_at, u.email, u.full_name
+    `SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked_at, rt.family_id, u.email, u.full_name
      FROM refresh_tokens rt JOIN users u ON u.id = rt.user_id
      WHERE rt.token_hash = $1`, [hash]
   );
   const rec = rows[0];
-  if (!rec || rec.revoked_at || new Date(rec.expires_at) < new Date()) {
-    return res.status(401).json({ error: 'invalid_refresh' });
+  if (!rec) return res.status(401).json({ error: 'invalid_refresh' });
+  if (rec.revoked_at) {
+    // A rotated token presented again was copied. Nobody can tell which
+    // holder is the real user, so the whole session chain ends.
+    await query('UPDATE refresh_tokens SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL', [rec.family_id]);
+    await audit({ actorUserId: rec.user_id, action: 'auth.refresh.reuse', metadata: { familyId: rec.family_id }, ip: ipOf(req) });
+    return res.status(401).json({ error: 'refresh_token_reused' });
   }
-  // rotate: revoke the old, issue a new one
+  if (new Date(rec.expires_at) < new Date()) return res.status(401).json({ error: 'invalid_refresh' });
+  // rotate: revoke the old, issue the next one in the same family
   await query('UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1', [rec.id]);
-  const newRefresh = await issueRefreshToken(rec.user_id, req);
+  const newRefresh = await issueRefreshToken(rec.user_id, req, rec.family_id);
   const accessToken = signAccessToken({ id: rec.user_id, email: rec.email, full_name: rec.full_name });
   res.json({ accessToken, refreshToken: newRefresh });
 }));
@@ -191,6 +199,49 @@ router.post('/logout', asyncHandler(async (req, res) => {
       [hashRefreshToken(refreshToken)]);
   }
   res.status(204).end();
+}));
+
+// ---- Sessions -------------------------------------------------------------
+// A session is a refresh-token family. Listing shows where the account is
+// signed in; revoking a family signs that device out at its next refresh.
+
+// GET /auth/sessions  — active sessions for the signed-in user
+router.get('/sessions', requireAuth, asyncHandler(async (req, res) => {
+  const { rows } = await query(
+    `SELECT DISTINCT ON (family_id) family_id, user_agent, ip, created_at, expires_at
+       FROM refresh_tokens
+      WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
+      ORDER BY family_id, created_at DESC`, [req.user.id]);
+  res.json({
+    sessions: rows.map((r) => ({
+      id: r.family_id, userAgent: r.user_agent, ip: r.ip, lastRefreshedAt: r.created_at, expiresAt: r.expires_at,
+    })),
+  });
+}));
+
+// DELETE /auth/sessions/:id — sign out one session
+router.delete('/sessions/:id', requireAuth, asyncHandler(async (req, res) => {
+  const { rowCount } = await query(
+    'UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND family_id = $2 AND revoked_at IS NULL',
+    [req.user.id, req.params.id]);
+  if (!rowCount) return res.status(404).json({ error: 'not_found' });
+  await audit({ actorUserId: req.user.id, action: 'auth.session.revoke', metadata: { familyId: req.params.id }, ip: ipOf(req) });
+  res.status(204).end();
+}));
+
+// POST /auth/sessions/revoke-others  { refreshToken } — keep this device only
+router.post('/sessions/revoke-others', requireAuth, asyncHandler(async (req, res) => {
+  const { refreshToken } = req.body || {};
+  if (!refreshToken) return res.status(400).json({ error: 'missing_token' });
+  const mine = (await query(
+    'SELECT family_id FROM refresh_tokens WHERE user_id = $1 AND token_hash = $2 AND revoked_at IS NULL',
+    [req.user.id, hashRefreshToken(refreshToken)])).rows[0];
+  if (!mine) return res.status(401).json({ error: 'invalid_refresh' });
+  const { rowCount } = await query(
+    'UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND family_id <> $2 AND revoked_at IS NULL',
+    [req.user.id, mine.family_id]);
+  await audit({ actorUserId: req.user.id, action: 'auth.session.revoke_others', metadata: { revoked: rowCount }, ip: ipOf(req) });
+  res.json({ revoked: rowCount });
 }));
 
 // GET /auth/me — current user + workspaces

@@ -12,6 +12,7 @@ import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import { ErrorCard, LoadingCard, Money } from '../../components/ui';
 import { useGeneralSettings, useTwoFactor } from './useSettingsData';
+import { SessionsCard } from './SessionsCard';
 
 export function GeneralPane() {
   const can = useCan();
@@ -33,6 +34,7 @@ export function GeneralPane() {
         onSave={(input) => saveLinkLimits.mutateAsync(input)}
       />
       <SecurityCard />
+      <SessionsCard />
       <TimeZoneCard />
     </div>
   );

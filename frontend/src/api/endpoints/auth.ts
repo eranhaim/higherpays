@@ -6,6 +6,15 @@ export interface TwoFactorSetup {
   otpauthUrl: string;
 }
 
+/** A signed-in device: one refresh-token family. */
+export interface Session {
+  id: string;
+  userAgent: string | null;
+  ip: string | null;
+  lastRefreshedAt: string;
+  expiresAt: string;
+}
+
 export const authApi = {
   login(email: string, password: string, totp?: string) {
     return api.post<LoginResponse>(
@@ -56,5 +65,19 @@ export const authApi = {
 
   disableTwoFactor(code: string) {
     return api.post<{ enabled: false }>('/auth/2fa/disable', { code }, { skipWorkspace: true });
+  },
+
+  async listSessions(): Promise<Session[]> {
+    const raw = await api.get<{ sessions: Session[] }>('/auth/sessions', { skipWorkspace: true });
+    return raw.sessions;
+  },
+
+  revokeSession(id: string) {
+    return api.del<void>(`/auth/sessions/${id}`, { skipWorkspace: true });
+  },
+
+  /** Signs out every other device; the caller proves which one to keep with its refresh token. */
+  revokeOtherSessions(refreshToken: string) {
+    return api.post<{ revoked: number }>('/auth/sessions/revoke-others', { refreshToken }, { skipWorkspace: true });
   },
 };
