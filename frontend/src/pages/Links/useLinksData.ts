@@ -75,7 +75,9 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
   });
 
   const reconcile = useMutation({
-    mutationFn: () => linksApi.reconcile(),
+    // Grace 0: a manual click should check every unresolved link, including one
+    // paid seconds ago. The backend's default grace suits unattended callers.
+    mutationFn: () => linksApi.reconcile(0),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['links', activeWorkspaceId] });
       queryClient.invalidateQueries({ queryKey: ['transactions', activeWorkspaceId] });

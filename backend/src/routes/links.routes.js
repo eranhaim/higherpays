@@ -228,12 +228,17 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
 }));
 
 // POST /workspaces/:wid/links/reconcile — safety-net for links whose final
-// webhook never arrived. Polls the provider status endpoint for links still
-// 'created'/'opened' past their expiry (or `graceMinutes`), and applies the
-// outcome idempotently (same keys the webhook uses, so it never double-posts
-// and never overrides a link the webhook already resolved).
+// webhook never arrived. Polls the provider status endpoint for every link still
+// 'created'/'opened' and older than `graceMinutes`, and applies the outcome
+// idempotently (same keys the webhook uses, so it never double-posts and never
+// overrides a link the webhook already resolved).
+//
+// The window is age-based, NOT expiry-based: a link is paid long before its TTL
+// runs out, so waiting for expiry would leave a just-paid link unreconcilable
+// for the whole TTL.
 router.post('/reconcile', requirePermission('commissions.manage'), asyncHandler(async (req, res) => {
-  const graceMin = Number(req.body && req.body.graceMinutes) || 10;
+  const requested = Number(req.body && req.body.graceMinutes);
+  const graceMin = Number.isFinite(requested) && requested >= 0 ? requested : 10;
   const summary = { checked: 0, updated: [], skipped: [] };
 
   const ws = (await withWorkspace(wid(req), uid(req), (c) => c.query(
@@ -242,10 +247,10 @@ router.post('/reconcile', requirePermission('commissions.manage'), asyncHandler(
 
   await withWorkspace(wid(req), uid(req), async (c) => {
     const stuck = (await c.query(
-      `SELECT id, reference_id, amount, currency, expires_at
+      `SELECT id, reference_id, amount, currency, expires_at, expires_at < now() AS is_expired
        FROM payment_links
        WHERE status IN ('created','opened')
-         AND (expires_at < now() OR (expires_at IS NULL AND created_at < now() - ($1 || ' minutes')::interval))`,
+         AND created_at < now() - ($1 || ' minutes')::interval`,
       [String(graceMin)])).rows;
 
     for (const link of stuck) {
@@ -255,7 +260,7 @@ router.post('/reconcile', requirePermission('commissions.manage'), asyncHandler(
       // reference => nothing to poll; expire the link if it's genuinely past
       // its deadline.
       if (!link.reference_id) {
-        if (link.expires_at) {
+        if (link.is_expired) {
           await c.query("UPDATE payment_links SET status='expired' WHERE id=$1 AND status IN ('created','opened')", [link.id]);
           summary.updated.push({ linkId: link.id, to: 'expired', via: 'no_reference' });
         } else summary.skipped.push({ linkId: link.id, reason: 'no_reference' });

@@ -312,7 +312,8 @@ Not every webhook actually arrives. Networks fail, MantaPay's queue backs up,
 a container restarts at the wrong second. The reconciler is the safety net.
 
 An operator (or a cron job) hits `POST /workspaces/A/links/reconcile`. The
-backend finds every link stuck in `created`/`opened` past its expiry, asks
+backend finds every link stuck in `created`/`opened` and older than the grace
+window (0 minutes from the Links page, 10 by default), asks
 MantaPay what actually happened, and applies the outcome through the **same
 Payments service the webhook uses**. Idempotent by construction: if the
 webhook did land after all, `INSERT ON CONFLICT DO UPDATE` and
@@ -328,7 +329,7 @@ sequenceDiagram
   participant Payments as Payments service
 
   Op->>API: POST /workspaces/A/links/reconcile { graceMinutes }
-  API->>DB: SELECT payment_links WHERE status IN ('created','opened')<br/>AND (expires_at < now OR older than grace window)
+  API->>DB: SELECT payment_links WHERE status IN ('created','opened')<br/>AND created_at older than the grace window
   loop for each stuck link
     API->>Mantapay: GET /getStatus?Order=<reference>&signature=...
     Mantapay-->>API: transactions[] (approved / declined / pending / abandoned)
