@@ -20,6 +20,7 @@ import {
 } from '../../components/ui';
 import type { PaymentLink, LinkStatus } from '../../types';
 import { useLinksData } from './useLinksData';
+import { useCreatorsData } from '../Creators/useCreatorsData';
 import { effectiveLinkStatus, filterLinks, DEFAULT_FILTERS, type LinksFilters } from './filters';
 
 const STATUS_TONE: Record<LinkStatus, 'ok' | 'no' | 'muted'> = {
@@ -33,13 +34,13 @@ export default function LinksPage() {
   const can = useCan();
   const { rateCard: rc } = useRateCard();
   const { links, isLoading, create, reconcile } = useLinksData();
-  const creators = useAppStore((s) => s.creators);
+  const { creators } = useCreatorsData();
   const chatters = useAppStore((s) => s.chatters);
   const linkLimits = useAppStore((s) => s.linkLimits);
 
   const [filters, setFilters] = useState<LinksFilters>(DEFAULT_FILTERS);
   const [createOpen, setCreateOpen] = useState(false);
-  const [plCreator, setPlCreator] = useState('');
+  const [plCreatorId, setPlCreatorId] = useState('');
   const [plChatter, setPlChatter] = useState('');
   const [plName, setPlName] = useState('');
   const [plUser, setPlUser] = useState('');
@@ -55,7 +56,7 @@ export default function LinksPage() {
 
   const openCreate = () => {
     const activeCreators = creators.filter((c) => c.status !== 'paused' && c.status !== 'suspended');
-    setPlCreator(activeCreators[0]?.name ?? '');
+    setPlCreatorId(activeCreators[0]?.id ?? '');
     setPlChatter(chatters[0]?.name ?? '');
     setPlName(''); setPlUser(''); setPlAmt('');
     setCreateOpen(true);
@@ -74,11 +75,13 @@ export default function LinksPage() {
     if (linkLimits.max != null && amt > linkLimits.max) {
       toast(`Maximum link amount is ${formatMoney(linkLimits.max)}.`); return;
     }
-    if (!plName.trim()) { toast('Customer name is required.'); return; }
+    if (!plCreatorId) { toast('Pick a creator.'); return; }
+    const selected = creators.find((c) => c.id === plCreatorId);
     setCreating(true);
     try {
       const { url } = await create({
-        creator: plCreator,
+        creatorId: plCreatorId,
+        creator: selected?.name ?? '',
         chatter: plChatter,
         customerName: plName,
         customerUsername: plUser,
@@ -209,9 +212,9 @@ export default function LinksPage() {
         </p>
         <div className="field">
           <label>Creator</label>
-          <select value={plCreator} onChange={(e) => setPlCreator(e.target.value)}>
+          <select value={plCreatorId} onChange={(e) => setPlCreatorId(e.target.value)}>
             {creators.filter((c) => c.status !== 'paused' && c.status !== 'suspended').map((c) => (
-              <option key={c.id}>{c.name}</option>
+              <option key={c.id} value={c.id}>{c.name}</option>
             ))}
           </select>
         </div>
