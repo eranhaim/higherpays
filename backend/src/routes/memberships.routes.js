@@ -6,7 +6,8 @@ const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { badRequest } = require('../util/validate');
 const { revokeUserSessions } = require('../auth/sessions');
-const { maxCreatorSplitPct } = require('../services/splits');
+const { roleWithinCallerRights } = require('../auth/roleGrants');
+const { maxAccountSplitPct } = require('../services/splits');
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
 
@@ -14,15 +15,15 @@ const { wid, uid } = require('../lib/scope');
 // workspaces (so login can list them), so every query here filters on
 // workspace_id explicitly rather than relying on RLS alone.
 
-// GET / — chatters in this workspace, with each one's own commission rate.
+// GET / — agents in this workspace, with each one's own commission rate.
 router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) => {
   const rows = await withWorkspace(wid(req), uid(req), async (c) => (await c.query(
     `SELECT m.id, u.full_name AS name, u.email, m.status, m.shift, m.commission_pct
        FROM memberships m JOIN users u ON u.id = m.user_id
-      WHERE m.workspace_id = $1 AND m.role = 'chatter' AND m.status = 'active'
+      WHERE m.workspace_id = $1 AND m.role = 'agent' AND m.status = 'active'
       ORDER BY u.full_name`, [wid(req)])).rows);
   res.json({
-    chatters: rows.map((r) => ({
+    agents: rows.map((r) => ({
       membershipId: r.id, name: r.name, email: r.email, status: r.status, shift: r.shift,
       commissionPct: r.commission_pct == null ? null : Number(r.commission_pct),
     })),
@@ -44,15 +45,15 @@ router.get('/members', requirePermission('team.view'), asyncHandler(async (req, 
   });
 }));
 
-// PATCH /:membershipId  { commissionPct } — set a per-chatter commission %
+// PATCH /:membershipId  { commissionPct } — set a per-agent commission %
 router.patch('/:membershipId', requirePermission('commissions.manage'), asyncHandler(async (req, res) => {
   const { commissionPct } = req.body || {};
   const v = commissionPct == null || commissionPct === '' ? null : Number(commissionPct);
   if (v != null && !(v >= 0 && v <= 100)) return badRequest(res, 'commissionPct must be 0..100', ['commissionPct']);
   const out = await withWorkspace(wid(req), uid(req), async (c) => {
     if (v != null) {
-      const creatorMax = await maxCreatorSplitPct(c, wid(req));
-      if (creatorMax + v > 100) return { err: 'split_exceeds_100', detail: `a creator on ${creatorMax}% plus ${v}% commission would exceed 100%` };
+      const accountMax = await maxAccountSplitPct(c, wid(req));
+      if (accountMax + v > 100) return { err: 'split_exceeds_100', detail: `an account on ${accountMax}% plus ${v}% commission would exceed 100%` };
     }
     const before = (await c.query(
       'SELECT commission_pct FROM memberships WHERE id=$1 AND workspace_id=$2', [req.params.membershipId, wid(req)])).rows[0];
@@ -70,19 +71,6 @@ router.patch('/:membershipId', requirePermission('commissions.manage'), asyncHan
   });
   res.json({ id: out.row.id, commissionPct: out.row.commission_pct == null ? null : Number(out.row.commission_pct) });
 }));
-
-// A caller may only hand out a role whose permissions they hold themselves,
-// so an admin cannot make anyone (including a colleague) an owner.
-async function roleWithinCallerRights(c, req, roleName) {
-  const role = (await c.query(
-    'SELECT permissions FROM roles WHERE workspace_id=$1 AND name=$2', [wid(req), roleName])).rows[0];
-  if (!role) return { err: 'unknown_role' };
-  const held = req.membership.permissions;
-  const unheld = role.permissions.filter((p) => !(held ? held.has(p) : false));
-  if (unheld.length) return { err: 'cannot_grant_unheld_permission', detail: unheld.join(',') };
-  if (roleName === 'owner' && req.membership.role !== 'owner') return { err: 'cannot_grant_unheld_permission', detail: 'owner' };
-  return {};
-}
 
 async function isLastOwner(c, workspaceId, membershipId) {
   const { rows } = await c.query(

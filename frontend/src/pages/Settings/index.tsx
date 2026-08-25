@@ -37,21 +37,39 @@ export default function SettingsPage() {
     <div>
       <PageHeader eyebrow="Admin" title="Settings" />
 
-      <div className="tabbar">
+      <div className="tabbar" role="tablist" aria-label="Settings sections">
         {tabs.map((t) => (
           <button
             key={t.id}
+            id={`tab-${t.id}`}
+            role="tab"
+            type="button"
+            aria-selected={tab === t.id}
+            aria-controls={`panel-${t.id}`}
+            // Only the selected tab is in the tab order; arrows move between
+            // them, which is how a tablist is expected to behave.
+            tabIndex={tab === t.id ? 0 : -1}
             className={`btn ghost tgl${tab === t.id ? ' active' : ''}`}
             onClick={() => setSearchParams({ tab: t.id })}
+            onKeyDown={(e) => {
+              const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+              if (step === 0) return;
+              e.preventDefault();
+              const next = tabs[(tabs.findIndex((x) => x.id === tab) + step + tabs.length) % tabs.length];
+              setSearchParams({ tab: next.id });
+              document.getElementById(`tab-${next.id}`)?.focus();
+            }}
           >
             {t.label}
           </button>
         ))}
       </div>
 
-      {tab === 'general' && <GeneralPane />}
-      {tab === 'roles' && <RolesPane />}
-      {tab === 'notifications' && <NotificationsPane />}
+      <div id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`}>
+        {tab === 'general' && <GeneralPane />}
+        {tab === 'roles' && <RolesPane />}
+        {tab === 'notifications' && <NotificationsPane />}
+      </div>
     </div>
   );
 }

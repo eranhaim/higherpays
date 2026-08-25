@@ -7,8 +7,9 @@ import { useCurrentSession } from './useCurrentSession';
  * Returns `can(permission)` for the current membership.
  *
  * Permissions come from the workspace's role definitions (`/permissions`),
- * which is what the backend enforces. Until that request resolves, the
- * built-in matrix stands in so the sidebar does not flash empty.
+ * which is what the backend enforces. While that request is in flight the
+ * built-in matrix stands in so the sidebar does not flash empty; if it FAILS we
+ * grant nothing, rather than silently running on the built-in matrix forever.
  */
 export function useCan(): (perm: Permission) => boolean {
   const { role, activeWorkspaceId } = useCurrentSession();
@@ -20,6 +21,21 @@ export function useCan(): (perm: Permission) => boolean {
     staleTime: 5 * 60_000,
   });
 
-  const perms: readonly string[] = query.data?.permissions ?? SYSTEM_ROLE_PERMISSIONS[role] ?? [];
+  let perms: readonly string[] = [];
+  if (query.isSuccess) perms = query.data.permissions;
+  else if (query.isPending && role) perms = SYSTEM_ROLE_PERMISSIONS[role] ?? [];
+
   return (perm) => perms.includes(perm);
+}
+
+/** True while the real permission set is still unknown. */
+export function usePermissionsPending(): boolean {
+  const { activeWorkspaceId } = useCurrentSession();
+  const query = useQuery({
+    queryKey: ['permissions', activeWorkspaceId],
+    queryFn: () => workspacesApi.getPermissions(),
+    enabled: Boolean(activeWorkspaceId),
+    staleTime: 5 * 60_000,
+  });
+  return query.isPending;
 }

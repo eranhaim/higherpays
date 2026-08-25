@@ -9,13 +9,14 @@ export type Permission =
   | 'links.view' | 'links.create'
   | 'analytics.view'
   | 'workspaces.view' | 'workspaces.create'
-  | 'creators.view' | 'creators.manage'
+  | 'accounts.view' | 'accounts.manage'
   | 'compliance.view' | 'compliance.manage'
   | 'customers.view' | 'customers.manage' | 'customers.export'
-  | 'sales.view'
   | 'commissions.view' | 'commissions.manage'
+  | 'fees.view'
   | 'team.view' | 'team.manage'
-  | 'settings.view' | 'settings.edit' | 'settings.danger';
+  | 'settings.view' | 'settings.edit'
+  | 'data.view_all';
 
 export const PERMISSION_LABELS: Record<Permission, string> = {
   'payments.view': 'View payments',
@@ -25,21 +26,21 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'analytics.view': 'View analytics',
   'workspaces.view': 'View workspaces',
   'workspaces.create': 'Create workspaces',
-  'creators.view': 'View creators',
-  'creators.manage': 'Manage creators',
+  'accounts.view': 'View accounts',
+  'accounts.manage': 'Manage accounts',
   'compliance.view': 'View compliance',
   'compliance.manage': 'Manage compliance',
   'customers.view': 'View customers',
   'customers.manage': 'Manage customers',
   'customers.export': 'Export customers',
-  'sales.view': 'View sales',
   'commissions.view': 'View commissions and payouts',
   'commissions.manage': 'Manage commissions and payouts',
+  'fees.view': 'View fee breakdown and platform margin',
   'team.view': 'View team',
   'team.manage': 'Manage team',
   'settings.view': 'View settings',
   'settings.edit': 'Edit settings',
-  'settings.danger': 'Danger zone',
+  'data.view_all': 'See all workspace records, not only your own',
 };
 
 export const ALL_PERMISSIONS = Object.keys(PERMISSION_LABELS) as Permission[];
@@ -50,17 +51,14 @@ export const ALL_PERMISSIONS = Object.keys(PERMISSION_LABELS) as Permission[];
  */
 export const SYSTEM_ROLE_PERMISSIONS: Record<string, Permission[]> = {
   owner: ALL_PERMISSIONS,
-  admin: ALL_PERMISSIONS.filter((p) => p !== 'settings.danger'),
-  manager: [
-    'payments.view', 'links.view', 'links.create', 'analytics.view', 'workspaces.view',
-    'creators.view', 'creators.manage', 'compliance.view', 'customers.view', 'sales.view',
-    'commissions.view', 'team.view', 'settings.view',
-  ],
+  // Identical to owner: the boundary is the server refusing to grant `owner`,
+  // plus the last-owner guard — not a permission.
+  admin: ALL_PERMISSIONS,
   analyst: [
     'payments.view', 'payments.export', 'links.view', 'analytics.view', 'workspaces.view',
-    'creators.view', 'compliance.view', 'customers.view', 'sales.view', 'commissions.view',
-    'team.view', 'settings.view',
+    'accounts.view', 'compliance.view', 'customers.view', 'commissions.view',
+    'team.view', 'settings.view', 'data.view_all',
   ],
-  chatter: ['analytics.view', 'payments.view', 'links.view', 'links.create', 'creators.view', 'customers.view', 'sales.view'],
-  creator: ['analytics.view', 'payments.view'],
+  agent: ['analytics.view', 'payments.view', 'links.view', 'links.create', 'accounts.view', 'customers.view'],
+  account: ['analytics.view', 'payments.view', 'links.view'],
 };

@@ -6,11 +6,12 @@ import { formatMoney, sum } from '../../lib/format';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import {
-  PageHeader, StatCard, StatGrid, Money, Pill, DateCell,
+  PageHeader, StatCard, StatGrid, Money, Pill, DateCell, CopyButton,
   DataTable, FilterBar, DateRangePicker, type Column, type DateRange,
 } from '../../components/ui';
 import {
-  LINK_STATUSES, LINK_STATUS_LABELS, canTakeLinks, type PaymentLink, type LinkStatus,
+  LINK_STATUSES, LINK_STATUS_LABELS, canTakeLinks, isShareable,
+  type PaymentLink, type LinkStatus,
 } from '../../api/endpoints';
 import { useLinksData } from './useLinksData';
 import { filterLinks, DEFAULT_FILTERS, type LinksFilters } from './filters';
@@ -28,12 +29,12 @@ export default function LinksPage() {
   const can = useCan();
   const { rateCard } = useRateCard();
   const {
-    links, creators, customers, linkLimits, isLoading, isError, hasMore, isLoadingMore, loadMore, createLink, reconcile,
+    links, accounts, customers, linkLimits, isLoading, isError, hasMore, isLoadingMore, loadMore, createLink, reconcile,
   } = useLinksData();
 
   const [filters, setFilters] = useState<LinksFilters>(DEFAULT_FILTERS);
   const [createOpen, setCreateOpen] = useState(false);
-  const [creatorId, setCreatorId] = useState('');
+  const [accountId, setAccountId] = useState('');
   const [customerId, setCustomerId] = useState('');
   const [amountText, setAmountText] = useState('');
   const [isCreating, setIsCreating] = useState(false);
@@ -44,12 +45,14 @@ export default function LinksPage() {
   const paid = filtered.filter((l) => l.status === 'paid');
   const conversion = filtered.length ? Math.round((paid.length / filtered.length) * 100) : 0;
   const revenue = sum(paid.map((l) => l.amount ?? 0));
+  // Nothing loaded means every total below is 0, which reads as a real figure.
+  const statsUnknown = isLoading || isError;
 
   const range: DateRange = { from: filters.from, to: filters.to };
   const setRange = (r: DateRange) => setFilters((f) => ({ ...f, ...r }));
 
-  const activeCreators = creators.filter((c) => canTakeLinks(c.status));
-  const creatorNames = [...new Set(links.map((l) => l.creator).filter((n): n is string => Boolean(n)))];
+  const activeAccounts = accounts.filter((c) => canTakeLinks(c.status));
+  const accountNames = [...new Set(links.map((l) => l.account).filter((n): n is string => Boolean(n)))];
 
   const minAmount = linkLimits?.minLinkAmount ?? linkLimits?.providerMinimum ?? 0;
   const maxAmount = linkLimits?.maxLinkAmount ?? null;
@@ -59,19 +62,19 @@ export default function LinksPage() {
   const fees = amount > 0 && !belowMin && !aboveMax ? feeBreakdown(amount, rateCard) : null;
 
   const openCreate = () => {
-    setCreatorId(activeCreators[0]?.id ?? '');
+    setAccountId(activeAccounts[0]?.id ?? '');
     setCustomerId('');
     setAmountText('');
     setCreateOpen(true);
   };
 
   const submitCreate = async () => {
-    if (!creatorId) { toast('Pick a creator.'); return; }
+    if (!accountId) { toast('Pick a account.'); return; }
     if (!(amount >= minAmount)) { toast(`Minimum link amount is ${formatMoney(minAmount)}.`); return; }
     if (aboveMax) { toast(`Maximum link amount is ${formatMoney(maxAmount ?? 0)}.`); return; }
     setIsCreating(true);
     try {
-      const created = await createLink({ creatorId, customerId: customerId || undefined, amount });
+      const created = await createLink({ accountId, customerId: customerId || undefined, amount });
       setCreateOpen(false);
       setCreatedUrl(created.url);
     } catch (err) {
@@ -93,24 +96,26 @@ export default function LinksPage() {
     }
   };
 
-  const copyUrl = async (url: string) => {
-    try {
-      await navigator.clipboard.writeText(url);
-      toast('Link copied.');
-    } catch {
-      toast('Could not copy. Select the link and copy it manually.');
-    }
-  };
-
   const columns: Column<PaymentLink>[] = [
-    { key: 'ref', header: 'Ref', render: (l) => <span className="ref">{l.referenceId}</span> },
-    { key: 'creator', header: 'Creator', render: (l) => l.creator ?? '—' },
-    { key: 'chatter', header: 'Chatter', render: (l) => l.chatter ?? '—' },
-    { key: 'customer', header: 'Customer', render: (l) => <span className="cname">{l.customer ?? '—'}</span> },
+    { key: 'ref', header: 'Ref', render: (l) => <span className="ref" title={l.referenceId}>{l.referenceId}</span> },
+    { key: 'account', header: 'Account', render: (l) => l.account ?? '—' },
+    { key: 'agent', header: 'Agent', render: (l) => l.agent ?? '—' },
+    {
+      key: 'customer', header: 'Customer',
+      render: (l) => <span className="cname" title={l.customer ?? undefined}>{l.customer ?? '—'}</span>,
+    },
     { key: 'amount', header: 'Amount', align: 'right', render: (l) => l.amount == null ? '—' : <Money amount={l.amount} currency={l.currency} /> },
     { key: 'status', header: 'Status', render: (l) => <Pill tone={STATUS_TONE[l.status]}>{LINK_STATUS_LABELS[l.status]}</Pill> },
     { key: 'created', header: 'Created', render: (l) => <DateCell ts={l.createdAt} /> },
     { key: 'paid', header: 'Paid', render: (l) => <DateCell ts={l.paidAt} /> },
+    {
+      key: 'url', header: 'Checkout link', hideHeader: true, align: 'right',
+      // Only an unpaid link is still worth sharing; older rows predate the
+      // stored URL and have nothing to copy.
+      render: (l) => l.url && isShareable(l.status)
+        ? <CopyButton value={l.url} label="Copy" />
+        : null,
+    },
   ];
 
   return (
@@ -133,19 +138,30 @@ export default function LinksPage() {
         }
       />
 
+      {isError && (
+        <div className="warnbar" role="alert">
+          Couldn't load payment links. The figures below are incomplete — reload to try again.
+        </div>
+      )}
+
       <StatGrid>
-        <StatCard label="Links" value={filtered.length} sub="In view" />
-        <StatCard label="Paid" value={paid.length} sub="Conversions" />
-        <StatCard label="Conversion" value={`${conversion}%`} sub="Paid ÷ links" />
-        <StatCard label="Revenue" value={<Money amount={revenue} direction="in" emphasis />} sub="From paid links" />
+        <StatCard isUnknown={statsUnknown} label="Links" value={filtered.length} sub="In view" />
+        <StatCard isUnknown={statsUnknown} label="Paid" value={paid.length} sub="Conversions" />
+        <StatCard isUnknown={statsUnknown} label="Conversion" value={`${conversion}%`} sub="Paid ÷ links" />
+        <StatCard isUnknown={statsUnknown} label="Revenue" value={<Money amount={revenue} direction="in" emphasis />} sub="From paid links" />
       </StatGrid>
 
       <FilterBar>
-        <select value={filters.creator} onChange={(e) => setFilters((f) => ({ ...f, creator: e.target.value }))}>
-          <option value="">All creators</option>
-          {creatorNames.map((n) => <option key={n} value={n}>{n}</option>)}
+        <select
+          aria-label="Filter by account"
+          value={filters.account}
+          onChange={(e) => setFilters((f) => ({ ...f, account: e.target.value }))}
+        >
+          <option value="">All accounts</option>
+          {accountNames.map((n) => <option key={n} value={n}>{n}</option>)}
         </select>
         <select
+          aria-label="Filter by status"
           value={filters.status}
           onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value as LinksFilters['status'] }))}
         >
@@ -153,16 +169,17 @@ export default function LinksPage() {
           {LINK_STATUSES.map((s) => <option key={s} value={s}>{LINK_STATUS_LABELS[s]}</option>)}
         </select>
         <input
-          type="number" className="amount-input" placeholder="Min" value={filters.min}
+          type="number" className="amount-input" aria-label="Minimum amount" placeholder="Min" value={filters.min}
           onChange={(e) => setFilters((f) => ({ ...f, min: e.target.value }))}
         />
         <input
-          type="number" className="amount-input" placeholder="Max" value={filters.max}
+          type="number" className="amount-input" aria-label="Maximum amount" placeholder="Max" value={filters.max}
           onChange={(e) => setFilters((f) => ({ ...f, max: e.target.value }))}
         />
         <DateRangePicker value={range} onChange={setRange} />
         <input
-          type="search" className="search-input" placeholder="Search ref, customer, chatter" value={filters.search}
+          type="search" className="search-input" aria-label="Search links" placeholder="Search ref, customer, agent"
+          value={filters.search}
           onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
         />
         <button className="btn ghost" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear</button>
@@ -174,7 +191,7 @@ export default function LinksPage() {
         rowKey={(l) => l.id}
         isLoading={isLoading}
         emptyTitle={isError ? "Couldn't load payment links." : 'No links match these filters.'}
-        emptyHint={isError ? 'Try again in a moment.' : can('links.create') ? 'Create one from the header.' : 'Ask a chatter to create one.'}
+        emptyHint={isError ? 'Try again in a moment.' : can('links.create') ? 'Create one from the header.' : 'Ask a agent to create one.'}
         footer={
           <span className="table-foot-row">
             Showing {filtered.length} of {links.length} loaded
@@ -187,14 +204,17 @@ export default function LinksPage() {
         }
       />
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)}>
-        <h3>New payment link</h3>
-        <p className="sub">The customer pays on MantaPay's hosted page. The amount is fixed in the link.</p>
+      <Modal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        title="New payment link"
+        subtitle="The customer pays on MantaPay's hosted page. The amount is fixed in the link."
+      >
         <div className="field">
-          <label htmlFor="link-creator">Creator</label>
-          <select id="link-creator" value={creatorId} onChange={(e) => setCreatorId(e.target.value)}>
-            {activeCreators.length === 0 && <option value="">No active creators</option>}
-            {activeCreators.map((c) => <option key={c.id} value={c.id}>{c.stageName}</option>)}
+          <label htmlFor="link-account">Account</label>
+          <select id="link-account" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+            {activeAccounts.length === 0 && <option value="">No active accounts</option>}
+            {activeAccounts.map((c) => <option key={c.id} value={c.id}>{c.stageName}</option>)}
           </select>
         </div>
         <div className="field">
@@ -263,24 +283,27 @@ export default function LinksPage() {
 
         <div className="modal-actions">
           <button className="btn ghost" onClick={() => setCreateOpen(false)}>Cancel</button>
-          <button className="btn" onClick={submitCreate} disabled={isCreating || !creatorId}>
+          <button className="btn" onClick={submitCreate} disabled={isCreating || !accountId}>
             {isCreating ? 'Creating…' : 'Create link'}
           </button>
         </div>
       </Modal>
 
-      <Modal open={createdUrl !== null} onClose={() => setCreatedUrl(null)}>
+      <Modal
+        open={createdUrl !== null}
+        onClose={() => setCreatedUrl(null)}
+        title="Link ready"
+        subtitle="Share this URL with the customer. It expires if it is not paid in time."
+      >
         {createdUrl && (
           <>
-            <h3>Link ready</h3>
-            <p className="sub">Share this URL with the customer. It expires if it is not paid in time.</p>
             <div className="field">
               <label htmlFor="created-url">Checkout URL</label>
               <input id="created-url" type="text" readOnly value={createdUrl} onFocus={(e) => e.target.select()} />
             </div>
             <div className="modal-actions">
               <button className="btn ghost" onClick={() => setCreatedUrl(null)}>Close</button>
-              <button className="btn" onClick={() => copyUrl(createdUrl)}>Copy link</button>
+              <CopyButton value={createdUrl} label="Copy link" />
             </div>
           </>
         )}

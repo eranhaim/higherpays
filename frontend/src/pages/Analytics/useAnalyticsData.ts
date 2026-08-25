@@ -3,21 +3,21 @@
  *
  * Loads the report for the selected range plus the report for the period of
  * equal length just before it, so the page can show "vs previous" deltas.
- * Creator and chatter lists feed the scope filters and are only fetched for
+ * Account and agent lists feed the scope filters and are only fetched for
  * roles that may scope the report.
  */
 
 import { useQuery } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import { analyticsApi, creatorsApi, membershipsApi } from '../../api/endpoints';
+import { analyticsApi, accountsApi, membershipsApi } from '../../api/endpoints';
 import { DAY_MS } from '../../lib/format';
 
 export interface AnalyticsFilters {
   /** Date-input values, `YYYY-MM-DD` in local time. */
   from: string;
   to: string;
-  creatorId: string;
-  chatterId: string;
+  accountId: string;
+  agentId: string;
 }
 
 export interface DateWindow {
@@ -40,8 +40,8 @@ export function defaultFilters(): AnalyticsFilters {
   return {
     from: toLocalDateInput(now - 30 * DAY_MS),
     to: toLocalDateInput(now),
-    creatorId: '',
-    chatterId: '',
+    accountId: '',
+    agentId: '',
   };
 }
 
@@ -67,7 +67,7 @@ export function useAnalyticsData(filters: AnalyticsFilters, canScope: boolean) {
   const dateWindow = toDateWindow(filters);
   const enabled = Boolean(activeWorkspaceId) && dateWindow !== null;
 
-  const scope = { creatorId: filters.creatorId || undefined, chatterId: filters.chatterId || undefined };
+  const scope = { accountId: filters.accountId || undefined, agentId: filters.agentId || undefined };
 
   const currentRange = dateWindow
     ? { from: new Date(dateWindow.fromMs).toISOString(), to: new Date(dateWindow.toMs).toISOString() }
@@ -93,15 +93,15 @@ export function useAnalyticsData(filters: AnalyticsFilters, canScope: boolean) {
     enabled,
   });
 
-  const creators = useQuery({
-    queryKey: ['creators', activeWorkspaceId],
-    queryFn: () => creatorsApi.list(),
+  const accounts = useQuery({
+    queryKey: ['accounts', activeWorkspaceId],
+    queryFn: () => accountsApi.list(),
     enabled: canScope && Boolean(activeWorkspaceId),
   });
 
-  const chatters = useQuery({
-    queryKey: ['team-chatters', activeWorkspaceId],
-    queryFn: () => membershipsApi.listChatters(),
+  const agents = useQuery({
+    queryKey: ['team-agents', activeWorkspaceId],
+    queryFn: () => membershipsApi.listAgents(),
     enabled: canScope && Boolean(activeWorkspaceId),
   });
 
@@ -111,7 +111,7 @@ export function useAnalyticsData(filters: AnalyticsFilters, canScope: boolean) {
     previous: previous.data,
     isLoading: report.isLoading,
     isError: report.isError,
-    creators: creators.data ?? [],
-    chatters: chatters.data ?? [],
+    accounts: accounts.data ?? [],
+    agents: agents.data ?? [],
   };
 }

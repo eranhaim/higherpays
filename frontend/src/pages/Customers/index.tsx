@@ -28,11 +28,13 @@ function SegmentTag({ segment }: { segment: CustomerSegment }) {
 
 export default function CustomersPage() {
   const can = useCan();
-  const { customers, creators, isLoading, isError, createCustomer, exportCsv } = useCustomersData();
-  const creatorNameById = useMemo(() => new Map(creators.map((c) => [c.id, c.stageName])), [creators]);
+  const {
+    customers, accounts, isLoading, isError, hasMore, isLoadingMore, loadMore, createCustomer, exportCsv,
+  } = useCustomersData();
+  const accountNameById = useMemo(() => new Map(accounts.map((c) => [c.id, c.stageName])), [accounts]);
 
   const [segment, setSegment] = useState<'' | CustomerSegment>('');
-  const [creatorId, setCreatorId] = useState('');
+  const [accountId, setAccountId] = useState('');
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('spend');
   const [detail, setDetail] = useState<Customer | null>(null);
@@ -40,27 +42,28 @@ export default function CustomersPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [alias, setAlias] = useState('');
   const [email, setEmail] = useState('');
-  const [newCreatorId, setNewCreatorId] = useState('');
+  const [newAccountId, setNewAccountId] = useState('');
   const [newSegment, setNewSegment] = useState<CustomerSegment>('new');
   const [isSaving, setIsSaving] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const rows = customers.filter((c) => {
       if (segment && c.segment !== segment) return false;
-      if (creatorId && c.creatorId !== creatorId) return false;
+      if (accountId && c.accountId !== accountId) return false;
       if (q && !`${c.alias} ${c.email ?? ''}`.toLowerCase().includes(q)) return false;
       return true;
     });
     const key = (c: Customer) => sort === 'spend' ? c.totalSpend : (c.lastPurchaseAt ? Date.parse(c.lastPurchaseAt) : 0);
     return rows.sort((a, b) => key(b) - key(a));
-  }, [customers, segment, creatorId, search, sort]);
+  }, [customers, segment, accountId, search, sort]);
 
-  const clearFilters = () => { setSegment(''); setCreatorId(''); setSearch(''); setSort('spend'); };
+  const clearFilters = () => { setSegment(''); setAccountId(''); setSearch(''); setSort('spend'); };
 
   const closeAdd = () => {
     setAddOpen(false);
-    setAlias(''); setEmail(''); setNewCreatorId(''); setNewSegment('new');
+    setAlias(''); setEmail(''); setNewAccountId(''); setNewSegment('new');
   };
 
   const submitAdd = async () => {
@@ -70,7 +73,7 @@ export default function CustomersPage() {
       await createCustomer({
         alias: alias.trim(),
         email: email.trim() || undefined,
-        creatorId: newCreatorId || undefined,
+        accountId: newAccountId || undefined,
         segment: newSegment,
       });
       closeAdd();
@@ -83,10 +86,14 @@ export default function CustomersPage() {
   };
 
   const runExport = async () => {
+    setIsExporting(true);
     try {
       await exportCsv();
+      toast('Customers exported to CSV.');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Export failed.');
+    } finally {
+      setIsExporting(false);
     }
   };
 
@@ -95,12 +102,12 @@ export default function CustomersPage() {
       key: 'customer', header: 'Customer',
       render: (c) => (
         <>
-          <div className="cname">{c.alias}</div>
-          {c.email && <div className="cemail">{c.email}</div>}
+          <div className="cname" title={c.alias}>{c.alias}</div>
+          {c.email && <div className="cemail" title={c.email}>{c.email}</div>}
         </>
       ),
     },
-    { key: 'creator', header: 'Creator', render: (c) => (c.creatorId && creatorNameById.get(c.creatorId)) ?? '—' },
+    { key: 'account', header: 'Account', render: (c) => (c.accountId && accountNameById.get(c.accountId)) ?? '—' },
     { key: 'spend', header: 'Total spend', align: 'right', render: (c) => <Money amount={c.totalSpend} direction="in" /> },
     { key: 'last', header: 'Last purchase', render: (c) => <DateCell ts={c.lastPurchaseAt} /> },
     { key: 'segment', header: 'Segment', render: (c) => <SegmentTag segment={c.segment} /> },
@@ -111,30 +118,39 @@ export default function CustomersPage() {
       <PageHeader
         eyebrow="People"
         title="Customers"
-        subtitle="Everyone who paid, what they spent, and which creator they belong to."
+        subtitle="Everyone who paid, what they spent, and which account they belong to."
         actions={
           <>
-            {can('customers.export') && <button className="btn ghost" onClick={runExport}>Export CSV</button>}
+            {can('customers.export') && (
+              <button className="btn ghost" onClick={runExport} disabled={isExporting}>
+                {isExporting ? 'Exporting…' : 'Export CSV'}
+              </button>
+            )}
             {can('customers.manage') && <button className="btn" onClick={() => setAddOpen(true)}>Add customer</button>}
           </>
         }
       />
 
       <FilterBar>
-        <select value={segment} onChange={(e) => setSegment(e.target.value as '' | CustomerSegment)}>
+        <select
+          aria-label="Filter by segment"
+          value={segment}
+          onChange={(e) => setSegment(e.target.value as '' | CustomerSegment)}
+        >
           <option value="">All segments</option>
           {CUSTOMER_SEGMENTS.map((s) => <option key={s} value={s}>{CUSTOMER_SEGMENT_LABELS[s]}</option>)}
         </select>
-        <select value={creatorId} onChange={(e) => setCreatorId(e.target.value)}>
-          <option value="">All creators</option>
-          {creators.map((c) => <option key={c.id} value={c.id}>{c.stageName}</option>)}
+        <select aria-label="Filter by account" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
+          <option value="">All accounts</option>
+          {accounts.map((c) => <option key={c.id} value={c.id}>{c.stageName}</option>)}
         </select>
-        <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
+        <select aria-label="Sort customers" value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
           <option value="spend">Highest spend first</option>
           <option value="recent">Most recent first</option>
         </select>
         <input
-          type="search" className="search-input" placeholder="Search name or email" value={search}
+          type="search" className="search-input" aria-label="Search customers"
+          placeholder="Search name or email" value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
         <button className="btn ghost" onClick={clearFilters}>Clear</button>
@@ -148,15 +164,27 @@ export default function CustomersPage() {
         isLoading={isLoading}
         emptyTitle={isError ? "Couldn't load customers." : 'No customers match these filters.'}
         emptyHint={isError ? 'Try again in a moment.' : 'Customers appear here once a link is paid, or add one by hand.'}
-        footer={`Showing ${filtered.length} of ${customers.length}`}
+        footer={
+          <span className="table-foot-row">
+            Showing {filtered.length} of {customers.length} loaded
+            {hasMore && (
+              <button className="btn ghost small" onClick={loadMore} disabled={isLoadingMore}>
+                {isLoadingMore ? 'Loading…' : 'Load more'}
+              </button>
+            )}
+          </span>
+        }
       />
 
-      <Modal open={!!detail} onClose={() => setDetail(null)}>
+      <Modal
+        open={!!detail}
+        onClose={() => setDetail(null)}
+        title={detail?.alias ?? ''}
+        subtitle={detail?.email ?? 'No email on record'}
+      >
         {detail && (
           <>
-            <h3>{detail.alias}</h3>
-            <p className="sub">{detail.email ?? 'No email on record'}</p>
-            <DetailRow label="Creator">{(detail.creatorId && creatorNameById.get(detail.creatorId)) ?? '—'}</DetailRow>
+            <DetailRow label="Account">{(detail.accountId && accountNameById.get(detail.accountId)) ?? '—'}</DetailRow>
             <DetailRow label="Segment"><SegmentTag segment={detail.segment} /></DetailRow>
             <DetailRow label="Total spend"><Money amount={detail.totalSpend} direction="in" emphasis /></DetailRow>
             <DetailRow label="Last purchase"><DateCell ts={detail.lastPurchaseAt} /></DetailRow>
@@ -168,9 +196,12 @@ export default function CustomersPage() {
         )}
       </Modal>
 
-      <Modal open={addOpen} onClose={closeAdd}>
-        <h3>Add customer</h3>
-        <p className="sub">Keep only data you have a lawful basis to hold.</p>
+      <Modal
+        open={addOpen}
+        onClose={closeAdd}
+        title="Add customer"
+        subtitle="Keep only data you have a lawful basis to hold."
+      >
         <div className="field">
           <label htmlFor="customer-alias">Name or username</label>
           <input id="customer-alias" type="text" value={alias} onChange={(e) => setAlias(e.target.value)} />
@@ -180,10 +211,10 @@ export default function CustomersPage() {
           <input id="customer-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </div>
         <div className="field">
-          <label htmlFor="customer-creator">Creator</label>
-          <select id="customer-creator" value={newCreatorId} onChange={(e) => setNewCreatorId(e.target.value)}>
+          <label htmlFor="customer-account">Account</label>
+          <select id="customer-account" value={newAccountId} onChange={(e) => setNewAccountId(e.target.value)}>
             <option value="">Not assigned</option>
-            {creators.map((c) => <option key={c.id} value={c.id}>{c.stageName}</option>)}
+            {accounts.map((c) => <option key={c.id} value={c.id}>{c.stageName}</option>)}
           </select>
         </div>
         <div className="field">

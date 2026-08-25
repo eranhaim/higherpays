@@ -6,6 +6,7 @@ import {
 import { HttpError } from '../../api/http';
 import { useCan } from '../../hooks/usePermission';
 import { toast } from '../../lib/toast';
+import Modal from '../../components/Modal';
 import { EmptyState, ErrorCard, LoadingCard, Pill } from '../../components/ui';
 import { useNotificationSettings } from './useSettingsData';
 
@@ -24,6 +25,7 @@ function toggleEvent(events: NotificationEvent[], event: NotificationEvent, on: 
 export function NotificationsPane() {
   const can = useCan();
   const editable = can('settings.edit');
+  const [removing, setRemoving] = useState<NotificationChannel | null>(null);
   const {
     preferences, channels,
     savePreferences, createChannel, setChannelActive, deleteChannel, testChannel,
@@ -50,9 +52,10 @@ export function NotificationsPane() {
     }
   };
 
-  const remove = async (channel: NotificationChannel) => {
+  const confirmRemove = async (channel: NotificationChannel) => {
     try {
       await deleteChannel.mutateAsync(channel.id);
+      setRemoving(null);
       toast('Chat removed.');
     } catch (err) {
       toast(errorMessage(err, 'Could not remove the chat.'));
@@ -79,7 +82,12 @@ export function NotificationsPane() {
           <div className="tablewrap">
             <table>
               <thead>
-                <tr><th>Chat</th><th>Events</th><th>Status</th><th></th></tr>
+                <tr>
+                  <th scope="col">Chat</th>
+                  <th scope="col">Events</th>
+                  <th scope="col">Status</th>
+                  <th scope="col"><span className="sr-only">Actions</span></th>
+                </tr>
               </thead>
               <tbody>
                 {channels.data.channels.map((c) => (
@@ -100,7 +108,7 @@ export function NotificationsPane() {
                       {c.lastError ? (
                         <>
                           <Pill tone="no">Error</Pill>
-                          <div className="cemail">{c.lastError}</div>
+                          <div className="cemail" title={c.lastError}>{c.lastError}</div>
                         </>
                       ) : c.active ? <Pill tone="ok">Active</Pill> : <Pill>Paused</Pill>}
                     </td>
@@ -111,7 +119,7 @@ export function NotificationsPane() {
                           <button className="btn ghost small" disabled={setChannelActive.isPending} onClick={() => setActive(c, !c.active)}>
                             {c.active ? 'Pause' : 'Resume'}
                           </button>
-                          <button className="btn danger small" disabled={deleteChannel.isPending} onClick={() => remove(c)}>Remove</button>
+                          <button className="btn danger small" onClick={() => setRemoving(c)}>Remove</button>
                         </div>
                       )}
                     </td>
@@ -129,6 +137,22 @@ export function NotificationsPane() {
           />
         )}
       </div>
+
+      <Modal
+        open={removing !== null}
+        onClose={() => setRemoving(null)}
+        title={removing ? `Remove ${removing.label || removing.target}?` : ''}
+        subtitle="Notifications to this chat stop immediately. To restore it you have to paste the chat ID again."
+      >
+        {removing && (
+          <div className="modal-actions">
+            <button className="btn ghost" onClick={() => setRemoving(null)}>Keep</button>
+            <button className="btn danger" disabled={deleteChannel.isPending} onClick={() => confirmRemove(removing)}>
+              {deleteChannel.isPending ? 'Removing…' : 'Remove chat'}
+            </button>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
@@ -138,13 +162,17 @@ function PreferencesCard({ preferences, onSave }: {
   onSave: (events: NotificationEvent[]) => Promise<unknown>;
 }) {
   const [events, setEvents] = useState<NotificationEvent[]>(preferences.events);
+  const [isSaving, setIsSaving] = useState(false);
 
   const save = async () => {
+    setIsSaving(true);
     try {
       await onSave(events);
       toast('Notification preferences saved.');
     } catch (err) {
       toast(errorMessage(err, 'Could not save your preferences.'));
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -156,14 +184,16 @@ function PreferencesCard({ preferences, onSave }: {
         what your teammates see.
       </p>
       {preferences.available.map((event) => (
-        <div className="setrow" key={event}>
+        <label className="setrow" key={event}>
           <div className="k">{NOTIFICATION_EVENT_LABELS[event]}</div>
           <input type="checkbox" checked={events.includes(event)}
             onChange={(e) => setEvents(toggleEvent(events, event, e.target.checked))} />
-        </div>
+        </label>
       ))}
       <div className="actions-right">
-        <button className="btn" onClick={save}>Save my preferences</button>
+        <button className="btn" onClick={save} disabled={isSaving}>
+          {isSaving ? 'Saving…' : 'Save my preferences'}
+        </button>
       </div>
     </div>
   );
@@ -176,10 +206,12 @@ function AddChannelForm({ availableEvents, onCreate }: {
   const [target, setTarget] = useState('');
   const [label, setLabel] = useState('');
   const [events, setEvents] = useState<NotificationEvent[]>(['payment.paid']);
+  const [isConnecting, setIsConnecting] = useState(false);
 
   const connect = async () => {
     if (!target.trim()) { toast('Paste the Telegram chat ID.'); return; }
     if (events.length === 0) { toast('Pick at least one event.'); return; }
+    setIsConnecting(true);
     try {
       await onCreate({
         target: target.trim(),
@@ -190,6 +222,8 @@ function AddChannelForm({ availableEvents, onCreate }: {
       toast('Chat connected.');
     } catch (err) {
       toast(errorMessage(err, 'Could not connect the chat.'));
+    } finally {
+      setIsConnecting(false);
     }
   };
 
@@ -216,7 +250,9 @@ function AddChannelForm({ availableEvents, onCreate }: {
         ))}
       </div>
       <div className="actions-right">
-        <button className="btn" onClick={connect}>Connect chat</button>
+        <button className="btn" onClick={connect} disabled={isConnecting}>
+          {isConnecting ? 'Connecting…' : 'Connect chat'}
+        </button>
       </div>
     </>
   );

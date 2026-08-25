@@ -1,9 +1,9 @@
 'use strict';
 // "What am I owed?" — self-scoped earnings for the signed-in person.
 //
-// Deliberately narrow: a chatter sees ONLY their own commission, a creator sees
+// Deliberately narrow: an agent sees ONLY their own commission, an account sees
 // ONLY their own share. Neither sees the other's cut, the agency's margin, or
-// the itemised fee breakdown. Gated on analytics.view (which chatters have),
+// the itemised fee breakdown. Gated on analytics.view (which agents have),
 // NOT commissions.view (which they don't) — because this is their own data.
 const express = require('express');
 const { withWorkspace } = require('../db');
@@ -21,22 +21,22 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
   const F = from.toISOString(), T = to.toISOString();
 
   const data = await withWorkspace(wid(req), uid(req), async (c) => {
-    // Which party is the signed-in user? A membership makes them a chatter;
-    // a linked creator record makes them a creator.
+    // Which party is the signed-in user? A membership makes them an agent;
+    // a linked account record makes them an account.
     const me = (await c.query(
       `SELECT m.id AS membership_id, m.role, m.commission_pct,
-              (SELECT id FROM creators WHERE workspace_id = $1 AND user_id = $2 LIMIT 1) AS creator_id,
-              (SELECT revenue_split_pct FROM creators WHERE workspace_id = $1 AND user_id = $2 LIMIT 1) AS split_pct,
-              (SELECT revenue_model FROM creators WHERE workspace_id = $1 AND user_id = $2 LIMIT 1) AS revenue_model
+              (SELECT id FROM accounts WHERE workspace_id = $1 AND user_id = $2 LIMIT 1) AS account_id,
+              (SELECT revenue_split_pct FROM accounts WHERE workspace_id = $1 AND user_id = $2 LIMIT 1) AS split_pct,
+              (SELECT revenue_model FROM accounts WHERE workspace_id = $1 AND user_id = $2 LIMIT 1) AS revenue_model
          FROM memberships m
         WHERE m.workspace_id = $1 AND m.user_id = $2 LIMIT 1`, [wid(req), uid(req)])).rows[0];
     if (!me) return null;
 
-    const isCreator = !!me.creator_id;
-    const amountCol = isCreator ? 'ce.creator_amount' : 'ce.chatter_amount';
-    const paidCol = isCreator ? 'ce.creator_payout_id' : 'ce.chatter_payout_id';
-    const scopeCol = isCreator ? 'ce.creator_id' : 'ce.chatter_membership_id';
-    const scopeVal = isCreator ? me.creator_id : me.membership_id;
+    const isAccount = !!me.account_id;
+    const amountCol = isAccount ? 'ce.account_amount' : 'ce.agent_amount';
+    const paidCol = isAccount ? 'ce.account_payout_id' : 'ce.agent_payout_id';
+    const scopeCol = isAccount ? 'ce.account_id' : 'ce.agent_membership_id';
+    const scopeVal = isAccount ? me.account_id : me.membership_id;
 
     const period = (await c.query(
       `SELECT COUNT(*) FILTER (WHERE ce.entry_type='sale')                          AS sales,
@@ -56,18 +56,18 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
               COALESCE(SUM(${amountCol}) FILTER (WHERE ${paidCol} IS NOT NULL),0) AS paid
          FROM commission_entries ce WHERE ${scopeCol} = $1`, [scopeVal])).rows[0];
 
-    return { me, isCreator, period, balance };
+    return { me, isAccount, period, balance };
   });
 
   if (!data) return res.status(404).json({ error: 'no_membership' });
 
-  const { me, isCreator, period, balance } = data;
+  const { me, isAccount, period, balance } = data;
   const gross = n(period.gross);
-  const rate = isCreator ? n(me.split_pct) : n(me.commission_pct);
+  const rate = isAccount ? n(me.split_pct) : n(me.commission_pct);
 
   res.json({
     range: { from: F, to: T },
-    role: isCreator ? 'creator' : 'chatter',
+    role: isAccount ? 'account' : 'agent',
     // The chain that explains the number, WITHOUT itemising whose fee is whose.
     period: {
       sales: n(period.sales),
@@ -81,7 +81,7 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
       owed: r2(balance.unpaid),               // not yet paid out to you
       paidToDate: r2(balance.paid),
     },
-    revenueModel: isCreator ? me.revenue_model : null,
+    revenueModel: isAccount ? me.revenue_model : null,
   });
 }));
 

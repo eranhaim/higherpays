@@ -1,17 +1,33 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProviders } from './components/AppProviders';
 import { AuthGuard } from './components/AuthGuard';
+import PermissionGuard from './components/PermissionGuard';
 import Layout from './components/Layout';
+import { useCan, usePermissionsPending } from './hooks/usePermission';
+import { NAV_ITEMS } from './rbac/nav';
 import ToastContainer from './components/Toast';
 import LoginPage from './pages/Login';
 import PaymentsPage from './pages/Payments';
 import LinksPage from './pages/Links';
 import PayoutsPage from './pages/Payouts';
-import CreatorsPage from './pages/Creators';
+import AccountsPage from './pages/Accounts';
 import CustomersPage from './pages/Customers';
 import TeamPage from './pages/Team';
 import AnalyticsPage from './pages/Analytics';
 import SettingsPage from './pages/Settings';
+
+/**
+ * Where "/" and any unknown path land. Payments is right for most roles, but a
+ * role that cannot see it would be bounced to a refusal card, so send everyone
+ * to the first page they can actually open.
+ */
+function HomeRedirect() {
+  const can = useCan();
+  const pending = usePermissionsPending();
+  if (pending) return null;
+  const first = NAV_ITEMS.find((i) => can(i.perm));
+  return <Navigate to={first ? first.path : '/payments'} replace />;
+}
 
 export default function App() {
   return (
@@ -21,17 +37,19 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
           <Route element={<AuthGuard />}>
             <Route element={<Layout />}>
-              <Route path="/payments" element={<PaymentsPage />} />
-              <Route path="/links" element={<LinksPage />} />
-              <Route path="/payouts" element={<PayoutsPage />} />
-              <Route path="/creators" element={<CreatorsPage />} />
-              <Route path="/customers" element={<CustomersPage />} />
-              <Route path="/team" element={<TeamPage />} />
-              <Route path="/analytics" element={<AnalyticsPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
+              <Route element={<PermissionGuard />}>
+                <Route path="/payments" element={<PaymentsPage />} />
+                <Route path="/links" element={<LinksPage />} />
+                <Route path="/payouts" element={<PayoutsPage />} />
+                <Route path="/accounts" element={<AccountsPage />} />
+                <Route path="/customers" element={<CustomersPage />} />
+                <Route path="/team" element={<TeamPage />} />
+                <Route path="/analytics" element={<AnalyticsPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+              </Route>
+              <Route path="*" element={<HomeRedirect />} />
             </Route>
           </Route>
-          <Route path="*" element={<Navigate to="/payments" replace />} />
         </Routes>
       </BrowserRouter>
       <ToastContainer />

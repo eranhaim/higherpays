@@ -4,7 +4,7 @@
 const request = require('supertest');
 const { withSystem } = require('../../src/db');
 const sig = require('../../src/providers/mantapay-signature');
-const { createCreator } = require('./tenant');
+const { createAccount } = require('./tenant');
 
 const MERCHANT_ID = '7374656';
 
@@ -56,13 +56,13 @@ function postWebhook(app, endpointId, payload) {
     .send(encodeForm(payload));
 }
 
-/** Creates a link for `creator` and pays it. Returns the link and the provider transaction id. */
-async function paySale(app, tenant, creator, amount) {
+/** Creates a link for `account` and pays it. Returns the link and the provider transaction id. */
+async function paySale(app, tenant, account, amount) {
   await setMerchantId(tenant.workspaceId);
   const link = (await request(app)
     .post(`/workspaces/${tenant.workspaceId}/links`)
     .set(tenant.authHeaders)
-    .send({ creatorId: creator.id, pricingMode: 'fixed', amount, currency: 'EUR' })
+    .send({ accountId: account.id, pricingMode: 'fixed', amount, currency: 'EUR' })
     .expect(201)).body;
   const transId = `mp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
   await postWebhook(app, await endpointFor(tenant.workspaceId),
@@ -71,5 +71,5 @@ async function paySale(app, tenant, creator, amount) {
 }
 
 module.exports = {
-  MERCHANT_ID, endpointFor, setMerchantId, encodeForm, buildPaidPayload, postWebhook, paySale, createCreator,
+  MERCHANT_ID, endpointFor, setMerchantId, encodeForm, buildPaidPayload, postWebhook, paySale, createAccount,
 };

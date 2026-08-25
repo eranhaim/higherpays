@@ -2,11 +2,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
   membershipsApi, invitesApi, rolesApi,
-  type Chatter, type Member, type Invite, type WorkspaceRole,
+  type Agent, type Member, type Invite, type WorkspaceRole,
 } from '../../api/endpoints';
 
 export interface UseTeamDataResult {
-  chatters: Chatter[];
+  agents: Agent[];
   members: Member[];
   pendingInvites: Invite[];
   roles: WorkspaceRole[];
@@ -23,9 +23,9 @@ export function useTeamData(): UseTeamDataResult {
   const queryClient = useQueryClient();
   const enabled = Boolean(activeWorkspaceId);
 
-  const chatters = useQuery({
-    queryKey: ['team-chatters', activeWorkspaceId],
-    queryFn: () => membershipsApi.listChatters(),
+  const agents = useQuery({
+    queryKey: ['team-agents', activeWorkspaceId],
+    queryFn: () => membershipsApi.listAgents(),
     enabled,
   });
   const members = useQuery({
@@ -46,7 +46,7 @@ export function useTeamData(): UseTeamDataResult {
   });
 
   const invalidateTeam = () => {
-    queryClient.invalidateQueries({ queryKey: ['team-chatters', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['team-agents', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['team-members', activeWorkspaceId] });
   };
 
@@ -70,12 +70,12 @@ export function useTeamData(): UseTeamDataResult {
   });
 
   return {
-    chatters: chatters.data ?? [],
+    agents: agents.data ?? [],
     members: members.data ?? [],
     pendingInvites: (invites.data ?? []).filter((i) => !i.acceptedAt),
     roles: roles.data ?? [],
-    isLoading: chatters.isLoading || members.isLoading,
-    isError: chatters.isError || members.isError,
+    isLoading: agents.isLoading || members.isLoading,
+    isError: agents.isError || members.isError,
     setCommission: async (membershipId, commissionPct) => {
       await commission.mutateAsync({ membershipId, commissionPct });
     },

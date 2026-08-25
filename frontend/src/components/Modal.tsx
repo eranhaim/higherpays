@@ -1,21 +1,36 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 
 interface ModalProps {
   open: boolean;
   onClose: () => void;
+  /** Heading of the dialog, and the name screen readers announce for it. */
+  title: string;
+  subtitle?: string;
   children: ReactNode;
 }
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
- * Accessible dialog: announced as a dialog, traps Tab inside itself, closes
- * on Escape or an overlay click, locks page scroll while open, and returns
- * focus to the element that opened it.
+ * Accessible dialog: named by its title, traps Tab inside itself, closes on
+ * Escape or an overlay click, locks page scroll while open, and returns focus
+ * to the element that opened it.
+ *
+ * Rendered into document.body. Left inline it would sit inside <main>, which
+ * is the app's scroll container, and the page would scroll behind the dialog.
  */
-export default function Modal({ open, onClose, children }: ModalProps) {
+export default function Modal({ open, onClose, title, subtitle, children }: ModalProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+
+  // Callers pass an inline arrow, so onClose has a new identity on every
+  // parent render. Reading it from a ref keeps the effect below tied to `open`
+  // alone — depending on onClose re-ran it after each keystroke, which pulled
+  // focus back to the first field.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -28,7 +43,7 @@ export default function Modal({ open, onClose, children }: ModalProps) {
     (focusable()[0] ?? dialog)?.focus();
 
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { onClose(); return; }
+      if (e.key === 'Escape') { onCloseRef.current(); return; }
       if (e.key !== 'Tab') return;
       const items = focusable();
       if (items.length === 0) { e.preventDefault(); return; }
@@ -43,20 +58,23 @@ export default function Modal({ open, onClose, children }: ModalProps) {
       document.body.style.overflow = previousOverflow;
       opener?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div
       ref={overlayRef}
       className="overlay"
       role="presentation"
       onClick={(e) => { if (e.target === overlayRef.current) onClose(); }}
     >
-      <div ref={dialogRef} className="modal" role="dialog" aria-modal="true" tabIndex={-1}>
+      <div ref={dialogRef} className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
+        <h3 id={titleId}>{title}</h3>
+        {subtitle ? <p className="sub">{subtitle}</p> : null}
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

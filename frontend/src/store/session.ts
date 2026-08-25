@@ -2,7 +2,7 @@
  * Session state — what the user is looking at *right now*.
  *
  * Owns the active workspace id (the value we send as `X-Workspace-Id` on every
- * request) and derived helpers. Everything else (creators, links, ...) is
+ * request) and derived helpers. Everything else (accounts, links, ...) is
  * server data owned by React Query.
  */
 

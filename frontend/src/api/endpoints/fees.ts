@@ -22,7 +22,7 @@ export interface FeesSummary {
   totalDeducted: number;
   effectiveRatePct: number;
   distributable: number;
-  splits: { creator: number; chatter: number; agency: number };
+  splits: { account: number; agent: number; agency: number };
   rateCard: {
     feeModel: string;
     mdrPct: number;

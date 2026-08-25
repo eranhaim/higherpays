@@ -5,7 +5,7 @@ const config = require('./config');
 const { pool, withSystem } = require('./db');
 const { log, requestLogger } = require('./lib/log');
 const authRoutes = require('./routes/auth.routes');
-const creatorsRoutes = require('./routes/creators.routes');
+const accountsRoutes = require('./routes/accounts.routes');
 const customersRoutes = require('./routes/customers.routes');
 const linksRoutes = require('./routes/links.routes');
 const commissionsRoutes = require('./routes/commissions.routes');
@@ -94,7 +94,7 @@ app.use('/platform', requireAuth, requirePlatformAdmin, platformRoutes);
 
 // Every workspace-scoped router runs behind auth + membership resolution.
 // Individual routes inside then gate on specific permissions.
-app.use('/workspaces/:workspaceId/creators', requireAuth, requireWorkspace, creatorsRoutes);
+app.use('/workspaces/:workspaceId/accounts', requireAuth, requireWorkspace, accountsRoutes);
 app.use('/workspaces/:workspaceId/customers', requireAuth, requireWorkspace, customersRoutes);
 app.use('/workspaces/:workspaceId/links', requireAuth, requireWorkspace, linksRoutes);
 app.use('/workspaces/:workspaceId/commissions', requireAuth, requireWorkspace, commissionsRoutes);

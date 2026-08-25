@@ -1,6 +1,6 @@
 'use strict';
 const { verifyAccessToken } = require('../auth/tokens');
-const { can, PERMISSIONS } = require('../auth/permissions');
+const { hasPermission, PERMISSIONS } = require('../auth/permissions');
 const { query, withUser } = require('../db');
 const { asyncHandler } = require('../lib/http');
 const { log } = require('../lib/log');
@@ -15,7 +15,9 @@ const requireAuth = (req, _res, next) => {
   if (scheme !== 'Bearer' || !token) return next(new UnauthorizedError('missing_token'));
   try {
     const payload = verifyAccessToken(token);
-    req.user = { id: payload.sub, email: payload.email, name: payload.name };
+    // sessionId is absent on tokens issued before sessions were tracked; it
+    // only ever marks "this device", never grants anything.
+    req.user = { id: payload.sub, email: payload.email, name: payload.name, sessionId: payload.sid || null };
     next();
   } catch {
     next(new UnauthorizedError('invalid_token'));
@@ -60,16 +62,13 @@ const requireWorkspace = asyncHandler(async (req, _res, next) => {
 
 // 3) requirePermission — gate a handler on a specific permission string. Prefers
 // the workspace's editable role definition; falls back to the built-in matrix.
-// `settings.danger` is what separates owner from admin, so it is tied to the
-// owner role itself rather than to any editable permission list.
+// This answers "may you call this endpoint" only; which ROWS come back is
+// resolveDataScope's job (auth/dataScope.js). The two are orthogonal.
 const requirePermission = (permission) => (req, _res, next) => {
   if (!req.membership) return next(new HttpError(500, 'workspace_context_missing'));
-  const ownerOnly = permission === 'settings.danger'
-    && req.membership.role !== 'owner' && !req.membership.isPlatformOperator;
-  const ok = !ownerOnly && (req.membership.permissions
-    ? req.membership.permissions.has(permission)
-    : can(req.membership.role, permission));
-  if (!ok) return next(new ForbiddenError('forbidden', 'permission required', { needed: permission }));
+  if (!hasPermission(req.membership, permission)) {
+    return next(new ForbiddenError('forbidden', 'permission required', { needed: permission }));
+  }
   next();
 };
 

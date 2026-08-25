@@ -12,7 +12,8 @@ import type { AuthUser, AuthWorkspace } from '../api/types';
 export interface CurrentSession {
   isAuthenticated: boolean;
   user: AuthUser | null;
-  role: string;
+  /** null when no workspace is resolved yet — grants nothing until it is. */
+  role: string | null;
   activeWorkspaceId: string | null;
   activeWorkspace: AuthWorkspace | null;
   workspaces: AuthWorkspace[];
@@ -30,7 +31,9 @@ export function useCurrentSession(): CurrentSession {
   return {
     isAuthenticated: Boolean(user),
     user,
-    role: activeWorkspace?.role ?? 'analyst',
+    // No workspace means no role. Defaulting to a real role here would hand a
+    // half-loaded or tampered session that role's whole sidebar.
+    role: activeWorkspace?.role ?? null,
     activeWorkspaceId: activeWorkspace?.id ?? null,
     activeWorkspace,
     workspaces,

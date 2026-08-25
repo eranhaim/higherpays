@@ -1,12 +1,12 @@
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
-  linksApi, creatorsApi, customersApi, workspacesApi,
-  type PaymentLink, type Creator, type Customer, type LinkLimits, type CreatedLink,
+  linksApi, accountsApi, customersApi, workspacesApi,
+  type PaymentLink, type Account, type Customer, type LinkLimits, type CreatedLink,
 } from '../../api/endpoints';
 
 export interface CreateLinkFormInput {
-  creatorId: string;
+  accountId: string;
   customerId?: string;
   amount: number;
 }
@@ -18,7 +18,7 @@ export interface ReconcileSummary {
 
 export interface UseLinksDataResult {
   links: PaymentLink[];
-  creators: Creator[];
+  accounts: Account[];
   customers: Customer[];
   linkLimits: LinkLimits | null;
   isLoading: boolean;
@@ -42,9 +42,9 @@ export function useLinksData(): UseLinksDataResult {
     getNextPageParam: (last) => last.nextCursor,
     enabled,
   });
-  const creators = useQuery({
-    queryKey: ['creators', activeWorkspaceId],
-    queryFn: () => creatorsApi.list(),
+  const accounts = useQuery({
+    queryKey: ['accounts', activeWorkspaceId],
+    queryFn: () => accountsApi.list(),
     enabled,
   });
   const customers = useQuery({
@@ -62,7 +62,7 @@ export function useLinksData(): UseLinksDataResult {
   const create = useMutation({
     mutationFn: (input: CreateLinkFormInput) =>
       linksApi.create({
-        creatorId: input.creatorId,
+        accountId: input.accountId,
         customerId: input.customerId,
         pricingMode: 'fixed',
         amount: input.amount,
@@ -81,7 +81,7 @@ export function useLinksData(): UseLinksDataResult {
 
   return {
     links: links.data?.pages.flatMap((p) => p.items) ?? [],
-    creators: creators.data ?? [],
+    accounts: accounts.data ?? [],
     customers: customers.data ?? [],
     linkLimits: linkLimits.data ?? null,
     isLoading: links.isLoading,

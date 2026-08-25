@@ -10,9 +10,9 @@ function tx(overrides: Partial<Transaction>): Transaction {
     platformFee: 5,
     status: 'approved',
     occurredAt: '2026-08-10T12:00:00.000Z',
-    creator: 'Ava',
+    account: 'Ava',
     customer: 'fan_one',
-    chatter: 'Sam',
+    agent: 'Sam',
     ...overrides,
   };
 }
@@ -20,7 +20,7 @@ function tx(overrides: Partial<Transaction>): Transaction {
 const rows: Transaction[] = [
   tx({ id: 'a' }),
   tx({ id: 'b', status: 'declined', providerTransactionId: 'MP-1002', customer: 'fan_two' }),
-  tx({ id: 'c', status: 'refunded', occurredAt: '2026-07-01T09:00:00.000Z', chatter: 'Lee' }),
+  tx({ id: 'c', status: 'refunded', occurredAt: '2026-07-01T09:00:00.000Z', agent: 'Lee' }),
 ];
 
 describe('filterTransactions', () => {
@@ -37,14 +37,14 @@ describe('filterTransactions', () => {
     expect(out.map((t) => t.id)).toEqual(['a', 'b']);
   });
 
-  it('searches reference, customer, creator and chatter, case-insensitively', () => {
+  it('searches reference, customer, account and agent, case-insensitively', () => {
     expect(filterTransactions(rows, { ...DEFAULT_FILTERS, search: 'mp-1002' }).map((t) => t.id)).toEqual(['b']);
     expect(filterTransactions(rows, { ...DEFAULT_FILTERS, search: 'lee' }).map((t) => t.id)).toEqual(['c']);
     expect(filterTransactions(rows, { ...DEFAULT_FILTERS, search: 'ava' })).toHaveLength(3);
   });
 
   it('ignores null fields when searching', () => {
-    const withNulls = [tx({ id: 'n', providerTransactionId: null, customer: null, creator: null, chatter: null })];
+    const withNulls = [tx({ id: 'n', providerTransactionId: null, customer: null, account: null, agent: null })];
     expect(filterTransactions(withNulls, { ...DEFAULT_FILTERS, search: 'x' })).toHaveLength(0);
     expect(filterTransactions(withNulls, DEFAULT_FILTERS)).toHaveLength(1);
   });

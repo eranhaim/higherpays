@@ -1,7 +1,7 @@
 import type { PaymentLink, LinkStatus } from '../../api/endpoints';
 
 export interface LinksFilters {
-  creator: string;
+  account: string;
   status: '' | LinkStatus;
   min: string;
   max: string;
@@ -11,7 +11,7 @@ export interface LinksFilters {
 }
 
 export const DEFAULT_FILTERS: LinksFilters = {
-  creator: '', status: '', min: '', max: '', from: '', to: '', search: '',
+  account: '', status: '', min: '', max: '', from: '', to: '', search: '',
 };
 
 export function filterLinks(rows: PaymentLink[], f: LinksFilters): PaymentLink[] {
@@ -24,14 +24,14 @@ export function filterLinks(rows: PaymentLink[], f: LinksFilters): PaymentLink[]
   return rows.filter((l) => {
     const amount = l.amount ?? 0;
     const ts = Date.parse(l.createdAt);
-    if (f.creator && l.creator !== f.creator) return false;
+    if (f.account && l.account !== f.account) return false;
     if (f.status && l.status !== f.status) return false;
     if (!Number.isNaN(min) && amount < min) return false;
     if (!Number.isNaN(max) && amount > max) return false;
     if (fromTs && ts < fromTs) return false;
     if (toTs && ts > toTs) return false;
     if (q) {
-      const hay = [l.referenceId, l.customer, l.chatter].filter(Boolean).join(' ').toLowerCase();
+      const hay = [l.referenceId, l.customer, l.agent].filter(Boolean).join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;

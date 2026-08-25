@@ -3,7 +3,7 @@
 //
 // `received` is what actually reached the agency in the period (gross minus
 // every fee), `held` is the part of that the provider keeps in the rolling
-// reserve, `owed` is what creators and chatters are still due. The shortfall
+// reserve, `owed` is what accounts and agents are still due. The shortfall
 // is the cash the agency must front if it pays in full now.
 
 const round2 = (v) => Math.round(v * 100) / 100;

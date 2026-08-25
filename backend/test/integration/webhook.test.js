@@ -8,13 +8,13 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 const { app } = require('../helpers/setup');
 const { withSystem } = require('../../src/db');
-const { createTenant, createCreator } = require('../helpers/tenant');
+const { createTenant, createAccount } = require('../helpers/tenant');
 const { endpointFor, setMerchantId, encodeForm, buildPaidPayload } = require('../helpers/webhook');
 const paymentsService = require('../../src/services/payments.service');
 
 test('webhook: valid signature -> transaction posted, link paid, notification recorded', async () => {
   const t = await createTenant(app);
-  const creator = await createCreator(app, t);
+  const account = await createAccount(app, t);
 
   // Set the workspace's MID to match what we'll send in the payload.
   const MID = '7374656';
@@ -24,7 +24,7 @@ test('webhook: valid signature -> transaction posted, link paid, notification re
   const linkRes = await request(app)
     .post(`/workspaces/${t.workspaceId}/links`)
     .set(t.authHeaders)
-    .send({ creatorId: creator.id, pricingMode: 'fixed', amount: 25, currency: 'EUR' })
+    .send({ accountId: account.id, pricingMode: 'fixed', amount: 25, currency: 'EUR' })
     .expect(201);
 
   const endpointId = await endpointFor(t.workspaceId);
@@ -92,14 +92,14 @@ test('webhook: unknown endpoint id returns 404', async () => {
 
 test('webhook: duplicate provider_event_id is acknowledged, not re-processed', async () => {
   const t = await createTenant(app);
-  const creator = await createCreator(app, t);
+  const account = await createAccount(app, t);
   await setMerchantId(t.workspaceId, '7374656');
   const endpointId = await endpointFor(t.workspaceId);
 
   const linkRes = await request(app)
     .post(`/workspaces/${t.workspaceId}/links`)
     .set(t.authHeaders)
-    .send({ creatorId: creator.id, pricingMode: 'fixed', amount: 30, currency: 'EUR' })
+    .send({ accountId: account.id, pricingMode: 'fixed', amount: 30, currency: 'EUR' })
     .expect(201);
 
   const payload = buildPaidPayload({
@@ -119,14 +119,14 @@ test('webhook: duplicate provider_event_id is acknowledged, not re-processed', a
 
 test('webhook: a delivery that failed mid-processing is processed on the provider retry', async () => {
   const t = await createTenant(app);
-  const creator = await createCreator(app, t);
+  const account = await createAccount(app, t);
   await setMerchantId(t.workspaceId, '7374656');
   const endpointId = await endpointFor(t.workspaceId);
 
   const linkRes = await request(app)
     .post(`/workspaces/${t.workspaceId}/links`)
     .set(t.authHeaders)
-    .send({ creatorId: creator.id, pricingMode: 'fixed', amount: 40, currency: 'EUR' })
+    .send({ accountId: account.id, pricingMode: 'fixed', amount: 40, currency: 'EUR' })
     .expect(201);
   const payload = buildPaidPayload({
     reference: linkRes.body.reference_id,

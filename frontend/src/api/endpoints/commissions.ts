@@ -8,9 +8,9 @@ import { workspacePath } from '../workspacePath';
  * frontend never has to.
  */
 export interface CommissionConfig {
-  creatorSplitPct: number;
+  accountSplitPct: number;
   agencySplitPct: number;
-  chatterPct: number;
+  agentPct: number;
   effectiveFrom: string | null;
 }
 
@@ -22,9 +22,9 @@ export interface PlatformFeeBreakdown {
 
 interface RawCommissionResponse {
   commission: {
-    creator_split_pct: number | string;
+    account_split_pct: number | string;
     agency_split_pct: number | string;
-    chatter_pct: number | string;
+    agent_pct: number | string;
     effective_from: string | null;
   };
   platformFee: {
@@ -44,9 +44,9 @@ export const commissionsApi = {
     const raw = await api.get<RawCommissionResponse>(workspacePath('/commissions'));
     return {
       commission: {
-        creatorSplitPct: toNumber(raw.commission.creator_split_pct, 70),
+        accountSplitPct: toNumber(raw.commission.account_split_pct, 70),
         agencySplitPct: toNumber(raw.commission.agency_split_pct, 30),
-        chatterPct: toNumber(raw.commission.chatter_pct, 0),
+        agentPct: toNumber(raw.commission.agent_pct, 0),
         effectiveFrom: raw.commission.effective_from,
       },
       platformFee: raw.platformFee
@@ -59,13 +59,13 @@ export const commissionsApi = {
     };
   },
 
-  async set(input: { creatorSplitPct: number; chatterPct: number }) {
+  async set(input: { accountSplitPct: number; agentPct: number }) {
     const raw = await api.put<RawCommissionResponse>(workspacePath('/commissions'), input);
     return {
       commission: {
-        creatorSplitPct: toNumber(raw.commission.creator_split_pct, 70),
+        accountSplitPct: toNumber(raw.commission.account_split_pct, 70),
         agencySplitPct: toNumber(raw.commission.agency_split_pct, 30),
-        chatterPct: toNumber(raw.commission.chatter_pct, 0),
+        agentPct: toNumber(raw.commission.agent_pct, 0),
         effectiveFrom: raw.commission.effective_from,
       },
     };

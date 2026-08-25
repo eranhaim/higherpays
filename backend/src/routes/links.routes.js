@@ -7,6 +7,7 @@ const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { badRequest } = require('../util/validate');
 const { parseLimit, decodeCursor, page } = require('../lib/cursor');
+const { resolveDataScope } = require('../auth/dataScope');
 const config = require('../config');
 const provider = require('../providers/mantapay');
 const paymentsService = require('../services/payments.service');
@@ -15,7 +16,7 @@ const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
 
 const MIN_FIXED_AMOUNT = 3;             // provider minimum: 3 USD/EUR
-const CHATTER_RATE_WINDOW_SECONDS = 30; // rate limit: one link per chatter per 30s
+const AGENT_RATE_WINDOW_SECONDS = 30; // rate limit: one link per agent per 30s
 
 // -----------------------------------------------------------------------------
 // Provider integration — MantaPay hosted checkout.
@@ -45,49 +46,62 @@ async function generateProviderLink({ ws, currency, amount, referenceId, descrip
 }
 
 // GET /workspaces/:workspaceId/links?limit&cursor — newest first.
-// Chatters see only the links they created; everyone else sees all in-workspace.
+// An agent sees the links they created; an account sees the links issued
+// against it; everyone else sees the whole workspace.
 router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) => {
   const limit = parseLimit(req.query.limit);
   const cursor = decodeCursor(req.query.cursor);
-  const chatterOnly = req.membership.role === 'chatter' ? req.membership.id : null;
-  const rows = await withWorkspace(wid(req), uid(req), async (c) => (await c.query(
-    `SELECT pl.id, pl.pricing_mode, pl.amount, pl.currency, pl.provider_link_id,
-            CASE WHEN pl.status = 'created' AND pl.created_at < now() - ($2 || ' minutes')::interval
-                 THEN 'expired' ELSE pl.status END AS status,
-            pl.reference_id, pl.created_at, pl.paid_at,
-            cr.stage_name AS creator, cu.alias AS customer,
-            u.full_name AS chatter
-     FROM payment_links pl
-     LEFT JOIN creators cr ON cr.id = pl.creator_id
-     LEFT JOIN customers cu ON cu.id = pl.customer_id
-     LEFT JOIN memberships m ON m.id = pl.created_by
-     LEFT JOIN users u ON u.id = m.user_id
-     WHERE pl.workspace_id = $1
-       AND ($3::uuid IS NULL OR pl.created_by = $3::uuid)
-       AND ($4::timestamptz IS NULL OR (pl.created_at, pl.id) < ($4::timestamptz, $5::uuid))
-     ORDER BY pl.created_at DESC, pl.id DESC LIMIT $6`,
-    [wid(req), config.linkTtlMinutes, chatterOnly, cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1])).rows);
+  const rows = await withWorkspace(wid(req), uid(req), async (c) => {
+    const scope = await resolveDataScope(c, req);
+    return (await c.query(
+      `SELECT pl.id, pl.pricing_mode, pl.amount, pl.currency, pl.provider_link_id,
+              CASE WHEN pl.status = 'created' AND pl.created_at < now() - ($2 || ' minutes')::interval
+                   THEN 'expired' ELSE pl.status END AS status,
+              pl.reference_id, pl.created_at, pl.paid_at, pl.checkout_url,
+              a.stage_name AS account, cu.alias AS customer,
+              u.full_name AS agent
+       FROM payment_links pl
+       LEFT JOIN accounts a ON a.id = pl.account_id
+       LEFT JOIN customers cu ON cu.id = pl.customer_id
+       LEFT JOIN memberships m ON m.id = pl.created_by
+       LEFT JOIN users u ON u.id = m.user_id
+       WHERE pl.workspace_id = $1
+         AND ($3::uuid IS NULL OR pl.created_by = $3::uuid)
+         AND ($4::uuid IS NULL OR pl.account_id = $4::uuid)
+         AND ($5::timestamptz IS NULL OR (pl.created_at, pl.id) < ($5::timestamptz, $6::uuid))
+       ORDER BY pl.created_at DESC, pl.id DESC LIMIT $7`,
+      [wid(req), config.linkTtlMinutes,
+        scope.kind === 'agent' ? scope.membershipId : null,
+        scope.kind === 'account' ? scope.accountId : null,
+        cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1])).rows;
+  });
   res.json(page(rows, limit, (r) => r.created_at, (r) => r.id));
 }));
 
 // GET /workspaces/:workspaceId/links/:id
 router.get('/:id', requirePermission('links.view'), asyncHandler(async (req, res) => {
-  const row = await withWorkspace(wid(req), uid(req), async (c) => (await c.query(
-    `SELECT id, creator_id, customer_id, created_by, pricing_mode, amount, currency,
-            status, provider_link_id, reference_id, description, created_at, paid_at
-     FROM payment_links WHERE workspace_id = $1 AND id = $2`, [wid(req), req.params.id])).rows[0]);
-  if (!row) return res.status(404).json({ error: 'not_found' });
-  if (req.membership.role === 'chatter' && row.created_by !== req.membership.id) {
-    return res.status(403).json({ error: 'forbidden' });
-  }
+  const out = await withWorkspace(wid(req), uid(req), async (c) => {
+    const scope = await resolveDataScope(c, req);
+    const row = (await c.query(
+      `SELECT id, account_id, customer_id, created_by, pricing_mode, amount, currency,
+              status, provider_link_id, reference_id, description, created_at, paid_at, checkout_url
+       FROM payment_links WHERE workspace_id = $1 AND id = $2`, [wid(req), req.params.id])).rows[0];
+    return { row, scope };
+  });
+  if (!out.row) return res.status(404).json({ error: 'not_found' });
+  const { row, scope } = out;
+  const mine = scope.kind === 'workspace'
+    || (scope.kind === 'agent' && row.created_by === scope.membershipId)
+    || (scope.kind === 'account' && row.account_id === scope.accountId);
+  if (!mine) return res.status(403).json({ error: 'forbidden' });
   res.json(row);
 }));
 
 // POST /workspaces/:workspaceId/links
-// body: { creatorId, customerId?, pricingMode: 'fixed'|'open', amount?, currency, description? }
+// body: { accountId, customerId?, pricingMode: 'fixed'|'open', amount?, currency, description? }
 router.post('/', requirePermission('links.create'), asyncHandler(async (req, res) => {
-  const { creatorId, customerId, pricingMode = 'fixed', amount, currency, description } = req.body || {};
-  if (!creatorId) return badRequest(res, 'creatorId is required', ['creatorId']);
+  const { accountId, customerId, pricingMode = 'fixed', amount, currency, description } = req.body || {};
+  if (!accountId) return badRequest(res, 'accountId is required', ['accountId']);
   // MantaPay's hosted checkout bakes the amount into a signed URL, so we don't
   // support 'open' pricing today. If we ever do, it'll be via our own pre-page
   // that captures the amount and hands it off to MantaPay.
@@ -114,31 +128,42 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
     return badRequest(res, `currency ${cur} is not enabled (supported: ${config.supportedCurrencies.join(', ')})`, ['currency']);
   }
   // The provider echoes this back as the attribution key; 64 random bits and
-  // a UNIQUE constraint mean a collision cannot credit the wrong creator.
+  // a UNIQUE constraint mean a collision cannot credit the wrong account.
   const referenceId = 'ord_' + crypto.randomBytes(8).toString('hex');
 
   const result = await withWorkspace(wid(req), uid(req), async (c) => {
-    // Rate limit: only for chatters, one link per CHATTER_RATE_WINDOW_SECONDS.
-    if (req.membership.role === 'chatter') {
+    const scope = await resolveDataScope(c, req);
+
+    // Rate limit: only for agents, one link per AGENT_RATE_WINDOW_SECONDS.
+    if (scope.kind === 'agent') {
       const recent = (await c.query(
         `SELECT created_at FROM payment_links
          WHERE workspace_id = $1 AND created_by = $2
            AND created_at > now() - ($3 || ' seconds')::interval
          ORDER BY created_at DESC LIMIT 1`,
-        [wid(req), req.membership.id, CHATTER_RATE_WINDOW_SECONDS])).rows[0];
+        [wid(req), scope.membershipId, AGENT_RATE_WINDOW_SECONDS])).rows[0];
       if (recent) {
         const elapsed = Math.floor((Date.now() - new Date(recent.created_at).getTime()) / 1000);
-        return { rateLimited: Math.max(1, CHATTER_RATE_WINDOW_SECONDS - elapsed) };
+        return { rateLimited: Math.max(1, AGENT_RATE_WINDOW_SECONDS - elapsed) };
       }
     }
 
-    // creator must belong to this workspace
-    const creator = (await c.query(
-      `SELECT id FROM creators WHERE id = $1 AND workspace_id = $2`, [creatorId, wid(req)])).rows[0];
-    if (!creator) return { err: 'creator_not_found' };
+    // The account must be in this workspace, and — for an agent — one they are
+    // assigned to. An unassigned account reports the same `account_not_found`
+    // as a nonexistent one, so this is not an existence oracle.
+    const account = (await c.query(
+      `SELECT id FROM accounts a
+        WHERE a.id = $1 AND a.workspace_id = $2
+          AND ($3::uuid IS NULL OR EXISTS (
+                SELECT 1 FROM account_agents ag
+                 WHERE ag.account_id = a.id AND ag.membership_id = $3::uuid))`,
+      [accountId, wid(req), scope.kind === 'agent' ? scope.membershipId : null])).rows[0];
+    if (!account) return { err: 'account_not_found' };
     if (customerId) {
       const cust = (await c.query(
-        `SELECT id FROM customers WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL`, [customerId, wid(req)])).rows[0];
+        `SELECT id FROM customers WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL
+           AND ($3::uuid IS NULL OR account_id = $3::uuid)`,
+        [customerId, wid(req), scope.kind === 'agent' ? account.id : null])).rows[0];
       if (!cust) return { err: 'customer_not_found' };
     }
 
@@ -151,17 +176,17 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
 
     const link = (await c.query(
       `INSERT INTO payment_links
-         (workspace_id, creator_id, customer_id, created_by, pricing_mode, amount, currency, status, provider_link_id, reference_id, description, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'created',$8,$9,$10,$11)
-       RETURNING id, pricing_mode, amount, currency, status, provider_link_id, reference_id, created_at, expires_at`,
-      [wid(req), creatorId, customerId || null, req.membership.id, 'fixed', amt, cur,
-       built.providerLinkId, referenceId, description || null, built.expiresAt])).rows[0];
+         (workspace_id, account_id, customer_id, created_by, pricing_mode, amount, currency, status, provider_link_id, reference_id, description, expires_at, checkout_url)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'created',$8,$9,$10,$11,$12)
+       RETURNING id, pricing_mode, amount, currency, status, provider_link_id, reference_id, created_at, expires_at, checkout_url`,
+      [wid(req), accountId, customerId || null, req.membership.id, 'fixed', amt, cur,
+       built.providerLinkId, referenceId, description || null, built.expiresAt, built.url])).rows[0];
     return { link, url: built.url };
   });
 
   if (result.rateLimited) {
     res.setHeader('Retry-After', String(result.rateLimited));
-    return res.status(429).json({ error: 'rate_limited', scope: 'chatter', retryAfterSeconds: result.rateLimited });
+    return res.status(429).json({ error: 'rate_limited', scope: 'agent', retryAfterSeconds: result.rateLimited });
   }
   if (result.err) return res.status(404).json({ error: result.err });
 

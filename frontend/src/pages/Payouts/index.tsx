@@ -2,15 +2,27 @@ import { useState } from 'react';
 import { useCan } from '../../hooks/usePermission';
 import { formatMoney, sum } from '../../lib/format';
 import { toast } from '../../lib/toast';
+import Modal from '../../components/Modal';
 import {
-  PageHeader, StatCard, StatGrid, Money, Pill, EmptyState, LoadingCard, ErrorCard,
+  PageHeader, StatCard, StatGrid, Money, Pill, DetailRow, EmptyState, LoadingCard, ErrorCard,
 } from '../../components/ui';
 import { REVENUE_MODEL_LABELS } from '../../api/endpoints';
 import { usePayoutsData, type PayoutPeriod } from './usePayoutsData';
 
+/** A payout the user has asked for but not yet confirmed. */
+interface PendingPayout {
+  payeeType: 'account' | 'agent';
+  targetId?: string;
+  /** Who is being paid, as it reads in the confirmation: "all accounts", "Mia". */
+  label: string;
+  amount: number;
+  payeeCount: number;
+}
+
 export default function PayoutsPage() {
   const can = useCan();
   const [period, setPeriod] = useState<PayoutPeriod>('month');
+  const [pending, setPending] = useState<PendingPayout | null>(null);
   const { data, isLoading, isError, pay, isPaying } = usePayoutsData(period);
   const canPay = can('commissions.manage');
 
@@ -18,7 +30,7 @@ export default function PayoutsPage() {
     <PageHeader
       eyebrow="Money out"
       title="Payouts"
-      subtitle="What you owe your creators and team for the period."
+      subtitle="What you owe your accounts and team for the period."
       actions={
         <div className="field">
           <label htmlFor="payout-period">Period</label>
@@ -45,18 +57,22 @@ export default function PayoutsPage() {
   if (isLoading) return <div>{header}<LoadingCard label="Loading payout breakdown…" /></div>;
   if (isError || !data) return <div>{header}<ErrorCard message="Couldn't load the payout breakdown." /></div>;
 
-  const creatorsOwed = sum(data.perCreator.map((c) => c.owed));
-  const chattersOwed = sum(data.perChatter.map((c) => c.owed));
-  const owedTotal = creatorsOwed + chattersOwed;
+  const accountsOwed = sum(data.perAccount.map((c) => c.owed));
+  const agentsOwed = sum(data.perAgent.map((c) => c.owed));
+  const owedTotal = accountsOwed + agentsOwed;
   const { cash } = data;
   const cashScale = Math.max(owedTotal, cash.received, 1);
 
-  const runPayout = async (input: { payeeType: 'creator' | 'chatter'; targetId?: string }, label: string) => {
+  const accountsWithBalance = data.perAccount.filter((c) => c.owed > 0).length;
+  const agentsWithBalance = data.perAgent.filter((c) => c.owed > 0).length;
+
+  const confirmPayout = async (p: PendingPayout) => {
     try {
-      const result = await pay(input);
+      const result = await pay({ payeeType: p.payeeType, targetId: p.targetId });
+      setPending(null);
       toast(result.ran === 0
-        ? `Nothing owed to ${label}.`
-        : `Paid ${formatMoney(result.total)} to ${label}.`);
+        ? `Nothing owed to ${p.label}.`
+        : `Paid ${formatMoney(result.total)} to ${p.label}.`);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Payout failed.');
     }
@@ -67,8 +83,8 @@ export default function PayoutsPage() {
       {header}
 
       <StatGrid>
-        <StatCard label="Owed to creators" value={<Money amount={creatorsOwed} direction="out" emphasis />} sub="Rev-share this period" />
-        <StatCard label="Owed to team" value={<Money amount={chattersOwed} direction="out" emphasis />} sub="Commissions this period" />
+        <StatCard label="Owed to accounts" value={<Money amount={accountsOwed} direction="out" emphasis />} sub="Rev-share this period" />
+        <StatCard label="Owed to team" value={<Money amount={agentsOwed} direction="out" emphasis />} sub="Commissions this period" />
         <StatCard label="Owed in total" value={<Money amount={owedTotal} direction="out" />} sub="Not yet paid out" />
         <StatCard
           label="Held in reserve"
@@ -94,7 +110,7 @@ export default function PayoutsPage() {
             <span className="mv">{formatMoney(cash.heldInReserve)}</span>
           </div>
           <div className="metric-row">
-            <span className="ml wide">Owed to creators and team</span>
+            <span className="ml wide">Owed to accounts and team</span>
             <span className="mt"><span style={{ width: `${(owedTotal / cashScale) * 100}%` }} /></span>
             <span className="mv">{formatMoney(owedTotal)}</span>
           </div>
@@ -113,22 +129,36 @@ export default function PayoutsPage() {
 
       <div className="card section">
         <div className="sechead row">
-          <span>Creator payouts</span>
-          {canPay && creatorsOwed > 0 && (
-            <button className="btn ghost small" disabled={isPaying} onClick={() => runPayout({ payeeType: 'creator' }, 'all creators')}>
-              Pay all creators
+          <span>Account payouts</span>
+          {canPay && accountsOwed > 0 && (
+            <button
+              className="btn ghost small"
+              onClick={() => setPending({
+                payeeType: 'account',
+                label: 'all accounts',
+                amount: accountsOwed,
+                payeeCount: accountsWithBalance,
+              })}
+            >
+              Pay all accounts
             </button>
           )}
         </div>
         <div className="tablewrap flush">
           <table>
             <thead>
-              <tr><th>Creator</th><th>Model</th><th>Revenue</th><th>Owed</th><th>Status</th></tr>
+              <tr>
+                <th scope="col">Account</th>
+                <th scope="col">Model</th>
+                <th scope="col">Revenue</th>
+                <th scope="col">Owed</th>
+                <th scope="col">Status</th>
+              </tr>
             </thead>
             <tbody>
-              {data.perCreator.length === 0 ? (
-                <tr><td colSpan={5}><EmptyState title="No creators yet." /></td></tr>
-              ) : data.perCreator.map((c) => (
+              {data.perAccount.length === 0 ? (
+                <tr><td colSpan={5}><EmptyState title="No accounts yet." /></td></tr>
+              ) : data.perAccount.map((c) => (
                 <tr key={c.id}>
                   <td className="cname">{c.name}</td>
                   <td><Pill>{REVENUE_MODEL_LABELS[c.model]}</Pill></td>
@@ -145,7 +175,13 @@ export default function PayoutsPage() {
                       <>
                         <Pill tone="ok">Accruing</Pill>
                         {canPay && (
-                          <button className="btn ghost small" disabled={isPaying} onClick={() => runPayout({ payeeType: 'creator', targetId: c.id }, c.name)}>
+                          <button
+                            className="btn ghost small"
+                            onClick={() => setPending({
+                              payeeType: 'account', targetId: c.id,
+                              label: c.name, amount: c.owed, payeeCount: 1,
+                            })}
+                          >
                             Pay
                           </button>
                         )}
@@ -161,22 +197,35 @@ export default function PayoutsPage() {
 
       <div className="card section">
         <div className="sechead row">
-          <span>Chatter payouts</span>
-          {canPay && chattersOwed > 0 && (
-            <button className="btn ghost small" disabled={isPaying} onClick={() => runPayout({ payeeType: 'chatter' }, 'all chatters')}>
-              Pay all chatters
+          <span>Agent payouts</span>
+          {canPay && agentsOwed > 0 && (
+            <button
+              className="btn ghost small"
+              onClick={() => setPending({
+                payeeType: 'agent',
+                label: 'all agents',
+                amount: agentsOwed,
+                payeeCount: agentsWithBalance,
+              })}
+            >
+              Pay all agents
             </button>
           )}
         </div>
         <div className="tablewrap flush">
           <table>
             <thead>
-              <tr><th>Chatter</th><th>Sales</th><th>Commission owed</th><th>Status</th></tr>
+              <tr>
+                <th scope="col">Agent</th>
+                <th scope="col">Sales</th>
+                <th scope="col">Commission owed</th>
+                <th scope="col">Status</th>
+              </tr>
             </thead>
             <tbody>
-              {data.perChatter.length === 0 ? (
-                <tr><td colSpan={4}><EmptyState title="No chatters yet." /></td></tr>
-              ) : data.perChatter.map((c) => (
+              {data.perAgent.length === 0 ? (
+                <tr><td colSpan={4}><EmptyState title="No agents yet." /></td></tr>
+              ) : data.perAgent.map((c) => (
                 <tr key={c.id}>
                   <td className="cname">{c.name}</td>
                   <td>{c.sales}</td>
@@ -186,7 +235,13 @@ export default function PayoutsPage() {
                       <>
                         <Pill tone="ok">Accruing</Pill>
                         {canPay && (
-                          <button className="btn ghost small" disabled={isPaying} onClick={() => runPayout({ payeeType: 'chatter', targetId: c.id }, c.name)}>
+                          <button
+                            className="btn ghost small"
+                            onClick={() => setPending({
+                              payeeType: 'agent', targetId: c.id,
+                              label: c.name, amount: c.owed, payeeCount: 1,
+                            })}
+                          >
                             Pay
                           </button>
                         )}
@@ -200,6 +255,37 @@ export default function PayoutsPage() {
         </div>
         <p className="sub">Balances accrue from paid sales in the selected period. Paying marks them as settled in the ledger.</p>
       </div>
+
+      <Modal
+        open={pending !== null}
+        onClose={() => setPending(null)}
+        title={pending ? `Pay ${pending.label}?` : ''}
+        subtitle="This settles the balance in the ledger and cannot be undone here."
+      >
+        {pending && (
+          <>
+            <div className="callout">
+              <DetailRow label={pending.payeeCount === 1 ? 'Payee' : 'Payees'}>
+                {pending.payeeCount === 1 ? pending.label : `${pending.payeeCount} with a balance`}
+              </DetailRow>
+              <DetailRow label="Total to pay">
+                <Money amount={pending.amount} direction="out" emphasis />
+              </DetailRow>
+            </div>
+            {cash.shortfallIfPaidNow > 0 && (
+              <div className="warnbar">
+                You are {formatMoney(cash.shortfallIfPaidNow)} short across all balances this period. Paying now fronts that cash yourself.
+              </div>
+            )}
+            <div className="modal-actions">
+              <button className="btn ghost" onClick={() => setPending(null)}>Cancel</button>
+              <button className="btn" disabled={isPaying} onClick={() => confirmPayout(pending)}>
+                {isPaying ? 'Paying…' : `Pay ${formatMoney(pending.amount)}`}
+              </button>
+            </div>
+          </>
+        )}
+      </Modal>
     </div>
   );
 }

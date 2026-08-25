@@ -8,7 +8,20 @@ const notify = require('../notify');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
+const { resolveDataScope } = require('../auth/dataScope');
 const num = (v) => (v == null ? null : Number(v));
+
+// A notification is visible if the caller sees the whole workspace, or it is
+// addressed to their membership, or to the account they hold. Written once and
+// reused so the feed and the unread count can never disagree.
+const RECIPIENT_SQL = (all, mid, aid) =>
+  `(${all}::boolean OR n.agent_membership_id = ${mid}::uuid OR n.account_id = ${aid}::uuid)`;
+
+const recipientParams = (scope) => [
+  scope.kind === 'workspace',
+  scope.kind === 'agent' ? scope.membershipId : null,
+  scope.kind === 'account' ? scope.accountId : null,
+];
 
 
 // The events this user may see (role permits) AND wants to see (their preference).
@@ -27,17 +40,20 @@ router.get('/', requirePermission('payments.view'), asyncHandler(async (req, res
   const data = await withWorkspace(wid(req), uid(req), async (c) => {
     const events = await effectiveEvents(c, req);
     if (!events.length) return { rows: [], unread: 0 };
+    const scope = await resolveDataScope(c, req);
+    // The feed and the unread badge must agree, so they share one predicate.
+    const p = recipientParams(scope);
     const rows = (await c.query(
       `SELECT n.*, (r.user_id IS NOT NULL) AS read
          FROM notifications n
          LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.user_id = $1
-        WHERE n.event = ANY($3::text[])
-        ORDER BY n.created_at DESC LIMIT $2`, [uid(req), limit, events])).rows;
+        WHERE n.event = ANY($3::text[]) AND ${RECIPIENT_SQL('$4', '$5', '$6')}
+        ORDER BY n.created_at DESC LIMIT $2`, [uid(req), limit, events, ...p])).rows;
     const unread = (await c.query(
       `SELECT count(*) AS c FROM notifications n
-        WHERE n.event = ANY($2::text[])
+        WHERE n.event = ANY($2::text[]) AND ${RECIPIENT_SQL('$3', '$4', '$5')}
           AND NOT EXISTS (SELECT 1 FROM notification_reads r WHERE r.notification_id=n.id AND r.user_id=$1)`,
-      [uid(req), events])).rows[0].c;
+      [uid(req), events, ...p])).rows[0].c;
     return { rows, unread: Number(unread) };
   });
   res.json({
@@ -54,15 +70,20 @@ router.get('/', requirePermission('payments.view'), asyncHandler(async (req, res
 router.post('/read', requirePermission('payments.view'), asyncHandler(async (req, res) => {
   const ids = (req.body && req.body.ids) || null;
   await withWorkspace(wid(req), uid(req), async (c) => {
+    // Same recipient predicate as the feed, so "mark all read" cannot invent
+    // read state for notifications the caller was never shown.
+    const p = recipientParams(await resolveDataScope(c, req));
     if (ids && ids.length) {
       await c.query(
         `INSERT INTO notification_reads (notification_id, user_id)
-         SELECT id, $2 FROM notifications WHERE id = ANY($1::uuid[])
-         ON CONFLICT DO NOTHING`, [ids, uid(req)]);
+         SELECT n.id, $2 FROM notifications n
+          WHERE n.id = ANY($1::uuid[]) AND ${RECIPIENT_SQL('$3', '$4', '$5')}
+         ON CONFLICT DO NOTHING`, [ids, uid(req), ...p]);
     } else {
       await c.query(
         `INSERT INTO notification_reads (notification_id, user_id)
-         SELECT id, $1 FROM notifications ON CONFLICT DO NOTHING`, [uid(req)]);
+         SELECT n.id, $1 FROM notifications n WHERE ${RECIPIENT_SQL('$2', '$3', '$4')}
+         ON CONFLICT DO NOTHING`, [uid(req), ...p]);
     }
   });
   res.json({ ok: true });

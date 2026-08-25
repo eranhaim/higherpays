@@ -29,7 +29,7 @@ router.get('/overview', asyncHandler(async (req, res) => {
         (SELECT count(*) FROM organizations)               AS agencies,
         (SELECT count(*) FROM organizations WHERE status='active') AS agencies_active,
         (SELECT count(*) FROM workspaces)                  AS workspaces,
-        (SELECT count(*) FROM creators)                    AS creators,
+        (SELECT count(*) FROM accounts)                     AS accounts,
         (SELECT count(*) FROM users)                       AS users`)).rows[0];
     const money = (await c.query(`
       SELECT
@@ -116,8 +116,8 @@ router.patch('/organizations/:orgId/status', superAdminOnly, asyncHandler(async 
 router.post('/agencies', superAdminOnly, asyncHandler(async (req, res) => {
   const b = req.body || {};
   const currency = (b.currency || 'EUR').toUpperCase();
-  const creatorSplitPct = b.creatorSplitPct == null ? 70 : Number(b.creatorSplitPct);
-  const chatterPct = b.chatterPct == null ? 0 : Number(b.chatterPct);
+  const accountSplitPct = b.accountSplitPct == null ? 70 : Number(b.accountSplitPct);
+  const agentPct = b.agentPct == null ? 0 : Number(b.agentPct);
   const chargebackFee = b.chargebackFee == null ? 0 : Number(b.chargebackFee);
   if (!isStr(b.agencyName, 120)) return badRequest(res, 'agencyName is required', ['agencyName']);
   if (!isStr(b.ownerEmail, 120) || !b.ownerEmail.includes('@')) return badRequest(res, 'a valid ownerEmail is required', ['ownerEmail']);
@@ -126,7 +126,7 @@ router.post('/agencies', superAdminOnly, asyncHandler(async (req, res) => {
     return badRequest(res, `currency ${currency} is not enabled (supported: ${config.supportedCurrencies.join(', ')})`, ['currency']);
   }
   if (!pct(b.pspRatePct) || !pct(b.marginRatePct)) return badRequest(res, 'pspRatePct/marginRatePct must be 0..100', ['pspRatePct', 'marginRatePct']);
-  if (!pct(creatorSplitPct) || !pct(chatterPct)) return badRequest(res, 'splits must be 0..100', ['creatorSplitPct', 'chatterPct']);
+  if (!pct(accountSplitPct) || !pct(agentPct)) return badRequest(res, 'splits must be 0..100', ['accountSplitPct', 'agentPct']);
   if (!(chargebackFee >= 0)) return badRequest(res, 'chargebackFee must be >= 0', ['chargebackFee']);
 
   const token = crypto.randomBytes(32).toString('base64url');
@@ -142,8 +142,8 @@ router.post('/agencies', superAdminOnly, asyncHandler(async (req, res) => {
     // *changes* (set-fee / set-settlement) take effect from their own date.
     await c.query("INSERT INTO platform_fee_rates (organization_id, psp_rate_pct, margin_rate_pct, psp_fixed_fee, effective_from) VALUES ($1,$2,$3,$4,'-infinity')", [org.id, b.pspRatePct, b.marginRatePct, Number(b.pspFixedFee || 0)]);
     await c.query("INSERT INTO settlement_fee_config (organization_id, chargeback_fee, refund_fee, decline_fee, effective_from) VALUES ($1,$2,$3,$4,'-infinity')", [org.id, chargebackFee, Number(b.refundFee || 0), Number(b.declineFee || 0)]);
-    await c.query("INSERT INTO commission_rules (workspace_id, creator_id, creator_split_pct, agency_split_pct, chatter_pct, effective_from) VALUES ($1,NULL,$2,$3,$4,'-infinity')",
-      [ws.id, creatorSplitPct, 100 - creatorSplitPct, chatterPct]);
+    await c.query("INSERT INTO commission_rules (workspace_id, account_id, account_split_pct, agency_split_pct, agent_pct, effective_from) VALUES ($1,NULL,$2,$3,$4,'-infinity')",
+      [ws.id, accountSplitPct, 100 - accountSplitPct, agentPct]);
     const expires = new Date(Date.now() + 7 * 86400 * 1000);
     await c.query('INSERT INTO invites (workspace_id, email, role, token_hash, invited_by, expires_at) VALUES ($1,$2,$3,$4,$5,$6)',
       [ws.id, b.ownerEmail, 'owner', hashToken(token), uid(req), expires]);
@@ -157,7 +157,8 @@ router.post('/agencies', superAdminOnly, asyncHandler(async (req, res) => {
     workspaceId: out.wsId, organizationId: out.orgId, name: b.agencyName,
     blendedRatePct: b.pspRatePct + b.marginRatePct,
     webhookEndpointId: out.webhook,
-    ownerInviteToken: token, // returned so the flow is testable before real email
+    // The owner's invite token is a bearer credential for the new workspace and
+    // only ever reaches their address. Tests read it from the email stub.
   });
 }));
 
@@ -214,7 +215,7 @@ router.get('/activity', asyncHandler(async (req, res) => {
 router.get('/workspaces', asyncHandler(async (req, res) => {
   const rows = await withPlatformAdmin(uid(req), async (c) => (await c.query(
     `SELECT w.id, w.name, w.currency, w.status, o.name AS organization, o.id AS organization_id,
-            (SELECT count(*) FROM creators cr WHERE cr.workspace_id = w.id)                                   AS creators,
+            (SELECT count(*) FROM accounts a WHERE a.workspace_id = w.id)                                     AS accounts,
             (SELECT count(*) FROM memberships m WHERE m.workspace_id = w.id AND m.status='active')            AS members,
             (SELECT count(*) FROM transactions t WHERE t.workspace_id = w.id AND t.status='approved')         AS approved_txns,
             (SELECT COALESCE(SUM(gross),0) FROM transactions t WHERE t.workspace_id = w.id AND t.status='approved') AS gross_volume,

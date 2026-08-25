@@ -39,4 +39,12 @@
   --radius:     6px;    /* interactive elements                         */
   --radius-lg:  10px;   /* cards, modals                                */
   --shadow-pop: 0 18px 40px -12px rgba(15, 14, 12, 0.22);
+
+  /* ── Layers ──────────────────────────────────────────────────────── */
+  /* One ladder for everything that stacks. A dialog covers the page and
+     its popovers; only the toast may sit above a dialog. */
+  --z-sticky:  20;   /* sticky sidebar on narrow screens               */
+  --z-popover: 30;   /* date range, notification panel                 */
+  --z-overlay: 50;   /* modal overlay                                  */
+  --z-toast:   90;
 }

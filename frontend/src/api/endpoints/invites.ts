@@ -27,7 +27,7 @@ export const invitesApi = {
     return raw.invites.map(normalize);
   },
 
-  async create(input: { email: string; role: string; creatorId?: string }): Promise<Invite> {
+  async create(input: { email: string; role: string; accountId?: string }): Promise<Invite> {
     const raw = await api.post<RawInvite>(workspacePath('/invites'), input);
     return normalize(raw);
   },

@@ -1,15 +1,21 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
-  customersApi, creatorsApi,
-  type Customer, type Creator, type CreateCustomerInput,
+  customersApi, accountsApi,
+  type Customer, type Account, type CreateCustomerInput,
 } from '../../api/endpoints';
+
+/** The most the customers endpoint returns in one call. */
+const PAGE_SIZE = 200;
 
 export interface UseCustomersDataResult {
   customers: Customer[];
-  creators: Creator[];
+  accounts: Account[];
   isLoading: boolean;
   isError: boolean;
+  hasMore: boolean;
+  isLoadingMore: boolean;
+  loadMore: () => void;
   createCustomer: (input: CreateCustomerInput) => Promise<void>;
   exportCsv: () => Promise<void>;
 }
@@ -19,14 +25,18 @@ export function useCustomersData(): UseCustomersDataResult {
   const queryClient = useQueryClient();
   const enabled = Boolean(activeWorkspaceId);
 
-  const customers = useQuery({
+  const customers = useInfiniteQuery({
     queryKey: ['customers', activeWorkspaceId],
-    queryFn: () => customersApi.list({ limit: 200 }),
+    queryFn: ({ pageParam }) => customersApi.list({ limit: PAGE_SIZE, offset: pageParam }),
+    initialPageParam: 0,
+    // A short page means the end of the list; the endpoint returns no total.
+    getNextPageParam: (last, pages) =>
+      last.length < PAGE_SIZE ? undefined : pages.length * PAGE_SIZE,
     enabled,
   });
-  const creators = useQuery({
-    queryKey: ['creators', activeWorkspaceId],
-    queryFn: () => creatorsApi.list(),
+  const accounts = useQuery({
+    queryKey: ['accounts', activeWorkspaceId],
+    queryFn: () => accountsApi.list(),
     enabled,
   });
 
@@ -36,10 +46,13 @@ export function useCustomersData(): UseCustomersDataResult {
   });
 
   return {
-    customers: customers.data ?? [],
-    creators: creators.data ?? [],
+    customers: customers.data?.pages.flat() ?? [],
+    accounts: accounts.data ?? [],
     isLoading: customers.isLoading,
     isError: customers.isError,
+    hasMore: customers.hasNextPage,
+    isLoadingMore: customers.isFetchingNextPage,
+    loadMore: () => { void customers.fetchNextPage(); },
     createCustomer: async (input) => {
       await create.mutateAsync(input);
     },

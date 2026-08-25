@@ -1,57 +1,19 @@
 /**
  * App shell: sidebar grouped by intent (money in / money out / people /
  * insight / admin) and the routed page. Nav items are filtered by the
- * caller's real permissions, so a chatter only sees what they can act on.
+ * caller's real permissions, so a agent only sees what they can act on.
  */
 
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useEffect, useRef } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../store/auth';
 import { useSessionStore } from '../store/session';
 import { useCurrentSession } from '../hooks/useCurrentSession';
 import { useCan } from '../hooks/usePermission';
 import { authApi } from '../api/endpoints';
-import type { Permission } from '../rbac/permissions';
+import { NAV, type NavGroup } from '../rbac/nav';
 import NotificationBell from './NotificationBell';
-
-interface NavItem { path: string; label: string; perm: Permission }
-interface NavGroup { label: string; items: NavItem[] }
-
-const NAV: NavGroup[] = [
-  {
-    label: 'Money in',
-    items: [
-      { path: '/payments', label: 'Payments', perm: 'payments.view' },
-      { path: '/links', label: 'Payment links', perm: 'links.view' },
-    ],
-  },
-  {
-    label: 'Money out',
-    items: [
-      { path: '/payouts', label: 'Payouts', perm: 'commissions.view' },
-    ],
-  },
-  {
-    label: 'People',
-    items: [
-      { path: '/creators', label: 'Creators', perm: 'creators.view' },
-      { path: '/customers', label: 'Customers', perm: 'customers.view' },
-      { path: '/team', label: 'Team', perm: 'team.view' },
-    ],
-  },
-  {
-    label: 'Insight',
-    items: [
-      { path: '/analytics', label: 'Analytics', perm: 'analytics.view' },
-    ],
-  },
-  {
-    label: 'Admin',
-    items: [
-      { path: '/settings', label: 'Settings', perm: 'settings.view' },
-    ],
-  },
-];
 
 function NavSection({ group }: { group: NavGroup }) {
   const can = useCan();
@@ -81,6 +43,15 @@ export default function Layout() {
   const clearSession = useSessionStore((s) => s.clear);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { pathname } = useLocation();
+  const mainRef = useRef<HTMLElement>(null);
+
+  // A new page starts at the top. <main> is the scroll container on wide
+  // screens; below 900px the layout is auto-height and the window scrolls.
+  useEffect(() => {
+    if (mainRef.current) mainRef.current.scrollTop = 0;
+    window.scrollTo(0, 0);
+  }, [pathname]);
 
   const logout = useMutation({
     mutationFn: async () => {
@@ -144,7 +115,7 @@ export default function Layout() {
         </div>
       </aside>
 
-      <main>
+      <main ref={mainRef}>
         <Outlet />
       </main>
     </div>

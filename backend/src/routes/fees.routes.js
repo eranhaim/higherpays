@@ -12,8 +12,10 @@ const n = (v) => Number(v || 0);
 const r2 = (v) => Math.round(v * 100) / 100;
 const r4 = (v) => Math.round(v * 10000) / 10000;
 
-// GET /  ?from&to — every fee component for the period
-router.get('/', requirePermission('commissions.view'), asyncHandler(async (req, res) => {
+// GET /  ?from&to — every fee component for the period.
+// Behind fees.view, not commissions.view: this is the only surface that shows
+// HigherPays' own margin in currency, so it stops at owner/admin.
+router.get('/', requirePermission('fees.view'), asyncHandler(async (req, res) => {
   const to = req.query.to ? new Date(req.query.to) : new Date();
   const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 86400000);
   const F = from.toISOString(), T = to.toISOString();
@@ -32,8 +34,8 @@ router.get('/', requirePermission('commissions.view'), asyncHandler(async (req, 
          COALESCE(SUM(ce.platform_fee),0)     AS platform_fee_total,
          COALESCE(SUM(ce.chargeback_fee),0)   AS reversal_fees,
          COALESCE(SUM(ce.distributable),0)    AS distributable,
-         COALESCE(SUM(ce.creator_amount),0)   AS creator,
-         COALESCE(SUM(ce.chatter_amount),0)   AS chatter,
+         COALESCE(SUM(ce.account_amount),0)   AS account,
+         COALESCE(SUM(ce.agent_amount),0)     AS agent,
          COALESCE(SUM(ce.agency_amount),0)    AS agency
        FROM commission_entries ce
        JOIN transactions t ON t.id = ce.transaction_id
@@ -75,7 +77,7 @@ router.get('/', requirePermission('commissions.view'), asyncHandler(async (req, 
     totalDeducted: r2(t.platform_fee_total),
     effectiveRatePct: pct(t.platform_fee_total),
     distributable: r2(t.distributable),
-    splits: { creator: r2(t.creator), chatter: r2(t.chatter), agency: r2(t.agency) },
+    splits: { account: r2(t.account), agent: r2(t.agent), agency: r2(t.agency) },
     rateCard: {
       feeModel: data.card.fee_model || 'flat',
       mdrPct: data.card.mdr_pct == null ? n(data.card.psp_rate_pct) : n(data.card.mdr_pct),
@@ -88,21 +90,21 @@ router.get('/', requirePermission('commissions.view'), asyncHandler(async (req, 
 }));
 
 // GET /transactions ?from&to — per-transaction itemisation, for drill-down / export
-router.get('/transactions', requirePermission('commissions.view'), asyncHandler(async (req, res) => {
+router.get('/transactions', requirePermission('fees.view'), asyncHandler(async (req, res) => {
   const to = req.query.to ? new Date(req.query.to) : new Date();
   const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 86400000);
   const limit = Math.min(1000, Number(req.query.limit) || 200);
 
   const rows = await withWorkspace(wid(req), uid(req), async (c) => (await c.query(
     `SELECT t.occurred_at, t.provider_transaction_id, t.currency, t.surcharge,
-            cr.stage_name AS creator, u.full_name AS chatter,
+            a.stage_name AS account, u.full_name AS agent,
             ce.entry_type, ce.gross, ce.fee_mdr, ce.fee_fixed, ce.fee_settlement,
             ce.platform_margin, ce.platform_fee, ce.chargeback_fee,
-            ce.distributable, ce.creator_amount, ce.chatter_amount, ce.agency_amount
+            ce.distributable, ce.account_amount, ce.agent_amount, ce.agency_amount
        FROM commission_entries ce
        JOIN transactions t ON t.id = ce.transaction_id
-       LEFT JOIN creators cr ON cr.id = ce.creator_id
-       LEFT JOIN memberships m ON m.id = ce.chatter_membership_id
+       LEFT JOIN accounts a ON a.id = ce.account_id
+       LEFT JOIN memberships m ON m.id = ce.agent_membership_id
        LEFT JOIN users u ON u.id = m.user_id
       WHERE t.occurred_at >= $1 AND t.occurred_at <= $2
       ORDER BY t.occurred_at DESC LIMIT $3`,
@@ -111,7 +113,7 @@ router.get('/transactions', requirePermission('commissions.view'), asyncHandler(
   res.json({
     transactions: rows.map((x) => ({
       date: x.occurred_at, reference: x.provider_transaction_id, currency: x.currency,
-      type: x.entry_type, creator: x.creator, chatter: x.chatter,
+      type: x.entry_type, account: x.account, agent: x.agent,
       gross: n(x.gross), surcharge: n(x.surcharge),
       fees: {
         mdr: n(x.fee_mdr), fixed: n(x.fee_fixed), settlement: n(x.fee_settlement),
@@ -119,7 +121,7 @@ router.get('/transactions', requirePermission('commissions.view'), asyncHandler(
         total: n(x.platform_fee),
       },
       distributable: n(x.distributable),
-      creatorAmount: n(x.creator_amount), chatterAmount: n(x.chatter_amount), agencyAmount: n(x.agency_amount),
+      accountAmount: n(x.account_amount), agentAmount: n(x.agent_amount), agencyAmount: n(x.agency_amount),
     })),
   });
 }));

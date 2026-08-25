@@ -19,7 +19,7 @@ export function filterTransactions(rows: Transaction[], f: PaymentsFilters): Tra
     if (fromTs && ts < fromTs) return false;
     if (toTs && ts > toTs) return false;
     if (q) {
-      const hay = [t.providerTransactionId, t.customer, t.creator, t.chatter]
+      const hay = [t.providerTransactionId, t.customer, t.account, t.agent]
         .filter(Boolean).join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }

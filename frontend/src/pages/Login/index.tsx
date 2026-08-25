@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { authApi } from '../../api/endpoints';
@@ -26,6 +26,12 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [totp, setTotp] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // The stage swaps the form's fields in place, so focus has to follow it or
+  // it is left on a button that no longer means what it did.
+  const firstFieldRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { firstFieldRef.current?.focus(); }, [stage]);
 
   const setSession = useAuthStore((s) => s.setSession);
   const setActiveWorkspaceId = useSessionStore((s) => s.setActiveWorkspaceId);
@@ -49,8 +55,20 @@ export default function LoginPage() {
     navigate(from, { replace: true });
   }
 
+  // Browser validation is off (noValidate), so the empty cases are checked
+  // here rather than sent to the server to come back as "invalid credentials".
+  function localError(): string | null {
+    if (stage === 'totp') return /^\d{6}$/.test(totp) ? null : 'Enter the 6-digit code from your app.';
+    if (!email.trim()) return 'Enter your email address.';
+    if (!password) return 'Enter your password.';
+    return null;
+  }
+
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    const problem = localError();
+    if (problem) { setFormError(problem); return; }
+    setFormError(null);
     login.mutate({
       email: email.trim(),
       password,
@@ -81,9 +99,9 @@ export default function LoginPage() {
                   type="email"
                   autoComplete="email"
                   required
+                  ref={firstFieldRef}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                 
                 />
               </div>
               <div className="field">
@@ -109,16 +127,18 @@ export default function LoginPage() {
                 required
                 pattern="[0-9]{6}"
                 maxLength={6}
+                ref={firstFieldRef}
                 value={totp}
                 onChange={(e) => setTotp(e.target.value.replace(/\D/g, ''))}
-               
               />
               <p className="sub">Enter the 6-digit code from your authenticator app.</p>
             </div>
           )}
 
-          {login.error && (
-            <div className="warnbar" role="alert">{loginErrorMessage(login.error)}</div>
+          {(formError || login.error) && (
+            <div className="warnbar" role="alert">
+              {formError ?? loginErrorMessage(login.error)}
+            </div>
           )}
 
           <button className="btn full-width" type="submit" disabled={login.isPending}>

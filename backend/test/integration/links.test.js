@@ -7,16 +7,16 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const request = require('supertest');
 const { app } = require('../helpers/setup');
-const { createTenant, createCreator } = require('../helpers/tenant');
+const { createTenant, createAccount } = require('../helpers/tenant');
 
 test('POST /workspaces/:id/links creates a link with a signed MantaPay URL', async () => {
   const t = await createTenant(app);
-  const creator = await createCreator(app, t);
+  const account = await createAccount(app, t);
 
   const res = await request(app)
     .post(`/workspaces/${t.workspaceId}/links`)
     .set(t.authHeaders)
-    .send({ creatorId: creator.id, pricingMode: 'fixed', amount: 25, currency: 'EUR' })
+    .send({ accountId: account.id, pricingMode: 'fixed', amount: 25, currency: 'EUR' })
     .expect(201);
 
   assert.equal(res.body.pricing_mode, 'fixed');
@@ -29,12 +29,12 @@ test('POST /workspaces/:id/links creates a link with a signed MantaPay URL', asy
 
 test("POST /workspaces/:id/links rejects pricingMode='open' (MantaPay signs the amount)", async () => {
   const t = await createTenant(app);
-  const creator = await createCreator(app, t);
+  const account = await createAccount(app, t);
 
   const res = await request(app)
     .post(`/workspaces/${t.workspaceId}/links`)
     .set(t.authHeaders)
-    .send({ creatorId: creator.id, pricingMode: 'open', currency: 'EUR' })
+    .send({ accountId: account.id, pricingMode: 'open', currency: 'EUR' })
     .expect(400);
   assert.equal(res.body.error, 'validation_failed');
   assert.deepEqual(res.body.fields, ['pricingMode']);
@@ -42,22 +42,22 @@ test("POST /workspaces/:id/links rejects pricingMode='open' (MantaPay signs the 
 
 test('POST /workspaces/:id/links rejects amount below provider minimum', async () => {
   const t = await createTenant(app);
-  const creator = await createCreator(app, t);
+  const account = await createAccount(app, t);
 
   await request(app)
     .post(`/workspaces/${t.workspaceId}/links`)
     .set(t.authHeaders)
-    .send({ creatorId: creator.id, pricingMode: 'fixed', amount: 1, currency: 'EUR' })
+    .send({ accountId: account.id, pricingMode: 'fixed', amount: 1, currency: 'EUR' })
     .expect(400);
 });
 
-test('POST /workspaces/:id/links 404s an unknown creator', async () => {
+test('POST /workspaces/:id/links 404s an unknown account', async () => {
   const t = await createTenant(app);
   const fake = '00000000-0000-0000-0000-000000000001';
 
   await request(app)
     .post(`/workspaces/${t.workspaceId}/links`)
     .set(t.authHeaders)
-    .send({ creatorId: fake, pricingMode: 'fixed', amount: 25, currency: 'EUR' })
+    .send({ accountId: fake, pricingMode: 'fixed', amount: 25, currency: 'EUR' })
     .expect(404);
 });

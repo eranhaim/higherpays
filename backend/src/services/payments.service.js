@@ -47,7 +47,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   // 1) Look up the payment link (for attribution) if we have a reference.
   const link = linkReference
     ? (await client.query(
-        `SELECT id, creator_id, customer_id, created_by, amount
+        `SELECT id, account_id, customer_id, created_by, amount
          FROM payment_links WHERE workspace_id = $1 AND reference_id = $2`,
         [workspaceId, linkReference])).rows[0]
     : null;
@@ -67,7 +67,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   //    existing row is read back.
   const upserted = (await client.query(
     `INSERT INTO transactions
-       (workspace_id, payment_link_id, creator_id, customer_id, attributed_membership_id,
+       (workspace_id, payment_link_id, account_id, customer_id, attributed_membership_id,
         type, status, gross, fee, net, currency, provider_transaction_id, occurred_at, raw_payload)
      VALUES ($1,$2,$3,$4,$5,'payment'::txn_type,$6::txn_status,$7,$8,$9,$10,$11,now(),$12)
      ON CONFLICT (workspace_id, provider_transaction_id)
@@ -76,7 +76,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
      RETURNING id`,
     [workspaceId,
      link ? link.id : null,
-     link ? link.creator_id : null,
+     link ? link.account_id : null,
      link ? link.customer_id : null,
      link ? link.created_by : null,
      status, grossValue, feeValue, netValue, currency, providerTransactionId, rawPayload]))
@@ -117,15 +117,18 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   //    catch alone (without ROLLBACK TO SAVEPOINT) would still lose the money.
   await client.query('SAVEPOINT notify_sp');
   try {
-    const creatorName = link && link.creator_id
+    const accountName = link && link.account_id
       ? ((await client.query(
-          'SELECT stage_name FROM creators WHERE id=$1', [link.creator_id])).rows[0] || {}).stage_name
+          'SELECT stage_name FROM accounts WHERE id=$1', [link.account_id])).rows[0] || {}).stage_name
       : null;
 
     await notifier.notify(client, workspaceId, {
       event: status === 'approved' ? 'payment.paid' : 'payment.failed',
       title: status === 'approved' ? 'Payment received' : 'Payment declined',
-      body: creatorName ? `Creator: ${creatorName}` : null,
+      body: accountName ? `Account: ${accountName}` : null,
+      // Who this payment belongs to, so the feed can be scoped to them.
+      accountId: link ? link.account_id : null,
+      agentMembershipId: link ? link.created_by : null,
       amount: grossValue,
       currency,
       entityType: 'transaction',

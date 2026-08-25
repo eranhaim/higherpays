@@ -10,6 +10,9 @@
 /* ── Reset ──────────────────────────────────────────────────────────────── */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
 
 body {
   background: var(--paper);
@@ -40,6 +43,12 @@ input[type=number], input[type=date] {
   font-family: var(--mono);
   font-variant-numeric: tabular-nums;
 }
+/* Names a control for screen readers where the design has no room for a
+   visible label — e.g. the action column of a table. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
 .sub { font-size: 13.5px; color: var(--muted); line-height: 1.55; }
 p.sub { margin: 6px 0 12px; }
 .sub.inline { display: inline; }
@@ -54,6 +63,9 @@ p.sub { margin: 6px 0 12px; }
 main {
   padding: 28px 40px;
   max-width: 1400px; width: 100%;
+  /* Centred in its column, so a wide screen doesn't leave the page hugging
+     the sidebar with a dead gutter on the right. */
+  margin-inline: auto;
 }
 
 /* ── Sidebar ────────────────────────────────────────────────────────────── */
@@ -141,6 +153,9 @@ select:hover:not(:disabled) { border-color: var(--muted); }
   letter-spacing: 0.08em; font-weight: 600; padding-left: 2px;
 }
 .field > .sub { margin-top: 2px; }
+/* Input with a button beside it, e.g. a read-only value and its copy action. */
+.field-row { display: flex; gap: 8px; align-items: center; }
+.field-row input { flex: 1; min-width: 0; }
 .field-label {
   font-size: 10.5px; color: var(--muted); text-transform: uppercase;
   letter-spacing: 0.08em; font-weight: 600; padding-left: 2px;
@@ -177,9 +192,13 @@ select:hover:not(:disabled) { border-color: var(--muted); }
 .btn.small { padding: 4px 10px; font-size: 12.5px; font-weight: 500; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.pill + .btn { margin-left: 8px; }
+/* A status pill followed by its row action; keep them on one line together. */
+.pill + .btn { margin-left: 8px; white-space: nowrap; }
 .full-width { width: 100%; }
 .actions-right { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+/* Right-aligned buttons inside a table cell. `.actions-right` is a form-footer
+   utility — its display:flex and top margin break table layout. */
+.cell-actions { text-align: right; white-space: nowrap; }
 .tgl { font-size: 13px; }
 .tgl.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .tabbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -250,7 +269,9 @@ select:hover:not(:disabled) { border-color: var(--muted); }
   border: 1px solid var(--rule); border-radius: var(--radius-lg);
   background: var(--surface); overflow: hidden;
 }
-.card .stats { margin-bottom: 14px; }
+/* Nested in a card, the strip drops its own frame — one box, not two. */
+.card .stats { margin-bottom: 14px; border: none; border-radius: 0; background: none; }
+.card .stats .stat { padding: 14px 16px 14px 0; }
 .stat { padding: 18px 20px; border-right: 1px solid var(--rule); }
 .stat:last-child { border-right: none; }
 .stat .lbl {
@@ -275,7 +296,7 @@ select:hover:not(:disabled) { border-color: var(--muted); }
 .rangepop {
   position: absolute; top: 100%; left: 0; margin-top: 6px;
   background: var(--surface); border: 1px solid var(--rule);
-  border-radius: var(--radius-lg); padding: 14px; z-index: 30;
+  border-radius: var(--radius-lg); padding: 14px; z-index: var(--z-popover);
   box-shadow: var(--shadow-pop); min-width: 240px;
 }
 .rp-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
@@ -288,8 +309,13 @@ select:hover:not(:disabled) { border-color: var(--muted); }
 /* ── Tables ─────────────────────────────────────────────────────────────── */
 .tablewrap {
   background: var(--surface); border: 1px solid var(--rule);
-  border-radius: var(--radius-lg); overflow-x: auto;
+  border-radius: var(--radius-lg); overflow: auto;
   -webkit-overflow-scrolling: touch;
+  /* A capped height makes this the table's scroll container, which is what
+     lets the header below stick. Without a cap, `position: sticky` resolves
+     against a box that never scrolls and silently does nothing. Tall enough
+     that short tables are unaffected. */
+  max-height: min(70vh, 720px);
 }
 .tablewrap.flush { border: none; border-radius: 0; }
 .card > .tablewrap { border: none; border-radius: 0; }
@@ -299,24 +325,57 @@ thead th {
   font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
   color: var(--muted); font-weight: 600;
   border-bottom: 1px solid var(--rule); background: var(--surface-2);
+  /* Held against the top of .tablewrap so column headers survive a long list.
+     The border is on a pseudo-element because a sticky cell's own border
+     scrolls away with the cell in some engines. */
+  position: sticky; top: 0; z-index: 1;
 }
-tbody td { padding: 14px 18px; border-bottom: 1px solid var(--rule-soft); color: var(--ink); }
+thead th::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -1px;
+  border-bottom: 1px solid var(--rule);
+}
+tbody td, tbody th { padding: 14px 18px; border-bottom: 1px solid var(--rule-soft); color: var(--ink); }
+/* Row headers (e.g. the permission matrix) label their row without competing
+   with the column headers above. */
+tbody th { text-align: left; font-weight: 500; }
 tbody td select { width: auto; min-width: 130px; }
-tbody tr:last-child td { border-bottom: none; }
+tbody tr:last-child td, tbody tr:last-child th { border-bottom: none; }
 tbody tr.clickable { cursor: pointer; transition: background 0.12s ease; }
 tbody tr.clickable:hover { background: var(--surface-2); }
+tbody tr.clickable:focus-visible {
+  background: var(--surface-2);
+  outline: 2px solid var(--accent); outline-offset: -2px;
+}
 .table-note { padding: 40px; text-align: center; color: var(--muted); }
 .table-foot { padding: 8px 12px; font-size: 13px; color: var(--muted); }
 .table-foot-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 
-.ref { font-size: 13px; color: var(--ink-2); }
-.cname { font-weight: 600; }
-.cemail { font-size: 12.5px; color: var(--muted); font-family: var(--mono); }
+/* Free-text and id columns are capped so one long value cannot widen its
+   column and push the whole table into horizontal scroll. Pair with a
+   `title` at the call site so the full value is still reachable. */
+.ref {
+  font-size: 13px; color: var(--ink-2);
+  display: inline-block; max-width: 22ch;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom;
+}
+.cname {
+  font-weight: 600;
+  display: block; max-width: 28ch;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cemail {
+  font-size: 12.5px; color: var(--muted); font-family: var(--mono);
+  /* Provider error strings land here too, so cap the width rather than let
+     one long message stretch its column. */
+  max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .amt { font-weight: 500; font-size: 14px; }
 .amt.strong { font-weight: 700; font-size: 15px; }
 .fee { color: var(--muted); font-size: 13px; }
 .time { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
-.time-sub { opacity: 0.75; }
+/* Subordinate to the date above it by size, not opacity: --muted is already
+   at 4.6:1 on white, so dimming it further drops below the AA threshold. */
+.time-sub { font-size: 11.5px; }
 .person { display: flex; align-items: center; gap: 10px; }
 .avatar {
   width: 30px; height: 30px; border-radius: 50%;
@@ -357,7 +416,7 @@ tbody tr.clickable:hover { background: var(--surface-2); }
 .seg.inactive { color: var(--muted); }
 .seg + .seg { margin-left: 4px; }
 
-/* ── Entity cards (creators) ────────────────────────────────────────────── */
+/* ── Entity cards (accounts) ────────────────────────────────────────────── */
 .ws { display: flex; flex-direction: column; gap: 12px; }
 .ws-top { display: flex; align-items: center; gap: 12px; }
 .ws-mark {
@@ -380,6 +439,7 @@ tbody tr.clickable:hover { background: var(--surface-2); }
   gap: 20px; padding: 18px 0; border-bottom: 1px solid var(--rule-soft);
 }
 .setrow:last-child { border-bottom: none; }
+label.setrow { cursor: pointer; }
 .setrow .k { font-weight: 600; font-size: 15px; }
 .setrow .d { font-size: 13.5px; color: var(--muted); margin-top: 4px; max-width: 480px; line-height: 1.55; }
 .setrow input[type=text], .setrow input[type=number], .setrow select { max-width: 220px; }
@@ -393,12 +453,15 @@ tbody tr.clickable:hover { background: var(--surface-2); }
 .overlay {
   position: fixed; inset: 0; background: rgba(15, 14, 12, 0.35);
   backdrop-filter: blur(2px);
-  display: grid; place-items: center; padding: 20px; z-index: 50;
+  display: grid; place-items: center; padding: 20px; z-index: var(--z-overlay);
 }
 .modal {
   background: var(--surface); border: 1px solid var(--rule);
   border-radius: var(--radius-lg); padding: 26px;
   width: 100%; max-width: 460px;
+  /* Matches the overlay's 20px padding, so a tall dialog scrolls itself
+     rather than running off the top and bottom of the viewport. */
+  max-height: calc(100vh - 40px); overflow-y: auto;
   box-shadow: 0 24px 60px -20px rgba(15, 14, 12, 0.25);
 }
 .modal h3 {
@@ -408,6 +471,10 @@ tbody tr.clickable:hover { background: var(--surface-2); }
 .modal > p.sub { margin-bottom: 20px; }
 .modal .field { margin-bottom: 14px; }
 .modal-topline { display: flex; justify-content: space-between; align-items: center; margin: 2px 0 16px; }
+/* The detail view is where the full id is read, so nothing is clipped here. */
+.modal .ref, .modal .cname, .modal .cemail {
+  max-width: none; white-space: normal; overflow: visible; overflow-wrap: anywhere;
+}
 .modal-actions { display: flex; gap: 10px; justify-content: flex-end; align-items: center; margin-top: 22px; }
 .detail-row {
   display: flex; justify-content: space-between; gap: 16px;
@@ -421,7 +488,7 @@ tbody tr.clickable:hover { background: var(--surface-2); }
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
   background: var(--ink); color: var(--paper);
   border-radius: var(--radius); padding: 10px 18px;
-  font-size: 14px; box-shadow: var(--shadow-pop); z-index: 999;
+  font-size: 14px; box-shadow: var(--shadow-pop); z-index: var(--z-toast);
   opacity: 0; pointer-events: none; transition: opacity 0.25s ease;
   max-width: min(90vw, 520px);
 }
@@ -516,7 +583,7 @@ tbody tr.clickable:hover { background: var(--surface-2); }
   position: absolute; left: 0; top: 38px; width: 320px; max-height: 380px;
   overflow: auto; background: var(--surface);
   border: 1px solid var(--rule); border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-pop); z-index: 800; display: none; padding: 6px;
+  box-shadow: var(--shadow-pop); z-index: var(--z-popover); display: none; padding: 6px;
 }
 .bell-panel.on { display: block; }
 .bell-head { display: flex; align-items: center; gap: 6px; padding: 6px 10px 8px; }
@@ -544,7 +611,8 @@ tbody tr.clickable:hover { background: var(--surface-2); }
 .pl-fee-pct { font-weight: 500; font-size: 18px; line-height: 1; }
 .fee-line { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--muted); padding: 3px 0; }
 .fee-line b { color: var(--ink); font-weight: 500; }
-.fee-line-sub { padding-left: 12px; opacity: 0.75; }
+/* Indent alone marks these as breakdown lines — see .time-sub on opacity. */
+.fee-line-sub { padding-left: 12px; }
 .fee-tot { display: flex; justify-content: space-between; font-size: 13.5px; font-weight: 600; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--rule); }
 .fee-net { display: flex; justify-content: space-between; font-size: 13.5px; font-weight: 600; color: var(--pos); padding-top: 4px; }
 
@@ -597,7 +665,7 @@ tbody tr.clickable:hover { background: var(--surface-2); }
   .app { grid-template-columns: 1fr; height: auto; min-height: 100vh; }
   .side {
     gap: 14px; border-right: none; border-bottom: 1px solid var(--rule);
-    padding: 14px 14px 10px; position: sticky; top: 0; z-index: 20;
+    padding: 14px 14px 10px; position: sticky; top: 0; z-index: var(--z-sticky);
   }
   nav { flex-direction: row; overflow-x: auto; gap: 6px; scrollbar-width: none; padding-bottom: 2px; }
   nav::-webkit-scrollbar { display: none; }
@@ -618,7 +686,7 @@ tbody tr.clickable:hover { background: var(--surface-2); }
   .overlay { place-items: end center; padding: 0 0 env(safe-area-inset-bottom); }
   .modal {
     max-width: none; border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    padding: 24px; max-height: 92vh; overflow-y: auto;
+    padding: 24px; max-height: 92vh;
   }
   .modal::before { content: ''; display: block; width: 40px; height: 4px; border-radius: 2px; background: var(--rule); margin: 0 auto 16px; }
 }

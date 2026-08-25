@@ -8,6 +8,7 @@ const { audit } = require('../util/audit');
 const { hashPassword } = require('../auth/passwords');
 const { isStr, badRequest } = require('../util/validate');
 const { sendEmail } = require('../util/email');
+const { roleWithinCallerRights } = require('../auth/roleGrants');
 
 const { wid, uid } = require('../lib/scope');
 const hashToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
@@ -15,27 +16,31 @@ const hashToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
 // ---- workspace-scoped: create + list invites (mounted under /workspaces/:id) ----
 const wsRouter = express.Router({ mergeParams: true });
 
-// POST /workspaces/:wid/invites  { email, role, creatorId? }
+// POST /workspaces/:wid/invites  { email, role, accountId? }
+// The invited role runs through the same grant check as a role change: an
+// invite that could hand out a role the caller does not hold would be a way
+// around PATCH /memberships/:id/role.
 wsRouter.post('/', requireAuth, requireWorkspace, requirePermission('team.manage'), asyncHandler(async (req, res) => {
-  const { email, role, creatorId } = req.body || {};
+  const { email, role, accountId } = req.body || {};
   if (!isStr(email, 100) || !isStr(role, 40)) return badRequest(res, 'email and role are required', ['email', 'role']);
   const token = crypto.randomBytes(32).toString('base64url');
   const expires = new Date(Date.now() + 7 * 86400 * 1000);
   const out = await withWorkspace(wid(req), uid(req), async (c) => {
-    const roleOk = (await c.query('SELECT 1 FROM roles WHERE workspace_id=$1 AND name=$2', [wid(req), role])).rows[0];
-    if (!roleOk) return { err: 'unknown_role' };
+    const rights = await roleWithinCallerRights(c, req, role);
+    if (rights.err) return { err: rights.err, detail: rights.detail };
     const row = (await c.query(
-      `INSERT INTO invites (workspace_id, email, role, creator_id, token_hash, invited_by, expires_at)
+      `INSERT INTO invites (workspace_id, email, role, account_id, token_hash, invited_by, expires_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, email, role, expires_at`,
-      [wid(req), email, role, creatorId || null, hashToken(token), uid(req), expires])).rows[0];
+      [wid(req), email, role, accountId || null, hashToken(token), uid(req), expires])).rows[0];
     return { row };
   });
-  if (out.err) return res.status(400).json({ error: out.err });
+  if (out.err) return res.status(out.err === 'unknown_role' ? 400 : 403).json({ error: out.err, detail: out.detail });
   const link = `https://app.higherpays.com/accept-invite?token=${token}`;
   await sendEmail({ to: email, subject: `You're invited to HigherPays (${role})`, body: `Set up your login: ${link}` });
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'invite.create', metadata: { email, role } });
-  // token returned here only so the flow is testable before real email is wired
-  res.status(201).json({ ...out.row, inviteToken: token });
+  // The token is a bearer credential for a workspace seat and is NOT returned:
+  // it only ever reaches the invited address. Tests read it from the email stub.
+  res.status(201).json(out.row);
 }));
 
 // GET /workspaces/:wid/invites — pending invites
@@ -79,15 +84,23 @@ publicRouter.post('/:token/accept', asyncHandler(async (req, res) => {
         'INSERT INTO users (email, password_hash, full_name) VALUES ($1,$2,$3) RETURNING id, email, full_name',
         [inv.email, pw, fullName || inv.email])).rows[0];
     }
-    // existing person: we simply add the membership. Their password is untouched.
-    await c.query(
+    // An invite PROVISIONS a seat; it never re-roles someone who already has one.
+    // Role changes go through PATCH /memberships/:id/role, which carries
+    // cannot_edit_own_role, isLastOwner and revokeUserSessions. Without the
+    // status guard below, anyone holding an invite token could rewrite an active
+    // member's role — including demoting the last owner.
+    const seat = await c.query(
       `INSERT INTO memberships (workspace_id, user_id, role) VALUES ($1,$2,$3)
-       ON CONFLICT (workspace_id, user_id) DO UPDATE SET role=EXCLUDED.role, status='active'`,
+       ON CONFLICT (workspace_id, user_id) DO UPDATE SET role=EXCLUDED.role, status='active'
+         WHERE memberships.status <> 'active'`,
       [inv.workspace_id, user.id, inv.role]);
+    // The invite is consumed either way, so a stale token cannot be replayed.
     await c.query('UPDATE invites SET accepted_at=now() WHERE id=$1', [inv.id]);
+    if (seat.rowCount === 0) return { err: 'already_a_member' };
     return { user, workspaceId: inv.workspace_id, role: inv.role, existing: !!existed };
   });
   if (out.err === 'weak_password') return badRequest(res, 'weak_password', ['password']);
+  if (out.err === 'already_a_member') return res.status(409).json({ error: 'already_a_member' });
   if (out.err) return res.status(404).json({ error: out.err });
   await audit({ workspaceId: out.workspaceId, actorUserId: out.user.id, action: 'invite.accept', metadata: { role: out.role } });
   res.status(201).json({ ok: true, userId: out.user.id, workspaceId: out.workspaceId, role: out.role, existingUser: !!out.existing });

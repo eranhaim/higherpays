@@ -4,18 +4,21 @@ import { workspacePath } from '../workspacePath';
 /** Response from `GET /workspaces/:wid/analytics`. Money is chargeback-adjusted. */
 export interface AnalyticsReport {
   range: { from: string; to: string; days: number };
-  scope: 'agency' | 'chatter' | 'creator';
+  scope: 'agency' | 'agent' | 'account';
   timeseries: Array<{ d: string; gross: number; net: number }>;
+  // The agency-side figures below are omitted for a scoped caller (an agent or
+  // an account): how the agency's cut is divided is not theirs to see. Guard on
+  // `scope === 'agency'` or on `can('data.view_all')` before rendering them.
   headline: {
     gross: number;
     net: number;
-    platformFee: number;
+    platformFee?: number;
     /** Only present for platform operators. */
     hpMargin?: number;
-    creatorPayout: number;
-    chatterPayout: number;
-    agencyKeep: number;
-    takeRatePct: number;
+    accountPayout?: number;
+    agentPayout?: number;
+    agencyKeep?: number;
+    takeRatePct?: number;
     aov: number;
     paidCount: number;
     uniqueBuyers: number;
@@ -26,7 +29,7 @@ export interface AnalyticsReport {
     feeCost: number;
     ratePct: number;
     rateValuePct: number;
-    byBearer: { creator: number; agency: number };
+    byBearer?: { account: number; agency: number };
   };
   funnel: {
     created: number;
@@ -38,7 +41,7 @@ export interface AnalyticsReport {
     expiryPct: number;
     revenuePerLink: number;
   };
-  chatters: Array<{
+  agents: Array<{
     name: string;
     revenue: number;
     agencyProfit: number;
@@ -46,12 +49,12 @@ export interface AnalyticsReport {
     conversionPct: number | null;
     aov: number;
   }>;
-  creators: Array<{
+  accounts: Array<{
     name: string;
     model: 'revshare' | 'salary' | 'ai';
     salary: number;
     revenue: number;
-    creatorPayout: number;
+    accountPayout: number;
     agencyProfit: number;
   }>;
   customers: {
@@ -71,16 +74,16 @@ export interface AnalyticsQuery {
   /** ISO timestamps. */
   from: string;
   to: string;
-  /** Agency roles may scope the report to one chatter membership or one creator. */
-  chatterId?: string;
-  creatorId?: string;
+  /** Agency roles may scope the report to one agent membership or one account. */
+  agentId?: string;
+  accountId?: string;
 }
 
 export const analyticsApi = {
   report(query: AnalyticsQuery): Promise<AnalyticsReport> {
     const qs = new URLSearchParams({ from: query.from, to: query.to });
-    if (query.chatterId) qs.set('chatterId', query.chatterId);
-    if (query.creatorId) qs.set('creatorId', query.creatorId);
+    if (query.agentId) qs.set('agentId', query.agentId);
+    if (query.accountId) qs.set('accountId', query.accountId);
     return api.get<AnalyticsReport>(workspacePath(`/analytics?${qs.toString()}`));
   },
 };

@@ -5,15 +5,20 @@
 // Money comes from commission_entries: each sale is a positive 'sale' row and
 // each reversal a negative 'chargeback' row, so summing a column yields the
 // TRUE chargeback-adjusted figure. Joined to transactions for the sale date
-// (occurred_at) and the customer. Scope is enforced server-side:
-//   • agency roles (owner/admin/manager/analyst) → the whole workspace (RLS)
-//   • chatter                                     → only their attributed rows
+// (occurred_at) and the customer. Scope is enforced server-side by
+// resolveDataScope, which reads a permission rather than a role name:
+//   • data.view_all → the whole workspace, plus the agent/account pivots
+//   • agent         → only rows attributed to their membership
+//   • account       → only rows for the account linked to their user
+// Scoped callers also lose the agency-side figures: how the agency's cut is
+// divided is not theirs to see.
 // ============================================================================
 const express = require('express');
 const { withWorkspace } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const config = require('../config');
+const { resolveDataScope } = require('../auth/dataScope');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -27,24 +32,22 @@ function range(req) {
 
 router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, res) => {
   const { from, to, days } = range(req);
-  const role = req.membership.role;
   const ttl = config.linkTtlMinutes;
 
   const out = await withWorkspace(wid(req), uid(req), async (c) => {
-    // Scope server-side by role: a chatter sees only rows attributed to their
-    // membership; a creator sees only rows for the creator record linked to
-    // their user. Agency roles see the whole workspace.
+    // An agent sees rows attributed to their membership; an account sees rows
+    // for the account linked to their user. Only a caller with workspace scope
+    // sees everything — and only they may pivot to someone else's numbers.
+    const scope = await resolveDataScope(c, req);
     let scopeCol = null, linkCol = null, scopeVal = null;
-    if (role === 'chatter') {
-      scopeCol = 'ce.chatter_membership_id'; linkCol = 'pl.created_by'; scopeVal = req.membership.id;
-    } else if (role === 'creator') {
-      const cr = (await c.query('SELECT id FROM creators WHERE workspace_id = $1 AND user_id = $2 LIMIT 1', [wid(req), uid(req)])).rows[0];
-      scopeCol = 'ce.creator_id'; linkCol = 'pl.creator_id';
-      scopeVal = cr ? cr.id : '00000000-0000-0000-0000-000000000000'; // unlinked creator → empty result
-    } else {
-      // agency roles may explicitly scope to one chatter/creator (for comparisons)
-      if (req.query.chatterId) { scopeCol = 'ce.chatter_membership_id'; linkCol = 'pl.created_by'; scopeVal = req.query.chatterId; }
-      else if (req.query.creatorId) { scopeCol = 'ce.creator_id'; linkCol = 'pl.creator_id'; scopeVal = req.query.creatorId; }
+    if (scope.kind === 'agent') {
+      scopeCol = 'ce.agent_membership_id'; linkCol = 'pl.created_by'; scopeVal = scope.membershipId;
+    } else if (scope.kind === 'account') {
+      scopeCol = 'ce.account_id'; linkCol = 'pl.account_id'; scopeVal = scope.accountId;
+    } else if (req.query.agentId) {
+      scopeCol = 'ce.agent_membership_id'; linkCol = 'pl.created_by'; scopeVal = req.query.agentId;
+    } else if (req.query.accountId) {
+      scopeCol = 'ce.account_id'; linkCol = 'pl.account_id'; scopeVal = req.query.accountId;
     }
     const scoped = scopeVal != null;
     // ledger params: $1 from, $2 to, ($3 scope). FROM+joins kept separate from WHERE
@@ -59,14 +62,14 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
         COALESCE(SUM(ce.distributable),0)                                       AS net,
         COALESCE(SUM(ce.platform_fee),0)                                        AS platform_fee,
         COALESCE(SUM(ce.platform_margin),0)                                     AS hp_margin,
-        COALESCE(SUM(ce.creator_amount),0)                                      AS creator_payout,
-        COALESCE(SUM(ce.chatter_amount),0)                                      AS chatter_payout,
+        COALESCE(SUM(ce.account_amount),0)                                      AS account_payout,
+        COALESCE(SUM(ce.agent_amount),0)                                        AS agent_payout,
         COALESCE(SUM(ce.agency_amount),0)                                       AS agency_keep,
         COUNT(*) FILTER (WHERE ce.entry_type='sale')                            AS sale_count,
         COUNT(*) FILTER (WHERE ce.entry_type='chargeback')                      AS cb_count,
         COALESCE(-SUM(ce.gross) FILTER (WHERE ce.entry_type='chargeback'),0)    AS cb_gross,
         COALESCE(SUM(ce.chargeback_fee) FILTER (WHERE ce.entry_type='chargeback'),0) AS cb_fee,
-        COALESCE(-SUM(ce.creator_amount) FILTER (WHERE ce.entry_type='chargeback'),0) AS cb_creator_borne,
+        COALESCE(-SUM(ce.account_amount) FILTER (WHERE ce.entry_type='chargeback'),0) AS cb_account_borne,
         COALESCE(-SUM(ce.agency_amount)  FILTER (WHERE ce.entry_type='chargeback'),0) AS cb_agency_borne,
         COUNT(DISTINCT t.customer_id) FILTER (WHERE ce.entry_type='sale')       AS buyers
       ${CE_FROM} ${CE_WHERE}`, ceP)).rows[0];
@@ -89,40 +92,40 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
       FROM payment_links pl ${linkWhere}`, linkP)).rows[0];
     const created = num(fn.created);
 
-    const chatterRows = (await c.query(`
+    const agentRows = (await c.query(`
       SELECT u.full_name AS name, m.id AS membership_id,
              COALESCE(SUM(ce.gross),0) AS revenue,
              COALESCE(SUM(ce.agency_amount),0) AS agency_profit,
              COUNT(*) FILTER (WHERE ce.entry_type='sale') AS sales
       ${CE_FROM}
-      JOIN memberships m ON m.id = ce.chatter_membership_id
+      JOIN memberships m ON m.id = ce.agent_membership_id
       JOIN users u ON u.id = m.user_id
-      ${CE_WHERE} AND ce.chatter_membership_id IS NOT NULL
+      ${CE_WHERE} AND ce.agent_membership_id IS NOT NULL
       GROUP BY u.full_name, m.id ORDER BY revenue DESC`, ceP)).rows;
-    const chatterLinks = (await c.query(`
+    const agentLinks = (await c.query(`
       SELECT pl.created_by AS membership_id, COUNT(*) AS created,
              COUNT(*) FILTER (WHERE pl.status='paid') AS paid
       FROM payment_links pl ${linkWhere} AND pl.created_by IS NOT NULL
       GROUP BY pl.created_by`, linkP)).rows;
-    const clMap = Object.fromEntries(chatterLinks.map(r => [r.membership_id, r]));
-    const chatters = chatterRows.map(r => {
+    const clMap = Object.fromEntries(agentLinks.map(r => [r.membership_id, r]));
+    const agents = agentRows.map(r => {
       const l = clMap[r.membership_id]; const cCreated = l ? num(l.created) : 0; const cPaid = l ? num(l.paid) : 0;
       return { name: r.name, revenue: num(r.revenue), agencyProfit: num(r.agency_profit), sales: num(r.sales),
                conversionPct: cCreated ? Math.round(cPaid / cCreated * 100) : null,
                aov: num(r.sales) ? num(r.revenue) / num(r.sales) : 0 };
     });
 
-    const creators = (await c.query(`
-      SELECT cr.stage_name AS name, cr.revenue_model AS model, cr.salary,
+    const accounts = (await c.query(`
+      SELECT a.stage_name AS name, a.revenue_model AS model, a.salary,
              COALESCE(SUM(ce.gross),0) AS revenue,
-             COALESCE(SUM(ce.creator_amount),0) AS creator_payout,
+             COALESCE(SUM(ce.account_amount),0) AS account_payout,
              COALESCE(SUM(ce.agency_amount),0) AS agency_profit
       ${CE_FROM}
-      JOIN creators cr ON cr.id = ce.creator_id
-      ${CE_WHERE} AND ce.creator_id IS NOT NULL
-      GROUP BY cr.stage_name, cr.revenue_model, cr.salary ORDER BY revenue DESC`, ceP)).rows
+      JOIN accounts a ON a.id = ce.account_id
+      ${CE_WHERE} AND ce.account_id IS NOT NULL
+      GROUP BY a.stage_name, a.revenue_model, a.salary ORDER BY revenue DESC`, ceP)).rows
       .map(r => ({ name: r.name, model: r.model, salary: num(r.salary), revenue: num(r.revenue),
-                   creatorPayout: num(r.creator_payout), agencyProfit: num(r.agency_profit) }));
+                   accountPayout: num(r.account_payout), agencyProfit: num(r.agency_profit) }));
 
     const perCust = (await c.query(`
       SELECT t.customer_id AS id, COALESCE(SUM(ce.gross),0) AS rev
@@ -131,12 +134,27 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
     const totRev = perCust.reduce((a, b) => a + b, 0) || 1;
     const topShare = (p) => { const n = Math.max(1, Math.ceil(perCust.length * p)); return Math.round(perCust.slice(0, n).reduce((a, b) => a + b, 0) / totRev * 100); };
 
+    // Customer aggregates were the one place the whole workspace leaked to a
+    // scoped caller: they carried no scope predicate at all. An agent sees the
+    // customers of the accounts they are assigned; an account sees its own.
     const crm = (await c.query(`
-      SELECT COALESCE(AVG(total_spend) FILTER (WHERE total_spend>0),0) AS avg_ltv,
-             COALESCE(AVG(total_spend),0) AS arpu, COUNT(*) AS total FROM customers`)).rows[0];
+      SELECT COALESCE(AVG(cu.total_spend) FILTER (WHERE cu.total_spend>0),0) AS avg_ltv,
+             COALESCE(AVG(cu.total_spend),0) AS arpu, COUNT(*) AS total
+        FROM customers cu
+       WHERE cu.deleted_at IS NULL
+         AND ($1::uuid IS NULL OR cu.account_id IN (SELECT account_id FROM account_agents WHERE membership_id = $1::uuid))
+         AND ($2::uuid IS NULL OR cu.account_id = $2::uuid)`,
+      [scope.kind === 'agent' ? scope.membershipId : null,
+        scope.kind === 'account' ? scope.accountId : null])).rows[0];
     const repeat = (await c.query(`
       SELECT COUNT(*) FILTER (WHERE n>=2) AS repeat_c, COUNT(*) AS any_c, COALESCE(AVG(n),0) AS freq
-      FROM (SELECT customer_id, COUNT(*) n FROM transactions WHERE status='approved' AND customer_id IS NOT NULL GROUP BY customer_id) q`)).rows[0];
+      FROM (SELECT t.customer_id, COUNT(*) n FROM transactions t
+             WHERE t.status='approved' AND t.customer_id IS NOT NULL
+               AND ($1::uuid IS NULL OR t.attributed_membership_id = $1::uuid)
+               AND ($2::uuid IS NULL OR t.account_id = $2::uuid)
+             GROUP BY t.customer_id) q`,
+      [scope.kind === 'agent' ? scope.membershipId : null,
+        scope.kind === 'account' ? scope.accountId : null])).rows[0];
     const segRows = (await c.query(`
       SELECT cu.segment AS segment, COALESCE(SUM(ce.gross),0) AS rev
       ${CE_FROM}
@@ -159,15 +177,24 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
     const heatmap = Array.from({ length: 7 }, () => Array(24).fill(0));
     heatRows.forEach(r => { heatmap[r.dow][r.hr] = num(r.rev); });
 
+    // How the agency's cut is split is the agency's business. A scoped caller
+    // gets their own volume and their own earnings, never the distribution
+    // between the other parties (see "Account View / Data Access" in the
+    // entity definitions).
+    const seesAgencyFigures = scope.kind === 'workspace';
+
     return {
-      range: { from, to, days }, scope: role === 'chatter' ? 'chatter' : role === 'creator' ? 'creator' : 'agency',
+      range: { from, to, days }, scope: scope.kind === 'workspace' ? 'agency' : scope.kind,
       timeseries: ts,
       headline: {
-        gross: grossSales, net: num(h.net), platformFee: num(h.platform_fee),
-        // HigherPays' own margin is operator-only; agencies see the blended platform fee.
-        ...(req.membership.isPlatformOperator ? { hpMargin: num(h.hp_margin) } : {}),
-        creatorPayout: num(h.creator_payout), chatterPayout: num(h.chatter_payout), agencyKeep,
-        takeRatePct: grossSales ? +(agencyKeep / grossSales * 100).toFixed(1) : 0,
+        gross: grossSales, net: num(h.net),
+        ...(seesAgencyFigures ? {
+          platformFee: num(h.platform_fee),
+          // HigherPays' own margin is operator-only; agencies see the blended fee.
+          ...(req.membership.isPlatformOperator ? { hpMargin: num(h.hp_margin) } : {}),
+          accountPayout: num(h.account_payout), agentPayout: num(h.agent_payout), agencyKeep,
+          takeRatePct: grossSales ? +(agencyKeep / grossSales * 100).toFixed(1) : 0,
+        } : {}),
         aov: saleCount ? +(grossSales / saleCount).toFixed(2) : 0,
         paidCount: saleCount, uniqueBuyers: num(h.buyers),
       },
@@ -175,7 +202,9 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
         count: num(h.cb_count), valueReversed: num(h.cb_gross), feeCost: num(h.cb_fee),
         ratePct: saleCount ? +(num(h.cb_count) / saleCount * 100).toFixed(2) : 0,
         rateValuePct: grossSales ? +(num(h.cb_gross) / grossSales * 100).toFixed(2) : 0,
-        byBearer: { creator: num(h.cb_creator_borne), agency: num(h.cb_agency_borne) },
+        ...(seesAgencyFigures
+          ? { byBearer: { account: num(h.cb_account_borne), agency: num(h.cb_agency_borne) } }
+          : {}),
       },
       funnel: {
         created, paid: num(fn.paid), failed: num(fn.failed), expired: num(fn.expired),
@@ -184,7 +213,11 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
         expiryPct: created ? Math.round(num(fn.expired) / created * 100) : 0,
         revenuePerLink: created ? +(grossSales / created).toFixed(2) : 0,
       },
-      chatters, creators,
+      // Per-party tables compare people to each other, so they belong to the
+      // roles that manage the workspace. An agent's own ranking lives on
+      // /targets/leaderboard, in a limited form.
+      agents: seesAgencyFigures ? agents : [],
+      accounts: seesAgencyFigures ? accounts : [],
       customers: {
         avgLtv: num(crm.avg_ltv), arpu: num(crm.arpu),
         repeatRatePct: num(repeat.any_c) ? Math.round(num(repeat.repeat_c) / num(repeat.any_c) * 100) : 0,

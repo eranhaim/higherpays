@@ -8,7 +8,7 @@
  * Deliberately does NOT own:
  * - The active workspace id -> `sessionStore`
  * - Preferences (timezone, density, ...) -> `preferencesStore`
- * - Any business entity (creators, links, ...) -> React Query
+ * - Any business entity (accounts, links, ...) -> React Query
  */
 
 import { create } from 'zustand';

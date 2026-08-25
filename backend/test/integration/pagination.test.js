@@ -3,15 +3,15 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const request = require('supertest');
 const { app } = require('../helpers/setup');
-const { createTenant, createCreator } = require('../helpers/tenant');
+const { createTenant, createAccount } = require('../helpers/tenant');
 
 test('list endpoints page with a cursor and never repeat or skip a row', async () => {
   const t = await createTenant(app);
-  const creator = await createCreator(app, t);
+  const account = await createAccount(app, t);
   const made = [];
   for (let i = 0; i < 3; i++) {
     const res = await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
-      .send({ creatorId: creator.id, pricingMode: 'fixed', amount: 10 + i, currency: 'EUR' }).expect(201);
+      .send({ accountId: account.id, pricingMode: 'fixed', amount: 10 + i, currency: 'EUR' }).expect(201);
     made.push(res.body.id);
   }
 

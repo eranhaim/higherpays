@@ -13,7 +13,7 @@ const { wid, uid } = require('../lib/scope');
 const cleanPerms = (arr) => Array.isArray(arr) ? [...new Set(arr.filter((p) => PERMISSIONS.includes(p)))] : null;
 
 // A caller may only hand out permissions they already hold. Without this an
-// admin could write `settings.danger` into any role and become an owner.
+// analyst could write `commissions.manage` into any role and pay themselves.
 function unheldPermissions(req, perms) {
   const held = req.membership.permissions;
   return perms.filter((p) => !(held ? held.has(p) : false));

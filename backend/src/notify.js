@@ -68,10 +68,15 @@ async function sendTelegram(chatId, text) {
 async function notify(c, workspaceId, n) {
   if (!EVENTS.includes(n.event)) throw new Error('unknown_event: ' + n.event);
 
+  // accountId / agentMembershipId say who this concerns. Both null means the
+  // event belongs to the agency as a whole and only workspace-scoped roles see
+  // it. See migration 035 for the full visibility rule.
   const row = (await c.query(
-    `INSERT INTO notifications (workspace_id, event, title, body, amount, currency, entity_type, entity_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-    [workspaceId, n.event, n.title, n.body || null, n.amount ?? null, n.currency || null, n.entityType || null, n.entityId || null],
+    `INSERT INTO notifications (workspace_id, event, title, body, amount, currency, entity_type, entity_id,
+                                account_id, agent_membership_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    [workspaceId, n.event, n.title, n.body || null, n.amount ?? null, n.currency || null,
+      n.entityType || null, n.entityId || null, n.accountId || null, n.agentMembershipId || null],
   )).rows[0];
 
   const channels = (await c.query(

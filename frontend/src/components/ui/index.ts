@@ -9,3 +9,4 @@ export { DataTable, type Column } from './DataTable';
 export { FilterBar } from './FilterBar';
 export { DateRangePicker, type DateRange } from './DateRangePicker';
 export { DetailRow } from './DetailRow';
+export { CopyButton } from './CopyButton';

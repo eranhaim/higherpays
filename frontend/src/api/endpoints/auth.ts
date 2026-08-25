@@ -13,6 +13,8 @@ export interface Session {
   ip: string | null;
   lastRefreshedAt: string;
   expiresAt: string;
+  /** The session this browser is signed in on. */
+  isCurrent: boolean;
 }
 
 export const authApi = {

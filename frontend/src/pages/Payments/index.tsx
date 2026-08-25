@@ -42,20 +42,28 @@ export default function PaymentsPage() {
   const gross = sum(paid.map((t) => t.gross));
   const fees = sum(paid.map((t) => t.platformFee));
   const attempts = paid.length + declined.length;
+  // Nothing loaded means every total below is 0, which reads as a real figure.
+  const statsUnknown = isLoading || isError;
 
   const range: DateRange = { from: filters.from, to: filters.to };
   const setRange = (r: DateRange) => setFilters((f) => ({ ...f, ...r }));
 
   const columns: Column<Transaction>[] = [
-    { key: 'reference', header: 'Reference', render: (t) => <span className="ref">{t.providerTransactionId ?? '—'}</span> },
-    { key: 'customer', header: 'Customer', render: (t) => <span className="cname">{t.customer ?? '—'}</span> },
-    { key: 'creator', header: 'Creator', render: (t) => t.creator ?? '—' },
-    { key: 'chatter', header: 'Chatter', render: (t) => t.chatter ?? '—' },
+    {
+      key: 'reference', header: 'Reference',
+      render: (t) => <span className="ref" title={t.providerTransactionId ?? undefined}>{t.providerTransactionId ?? '—'}</span>,
+    },
+    {
+      key: 'customer', header: 'Customer',
+      render: (t) => <span className="cname" title={t.customer ?? undefined}>{t.customer ?? '—'}</span>,
+    },
+    { key: 'account', header: 'Account', render: (t) => t.account ?? '—' },
+    { key: 'agent', header: 'Agent', render: (t) => t.agent ?? '—' },
     {
       key: 'gross', header: 'Gross', align: 'right',
       render: (t) => <Money amount={t.gross} direction={isReversed(t.status) ? 'out' : undefined} />,
     },
-    { key: 'fee', header: 'Fee', align: 'right', render: (t) => <span className="fee">{formatMoney(t.platformFee)}</span> },
+    { key: 'fee', header: 'Fee', align: 'right', render: (t) => <Money amount={t.platformFee} direction="out" /> },
     { key: 'status', header: 'Status', render: (t) => <StatusPill status={t.status} /> },
     { key: 'date', header: 'Date', render: (t) => <DateCell ts={t.occurredAt} /> },
   ];
@@ -85,16 +93,24 @@ export default function PaymentsPage() {
         subtitle="Every payment attempt, with the fees taken on each."
       />
 
+      {isError && (
+        <div className="warnbar" role="alert">
+          Couldn't load payments. The figures below are incomplete — reload to try again.
+        </div>
+      )}
+
       <StatGrid>
-        <StatCard label="Gross" value={<Money amount={gross} direction="in" />} sub="Paid in view" />
-        <StatCard label="Platform fees" value={<Money amount={fees} direction="out" />} sub={`${rateCard.blended.toFixed(1)}% blended`} />
-        <StatCard label="Net" value={<Money amount={gross - fees} direction="in" emphasis />} sub="After platform fees" />
+        <StatCard isUnknown={statsUnknown} label="Gross" value={<Money amount={gross} direction="in" />} sub="Paid in view" />
+        <StatCard isUnknown={statsUnknown} label="Platform fees" value={<Money amount={fees} direction="out" />} sub={`${rateCard.blended.toFixed(1)}% blended`} />
+        <StatCard isUnknown={statsUnknown} label="Net" value={<Money amount={gross - fees} direction="in" emphasis />} sub="After platform fees" />
         <StatCard
+          isUnknown={statsUnknown}
           label="Approval rate"
           value={`${attempts ? Math.round((paid.length / attempts) * 100) : 0}%`}
           sub={`${paid.length} of ${attempts} attempts`}
         />
         <StatCard
+          isUnknown={statsUnknown}
           label="Reversed"
           value={<Money amount={sum(reversed.map((t) => t.gross))} direction="out" />}
           sub={`${reversed.length} refunds and chargebacks`}
@@ -103,6 +119,7 @@ export default function PaymentsPage() {
 
       <FilterBar>
         <select
+          aria-label="Filter by status"
           value={filters.status}
           onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value as PaymentsFilters['status'] }))}
         >
@@ -115,7 +132,8 @@ export default function PaymentsPage() {
         <input
           type="search"
           className="search-input"
-          placeholder="Search reference, customer, creator, chatter"
+          aria-label="Search payments"
+          placeholder="Search reference, customer, account, agent"
           value={filters.search}
           onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
         />
@@ -142,17 +160,16 @@ export default function PaymentsPage() {
         }
       />
 
-      <Modal open={!!detail && !refunding} onClose={() => setDetail(null)}>
+      <Modal open={!!detail && !refunding} onClose={() => setDetail(null)} title="Payment">
         {detail && (
           <>
-            <h3>Payment</h3>
             <div className="modal-topline">
               <span className="ref">{detail.providerTransactionId ?? detail.id}</span>
               <StatusPill status={detail.status} />
             </div>
             <DetailRow label="Customer">{detail.customer ?? '—'}</DetailRow>
-            <DetailRow label="Creator">{detail.creator ?? '—'}</DetailRow>
-            <DetailRow label="Chatter">{detail.chatter ?? '—'}</DetailRow>
+            <DetailRow label="Account">{detail.account ?? '—'}</DetailRow>
+            <DetailRow label="Agent">{detail.agent ?? '—'}</DetailRow>
             <DetailRow label="Gross"><Money amount={detail.gross} direction="in" /></DetailRow>
             <DetailRow label="Platform fee"><Money amount={detail.platformFee} direction="out" /></DetailRow>
             <DetailRow label="Net"><Money amount={detail.gross - detail.platformFee} direction="in" emphasis /></DetailRow>
@@ -171,13 +188,14 @@ export default function PaymentsPage() {
         )}
       </Modal>
 
-      <Modal open={!!refunding} onClose={closeRefund}>
+      <Modal
+        open={!!refunding}
+        onClose={closeRefund}
+        title="Record a refund"
+        subtitle="Issue the refund in MantaPay first. Recording it here reverses the sale in your ledger so payouts stay correct."
+      >
         {refunding && (
           <>
-            <h3>Record a refund</h3>
-            <p className="sub">
-              Issue the refund in MantaPay first. Recording it here reverses the sale in your ledger so payouts stay correct.
-            </p>
             <div className="callout">
               <DetailRow label="Refund to customer"><Money amount={refunding.gross} direction="out" /></DetailRow>
               <DetailRow label="Refund fee"><Money amount={rateCard.refundFee} direction="out" /></DetailRow>

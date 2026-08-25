@@ -18,7 +18,7 @@ export interface Customer {
   id: string;
   alias: string;
   email: string | null;
-  creatorId: string | null;
+  accountId: string | null;
   segment: CustomerSegment;
   totalSpend: number;
   lastPurchaseAt: string | null;
@@ -29,7 +29,7 @@ interface RawCustomer {
   id: string;
   alias: string;
   email: string | null;
-  creator_id: string | null;
+  account_id: string | null;
   segment: CustomerSegment;
   total_spend: number | string | null;
   last_purchase_at: string | null;
@@ -46,7 +46,7 @@ function normalize(c: RawCustomer): Customer {
     id: c.id,
     alias: c.alias,
     email: c.email,
-    creatorId: c.creator_id,
+    accountId: c.account_id,
     segment: c.segment,
     totalSpend: toNumber(c.total_spend),
     lastPurchaseAt: c.last_purchase_at,
@@ -57,7 +57,7 @@ function normalize(c: RawCustomer): Customer {
 export interface ListCustomersQuery {
   segment?: CustomerSegment;
   q?: string;
-  creatorId?: string;
+  accountId?: string;
   limit?: number;
   offset?: number;
 }
@@ -65,7 +65,7 @@ export interface ListCustomersQuery {
 export interface CreateCustomerInput {
   alias: string;
   email?: string;
-  creatorId?: string;
+  accountId?: string;
   segment?: CustomerSegment;
 }
 
@@ -74,7 +74,7 @@ export const customersApi = {
     const qs = new URLSearchParams();
     if (query.segment) qs.set('segment', query.segment);
     if (query.q) qs.set('q', query.q);
-    if (query.creatorId) qs.set('creatorId', query.creatorId);
+    if (query.accountId) qs.set('accountId', query.accountId);
     if (query.limit != null) qs.set('limit', String(query.limit));
     if (query.offset != null) qs.set('offset', String(query.offset));
     const suffix = qs.toString() ? `/customers?${qs.toString()}` : '/customers';

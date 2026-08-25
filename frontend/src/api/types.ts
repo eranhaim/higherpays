@@ -6,7 +6,7 @@
  */
 
 /** Built-in workspace roles. Custom roles are free-form strings. */
-export type SystemRole = 'owner' | 'admin' | 'manager' | 'analyst' | 'chatter' | 'creator';
+export type SystemRole = 'owner' | 'admin' | 'analyst' | 'agent' | 'account';
 
 export interface AuthUser {
   id: string;

@@ -1,6 +1,6 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
-import type { RevenueModel } from './creators';
+import type { RevenueModel } from './accounts';
 
 /** Mirrors the `txn_status` enum in the database. */
 export type TransactionStatus = 'approved' | 'declined' | 'refunded' | 'charged_back';
@@ -12,9 +12,9 @@ export interface Transaction {
   platformFee: number;
   status: TransactionStatus;
   occurredAt: string;
-  creator: string | null;
+  account: string | null;
   customer: string | null;
-  chatter: string | null;
+  agent: string | null;
 }
 
 interface RawTransaction {
@@ -24,9 +24,9 @@ interface RawTransaction {
   platform_fee: number | string;
   status: TransactionStatus;
   occurred_at: string;
-  creator: string | null;
+  account: string | null;
   customer: string | null;
-  chatter: string | null;
+  agent: string | null;
 }
 
 function toNumber(v: unknown): number {
@@ -42,9 +42,9 @@ function normalizeTransaction(t: RawTransaction): Transaction {
     platformFee: toNumber(t.platform_fee),
     status: t.status,
     occurredAt: t.occurred_at,
-    creator: t.creator,
+    account: t.account,
     customer: t.customer,
-    chatter: t.chatter,
+    agent: t.agent,
   };
 }
 
@@ -62,8 +62,8 @@ export function isReversed(status: TransactionStatus): boolean {
 
 export interface PayoutBreakdown {
   range: { from: string; to: string };
-  perCreator: Array<{ id: string; name: string; model: RevenueModel; salary: number; revenue: number; owed: number }>;
-  perChatter: Array<{ id: string; name: string; owed: number; sales: number }>;
+  perAccount: Array<{ id: string; name: string; model: RevenueModel; salary: number; revenue: number; owed: number }>;
+  perAgent: Array<{ id: string; name: string; owed: number; sales: number }>;
   reserve: { pct: number; releaseDays: number; held: number; source: 'settlements' | 'estimated' };
   /** Can the agency pay everyone today? `available` is receipts minus the reserve. */
   cash: { owed: number; received: number; heldInReserve: number; available: number; shortfallIfPaidNow: number };
@@ -76,14 +76,14 @@ export interface RefundResult {
   refunded: number;
   currency: string;
   refundFee: number;
-  creatorAdjustment: number;
-  chatterAdjustment: number;
+  accountAdjustment: number;
+  agentAdjustment: number;
   agencyAdjustment: number;
 }
 
 export interface RunPayoutInput {
-  payeeType: 'creator' | 'chatter';
-  /** Creator id or chatter membership id. Omit to pay everyone of that type. */
+  payeeType: 'account' | 'agent';
+  /** Account id or agent membership id. Omit to pay everyone of that type. */
   targetId?: string;
   from?: string;
   to?: string;

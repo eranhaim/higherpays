@@ -8,6 +8,11 @@ export type PricingMode = 'fixed' | 'open';
 
 export const LINK_STATUSES: LinkStatus[] = ['created', 'opened', 'paid', 'failed', 'expired', 'refunded'];
 
+/** A link still worth sending to the customer: not yet paid, failed or expired. */
+export function isShareable(status: LinkStatus): boolean {
+  return status === 'created' || status === 'opened';
+}
+
 export const LINK_STATUS_LABELS: Record<LinkStatus, string> = {
   created: 'Created',
   opened: 'Opened',
@@ -27,9 +32,11 @@ export interface PaymentLink {
   referenceId: string;
   createdAt: string;
   paidAt: string | null;
-  creator: string | null;
+  account: string | null;
   customer: string | null;
-  chatter: string | null;
+  agent: string | null;
+  /** Null for links created before the URL was stored. */
+  url: string | null;
 }
 
 interface RawLink {
@@ -42,9 +49,10 @@ interface RawLink {
   reference_id: string;
   created_at: string;
   paid_at: string | null;
-  creator: string | null;
+  account: string | null;
   customer: string | null;
-  chatter: string | null;
+  agent: string | null;
+  checkout_url?: string | null;
 }
 
 function toNullableNumber(v: unknown): number | null {
@@ -64,14 +72,15 @@ function normalize(l: RawLink): PaymentLink {
     referenceId: l.reference_id,
     createdAt: l.created_at,
     paidAt: l.paid_at,
-    creator: l.creator,
+    account: l.account,
     customer: l.customer,
-    chatter: l.chatter,
+    agent: l.agent,
+    url: l.checkout_url ?? null,
   };
 }
 
 export interface CreateLinkInput {
-  creatorId: string;
+  accountId: string;
   customerId?: string;
   pricingMode?: PricingMode;
   amount?: number;

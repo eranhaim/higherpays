@@ -53,9 +53,11 @@ function dailyBars(
   for (let i = 0; ; i++) {
     const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
     if (d.getTime() > dateWindow.toMs) break;
+    const iso = toLocalDateInput(d.getTime());
     bars.push({
+      id: iso,
       label: `${d.getDate()} ${MONTHS_SHORT[d.getMonth()]}`,
-      value: byDay.get(toLocalDateInput(d.getTime())) ?? 0,
+      value: byDay.get(iso) ?? 0,
     });
   }
   return bars;
@@ -98,8 +100,8 @@ function buildCSV(report: AnalyticsReport, workspaceName: string, filters: Analy
   push('Paid sales', h.paidCount);
   push('Unique buyers', h.uniqueBuyers);
   push('Platform fee', h.platformFee);
-  push('Creator payout', h.creatorPayout);
-  push('Chatter payout', h.chatterPayout);
+  push('Account payout', h.accountPayout);
+  push('Agent payout', h.agentPayout);
   push('Agency keep', h.agencyKeep);
   push('Chargeback rate %', c.ratePct);
   push('');
@@ -107,33 +109,33 @@ function buildCSV(report: AnalyticsReport, workspaceName: string, filters: Analy
   push('Date', 'Gross', 'Net');
   report.timeseries.forEach((t) => push(t.d, t.gross, t.net));
   push('');
-  push('CHATTER LEADERBOARD');
-  push('Chatter', 'Revenue', 'Sales', 'Conversion %', 'Avg order');
-  report.chatters.forEach((r) => push(r.name, r.revenue, r.sales, r.conversionPct ?? '', r.aov));
+  push('AGENT LEADERBOARD');
+  push('Agent', 'Revenue', 'Sales', 'Conversion %', 'Avg order');
+  report.agents.forEach((r) => push(r.name, r.revenue, r.sales, r.conversionPct ?? '', r.aov));
   push('');
-  push('CREATOR PERFORMANCE');
-  push('Creator', 'Model', 'Revenue', 'Creator payout', 'Agency profit');
-  report.creators.forEach((r) => push(r.name, r.model, r.revenue, r.creatorPayout, r.agencyProfit));
+  push('ACCOUNT PERFORMANCE');
+  push('Account', 'Model', 'Revenue', 'Account payout', 'Agency profit');
+  report.accounts.forEach((r) => push(r.name, r.model, r.revenue, r.accountPayout, r.agencyProfit));
   return rows.join('\n');
 }
 
-type ChatterRow = AnalyticsReport['chatters'][number] & { rank: number };
-type CreatorRow = AnalyticsReport['creators'][number];
+type AgentRow = AnalyticsReport['agents'][number] & { rank: number };
+type AccountRow = AnalyticsReport['accounts'][number];
 
-const chatterColumns: Column<ChatterRow>[] = [
+const agentColumns: Column<AgentRow>[] = [
   { key: 'rank', header: '#', width: 48, render: (r) => <span className="mono">{r.rank}</span> },
-  { key: 'name', header: 'Chatter', render: (r) => <span className="cname">{r.name}</span> },
+  { key: 'name', header: 'Agent', render: (r) => <span className="cname">{r.name}</span> },
   { key: 'revenue', header: 'Revenue', align: 'right', render: (r) => <Money amount={r.revenue} direction="in" /> },
   { key: 'sales', header: 'Sales', align: 'right', render: (r) => <span className="mono">{r.sales}</span> },
   { key: 'conversion', header: 'Conversion', align: 'right', render: (r) => <span className="mono">{r.conversionPct === null ? '—' : pct(r.conversionPct)}</span> },
   { key: 'aov', header: 'Avg order', align: 'right', render: (r) => <Money amount={r.aov} /> },
 ];
 
-const creatorColumns: Column<CreatorRow>[] = [
-  { key: 'name', header: 'Creator', render: (r) => <span className="cname">{r.name}</span> },
+const accountColumns: Column<AccountRow>[] = [
+  { key: 'name', header: 'Account', render: (r) => <span className="cname">{r.name}</span> },
   { key: 'model', header: 'Model', render: (r) => <Pill>{REVENUE_MODEL_LABELS[r.model]}</Pill> },
   { key: 'revenue', header: 'Revenue', align: 'right', render: (r) => <Money amount={r.revenue} direction="in" /> },
-  { key: 'payout', header: 'Creator payout', align: 'right', render: (r) => <Money amount={r.creatorPayout} direction="out" /> },
+  { key: 'payout', header: 'Account payout', align: 'right', render: (r) => <Money amount={r.accountPayout} direction="out" /> },
   { key: 'profit', header: 'Agency profit', align: 'right', render: (r) => <Money amount={r.agencyProfit} direction="in" /> },
   {
     key: 'note', header: 'Note',
@@ -144,14 +146,17 @@ const creatorColumns: Column<CreatorRow>[] = [
 ];
 
 export default function AnalyticsPage() {
-  const { role, activeWorkspace, currency } = useCurrentSession();
+  const { activeWorkspace, currency } = useCurrentSession();
   const can = useCan();
-  const canScope = role !== 'chatter' && role !== 'creator';
+  // Whoever sees the whole workspace may also pivot to one account or agent and
+  // read the agency-side figures. A scoped caller gets neither, and the server
+  // omits those fields regardless — this only keeps the UI honest about it.
+  const canScope = can('data.view_all');
 
   const [filters, setFilters] = useState<AnalyticsFilters>(defaultFilters);
   const [metric, setMetric] = useState<'gross' | 'net'>('gross');
 
-  const { dateWindow, report, previous, isLoading, isError, creators, chatters } =
+  const { dateWindow, report, previous, isLoading, isError, accounts, agents } =
     useAnalyticsData(filters, canScope);
 
   const setLastDays = (days: number) => {
@@ -171,23 +176,35 @@ export default function AnalyticsPage() {
   const actions = (
     <>
       <div className="field">
-        <input type="date" title="From" value={filters.from} max={filters.to} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))} />
+        <label htmlFor="analytics-from">From</label>
+        <input id="analytics-from" type="date" value={filters.from} max={filters.to}
+          onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))} />
       </div>
       <div className="field">
-        <input type="date" title="To" value={filters.to} min={filters.from} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))} />
+        <label htmlFor="analytics-to">To</label>
+        <input id="analytics-to" type="date" value={filters.to} min={filters.from}
+          onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))} />
       </div>
       <button className="btn ghost" onClick={() => setLastDays(14)}>14d</button>
       <button className="btn ghost" onClick={() => setLastDays(30)}>30d</button>
       <button className="btn ghost" onClick={() => setLastDays(90)}>90d</button>
       {canScope && (
         <>
-          <select value={filters.creatorId} onChange={(e) => setFilters((f) => ({ ...f, creatorId: e.target.value, chatterId: '' }))}>
-            <option value="">All creators</option>
-            {creators.map((c) => <option key={c.id} value={c.id}>{c.stageName}</option>)}
+          <select
+            aria-label="Filter by account"
+            value={filters.accountId}
+            onChange={(e) => setFilters((f) => ({ ...f, accountId: e.target.value, agentId: '' }))}
+          >
+            <option value="">All accounts</option>
+            {accounts.map((c) => <option key={c.id} value={c.id}>{c.stageName}</option>)}
           </select>
-          <select value={filters.chatterId} onChange={(e) => setFilters((f) => ({ ...f, chatterId: e.target.value, creatorId: '' }))}>
-            <option value="">All chatters</option>
-            {chatters.map((c) => <option key={c.membershipId} value={c.membershipId}>{c.name}</option>)}
+          <select
+            aria-label="Filter by agent"
+            value={filters.agentId}
+            onChange={(e) => setFilters((f) => ({ ...f, agentId: e.target.value, accountId: '' }))}
+          >
+            <option value="">All agents</option>
+            {agents.map((c) => <option key={c.membershipId} value={c.membershipId}>{c.name}</option>)}
           </select>
         </>
       )}
@@ -218,22 +235,25 @@ export default function AnalyticsPage() {
 
   const grossDelta = deltaText(h.gross, p?.gross);
   const netDelta = deltaText(h.net, p?.net);
-  const takeDelta = deltaText(h.takeRatePct, p?.takeRatePct);
+  const takeDelta = deltaText(h.takeRatePct ?? 0, p?.takeRatePct);
   const aovDelta = deltaText(h.aov, p?.aov);
   const paidDelta = deltaText(h.paidCount, p?.paidCount);
   const buyersDelta = deltaText(h.uniqueBuyers, p?.uniqueBuyers);
 
-  const distributed = h.platformFee + h.creatorPayout + h.chatterPayout + h.agencyKeep;
-  const parts = [
-    { label: 'Platform fee', amount: h.platformFee, direction: 'out' as const, tone: 'tone-muted' as const },
-    { label: 'Creator payout', amount: h.creatorPayout, direction: 'out' as const, tone: 'tone-pos' as const },
-    { label: 'Chatter payout', amount: h.chatterPayout, direction: 'out' as const, tone: 'tone-info' as const },
+  // The server omits these entirely for a scoped caller, so `canScope` and the
+  // presence of the data agree; the sections below simply don't render.
+  const parts = h.agencyKeep === undefined ? [] : [
+    { label: 'Platform fee', amount: h.platformFee ?? 0, direction: 'out' as const, tone: 'tone-muted' as const },
+    { label: 'Account payout', amount: h.accountPayout ?? 0, direction: 'out' as const, tone: 'tone-pos' as const },
+    { label: 'Agent payout', amount: h.agentPayout ?? 0, direction: 'out' as const, tone: 'tone-info' as const },
     { label: 'Agency keep', amount: h.agencyKeep, direction: 'in' as const, tone: 'tone-accent' as const },
   ];
+  const distributed = parts.reduce((sum, part) => sum + part.amount, 0);
 
   const segmentMax = Math.max(...cu.segments.map((s) => s.revenue), 1);
   const newVsReturningTotal = cu.newVsReturning.newRev + cu.newVsReturning.retRev;
-  const lossTotal = cb.byBearer.creator + cb.byBearer.agency;
+  const byBearer = cb.byBearer;
+  const lossTotal = byBearer ? byBearer.account + byBearer.agency : 0;
 
   return (
     <div>
@@ -242,7 +262,9 @@ export default function AnalyticsPage() {
       <StatGrid>
         <StatCard label="Gross" value={<Money amount={h.gross} direction="in" />} sub={grossDelta?.text} trend={grossDelta?.trend} />
         <StatCard label="Net after fees" value={<Money amount={h.net} direction="in" emphasis />} sub={netDelta?.text} trend={netDelta?.trend} />
-        <StatCard label="Take rate" value={pct(h.takeRatePct)} sub={takeDelta?.text} trend={takeDelta?.trend} />
+        {h.takeRatePct !== undefined && (
+          <StatCard label="Take rate" value={pct(h.takeRatePct)} sub={takeDelta?.text} trend={takeDelta?.trend} />
+        )}
         <StatCard label="Avg order" value={<Money amount={h.aov} />} sub={aovDelta?.text} trend={aovDelta?.trend} />
         <StatCard label="Paid sales" value={h.paidCount} sub={paidDelta?.text} trend={paidDelta?.trend} />
         <StatCard label="Unique buyers" value={h.uniqueBuyers} sub={buyersDelta?.text} trend={buyersDelta?.trend} />
@@ -258,7 +280,8 @@ export default function AnalyticsPage() {
           <BarChart points={dailyBars(report.timeseries, dateWindow, metric)} currency={currency} />
         </div>
 
-        <div className="grid2">
+        <div className={parts.length ? 'grid2' : undefined}>
+          {parts.length > 0 && (
           <div className="card">
             <div className="sechead">Where the money goes</div>
             <div className="wf-bar">
@@ -276,6 +299,7 @@ export default function AnalyticsPage() {
               />
             ))}
           </div>
+          )}
 
           <div className="card">
             <div className="sechead">Link funnel</div>
@@ -294,25 +318,32 @@ export default function AnalyticsPage() {
           </div>
         </div>
 
-        <section>
-          <div className="sechead">Chatter leaderboard</div>
-          <DataTable
-            columns={chatterColumns}
-            rows={report.chatters.map((r, i) => ({ ...r, rank: i + 1 }))}
-            rowKey={(r) => r.name}
-            emptyTitle="No sales in this period."
-          />
-        </section>
+        {/* Both tables rank people against each other, so they belong to the
+            roles that run the workspace. The server sends empty arrays to
+            everyone else. */}
+        {canScope && (
+          <>
+            <section>
+              <div className="sechead">Agent leaderboard</div>
+              <DataTable
+                columns={agentColumns}
+                rows={report.agents.map((r, i) => ({ ...r, rank: i + 1 }))}
+                rowKey={(_, i) => String(i)}
+                emptyTitle="No sales in this period."
+              />
+            </section>
 
-        <section>
-          <div className="sechead">Creator performance</div>
-          <DataTable
-            columns={creatorColumns}
-            rows={report.creators}
-            rowKey={(r) => r.name}
-            emptyTitle="No sales in this period."
-          />
-        </section>
+            <section>
+              <div className="sechead">Account performance</div>
+              <DataTable
+                columns={accountColumns}
+                rows={report.accounts}
+                rowKey={(_, i) => String(i)}
+                emptyTitle="No sales in this period."
+              />
+            </section>
+          </>
+        )}
 
         <div className="grid2">
           <div className="card">
@@ -361,9 +392,13 @@ export default function AnalyticsPage() {
             <StatCard label="Fee cost" value={<Money amount={cb.feeCost} direction="out" />} />
             <StatCard label="Reversed value" value={<Money amount={cb.valueReversed} direction="out" />} />
           </StatGrid>
-          <div className="sechead">Who absorbs the loss</div>
-          <MetricRow label="Creators" sharePct={share(cb.byBearer.creator, lossTotal)} value={<Money amount={cb.byBearer.creator} direction="out" />} />
-          <MetricRow label="Agency" sharePct={share(cb.byBearer.agency, lossTotal)} value={<Money amount={cb.byBearer.agency} direction="out" />} />
+          {byBearer && (
+            <>
+              <div className="sechead">Who absorbs the loss</div>
+              <MetricRow label="Accounts" sharePct={share(byBearer.account, lossTotal)} value={<Money amount={byBearer.account} direction="out" />} />
+              <MetricRow label="Agency" sharePct={share(byBearer.agency, lossTotal)} value={<Money amount={byBearer.agency} direction="out" />} />
+            </>
+          )}
         </div>
 
         <div className="card">

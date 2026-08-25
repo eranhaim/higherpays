@@ -21,7 +21,7 @@ const { Pool } = require('pg');
 const pool = new Pool({ connectionString: DSN });
 const n = (v) => Number(v);
 
-/** Fresh org + workspace + creator + customer, with a known rate card. */
+/** Fresh org + workspace + account + customer, with a known rate card. */
 async function fixture(opts = {}) {
   const tag = Math.random().toString(36).slice(2, 8);
   const org = (await pool.query(
@@ -35,22 +35,22 @@ async function fixture(opts = {}) {
   const ws = (await pool.query(
     "INSERT INTO workspaces(organization_id,name,currency) VALUES($1,'W','EUR') RETURNING id", [org])).rows[0].id;
   await pool.query(
-    "INSERT INTO commission_rules(workspace_id,creator_split_pct,agency_split_pct,chatter_pct,effective_from) VALUES($1,70,20,$2,'-infinity')",
-    [ws, opts.chatterPct ?? 10]);
-  const creator = (await pool.query(
-    "INSERT INTO creators(workspace_id,stage_name,revenue_model,revenue_split_pct) VALUES($1,'Ava',$2,$3) RETURNING id",
+    "INSERT INTO commission_rules(workspace_id,account_split_pct,agency_split_pct,agent_pct,effective_from) VALUES($1,70,20,$2,'-infinity')",
+    [ws, opts.agentPct ?? 10]);
+  const account = (await pool.query(
+    "INSERT INTO accounts(workspace_id,stage_name,revenue_model,revenue_split_pct) VALUES($1,'Ava',$2,$3) RETURNING id",
     [ws, opts.revenueModel ?? 'revshare', opts.split ?? 70])).rows[0].id;
   const customer = (await pool.query(
-    "INSERT INTO customers(workspace_id,creator_id,alias,segment) VALUES($1,$2,'w','vip') RETURNING id", [ws, creator])).rows[0].id;
-  return { org, ws, creator, customer };
+    "INSERT INTO customers(workspace_id,account_id,alias,segment) VALUES($1,$2,'w','vip') RETURNING id", [ws, account])).rows[0].id;
+  return { org, ws, account, customer };
 }
 
 async function postSale(f, gross, extra = {}) {
   const tx = (await pool.query(
-    `INSERT INTO transactions(workspace_id,creator_id,customer_id,attributed_membership_id,
+    `INSERT INTO transactions(workspace_id,account_id,customer_id,attributed_membership_id,
        type,status,gross,net,currency,surcharge,provider_transaction_id)
      VALUES($1,$2,$3,$4,'payment','approved',$5,$5,'EUR',$6,$7) RETURNING id`,
-    [f.ws, f.creator, f.customer, extra.membershipId ?? null, gross,
+    [f.ws, f.account, f.customer, extra.membershipId ?? null, gross,
       extra.surcharge ?? 0, 'tx-' + Math.random()])).rows[0].id;
   await pool.query('SELECT fn_post_sale($1)', [tx]);
   return (await pool.query('SELECT * FROM commission_entries WHERE transaction_id=$1', [tx])).rows[0];
@@ -105,43 +105,43 @@ test('the surcharge never reduces what is distributable', async () => {
 test('splits reconcile exactly and nothing is lost', async () => {
   const f = await fixture({ feeModel: 'cascade', mdr: 7, settlement: 1, fixed: 0.50, margin: 5 });
   const e = await postSale(f, 100);
-  const parts = n(e.creator_amount) + n(e.chatter_amount) + n(e.agency_amount);
+  const parts = n(e.account_amount) + n(e.agent_amount) + n(e.agency_amount);
   assert.ok(Math.abs(parts - n(e.distributable)) < 1e-9, 'splits sum to distributable');
   assert.ok(Math.abs(n(e.platform_fee) + n(e.distributable) - n(e.gross)) < 1e-9, 'fee + distributable = gross');
 });
 
 test('a €100 deal splits to the documented figures', async () => {
-  const f = await fixture({ feeModel: 'cascade', mdr: 7, settlement: 1, fixed: 0.50, margin: 5, split: 70, chatterPct: 10 });
+  const f = await fixture({ feeModel: 'cascade', mdr: 7, settlement: 1, fixed: 0.50, margin: 5, split: 70, agentPct: 10 });
   const e = await postSale(f, 100);
   // Fees are itemised to four decimals, but everything paid out is whole cents:
   // PSP 8.425 + HigherPays 5.00 = 13.425 → 13.43 taken, 86.57 to distribute.
   assert.equal(n(e.platform_fee), 13.43);
   assert.equal(n(e.distributable), 86.57);
-  assert.equal(n(e.creator_amount), 60.60, '70% of 86.57, rounded');
-  assert.equal(n(e.chatter_amount), 8.66, '10% of 86.57, rounded');
+  assert.equal(n(e.account_amount), 60.60, '70% of 86.57, rounded');
+  assert.equal(n(e.agent_amount), 8.66, '10% of 86.57, rounded');
   assert.equal(n(e.agency_amount), 17.31, 'the agency takes the remainder');
 });
 
-test('salary and AI creators take no per-sale share', async () => {
+test('salary and AI accounts take no per-sale share', async () => {
   for (const model of ['salary', 'ai']) {
     const f = await fixture({ revenueModel: model, feeModel: 'flat', pspRate: 8, fixed: 0.50, margin: 5 });
     const e = await postSale(f, 100);
-    assert.equal(n(e.creator_amount), 0, model);
+    assert.equal(n(e.account_amount), 0, model);
     assert.ok(n(e.agency_amount) > 0, `${model}: agency keeps the distributable`);
   }
 });
 
-test("a chatter's own commission rate overrides the workspace rule", async () => {
-  const f = await fixture({ feeModel: 'flat', pspRate: 8, fixed: 0.50, margin: 0, chatterPct: 10 });
+test("a agent's own commission rate overrides the workspace rule", async () => {
+  const f = await fixture({ feeModel: 'flat', pspRate: 8, fixed: 0.50, margin: 0, agentPct: 10 });
   const u = (await pool.query(
     "INSERT INTO users(email,password_hash,full_name) VALUES($1,'x','Sam') RETURNING id",
     ['sam' + Math.random() + '@x.com'])).rows[0].id;
   const m = (await pool.query(
-    "INSERT INTO memberships(workspace_id,user_id,role,status,commission_pct) VALUES($1,$2,'chatter','active',25) RETURNING id",
+    "INSERT INTO memberships(workspace_id,user_id,role,status,commission_pct) VALUES($1,$2,'agent','active',25) RETURNING id",
     [f.ws, u])).rows[0].id;
   const e = await postSale(f, 100, { membershipId: m });
   const expected = Math.round(n(e.distributable) * 0.25 * 100) / 100;
-  assert.equal(n(e.chatter_amount), expected, '25%, not the workspace default 10%');
+  assert.equal(n(e.agent_amount), expected, '25%, not the workspace default 10%');
 });
 
 // ── Reversals ────────────────────────────────────────────────────────────────
@@ -154,10 +154,10 @@ test('a refund reverses the sale and charges the refund fee to the right party',
   const sale = await postSale(f, 100);
   await pool.query('SELECT fn_post_refund($1)', [sale.transaction_id]);
   const net = (await pool.query(
-    `SELECT SUM(creator_amount) c, SUM(chatter_amount) ch, SUM(agency_amount) a
+    `SELECT SUM(account_amount) c, SUM(agent_amount) ch, SUM(agency_amount) a
        FROM commission_entries WHERE transaction_id=$1`, [sale.transaction_id])).rows[0];
-  assert.equal(n(net.ch), 0, 'chatter always loses the commission');
-  assert.ok(Math.abs(n(net.c) + 15) < 1e-9, 'rev-share creator bears the refund fee');
+  assert.equal(n(net.ch), 0, 'agent always loses the commission');
+  assert.ok(Math.abs(n(net.c) + 15) < 1e-9, 'rev-share account bears the refund fee');
   assert.equal(n(net.a), 0, 'agency back to zero');
 });
 

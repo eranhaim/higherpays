@@ -1,28 +1,28 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
 
-export type ChatterStatus = 'active' | 'offline';
-export type ChatterShift = 'Day' | 'Night';
+export type AgentStatus = 'active' | 'offline';
+export type AgentShift = 'Day' | 'Night';
 
 /**
- * A chatter membership. The backend calls the endpoint "memberships" but the
- * response is scoped to chatter-role users only; other role rows are dropped.
+ * A agent membership. The backend calls the endpoint "memberships" but the
+ * response is scoped to agent-role users only; other role rows are dropped.
  */
-export interface Chatter {
+export interface Agent {
   membershipId: string;
   name: string;
   email: string;
-  status: ChatterStatus;
-  shift: ChatterShift;
+  status: AgentStatus;
+  shift: AgentShift;
   commissionPct: number | null;
 }
 
-interface RawChatter {
+interface RawAgent {
   membershipId: string;
   name: string;
   email: string;
-  status: ChatterStatus;
-  shift: ChatterShift;
+  status: AgentStatus;
+  shift: AgentShift;
   commissionPct: number | string | null;
 }
 
@@ -44,9 +44,9 @@ function toNullableNumber(v: unknown): number | null {
 }
 
 export const membershipsApi = {
-  async listChatters(): Promise<Chatter[]> {
-    const raw = await api.get<{ chatters: RawChatter[] }>(workspacePath('/memberships'));
-    return raw.chatters.map((c) => ({
+  async listAgents(): Promise<Agent[]> {
+    const raw = await api.get<{ agents: RawAgent[] }>(workspacePath('/memberships'));
+    return raw.agents.map((c) => ({
       membershipId: c.membershipId,
       name: c.name,
       email: c.email,

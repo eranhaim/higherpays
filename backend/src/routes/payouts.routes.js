@@ -11,6 +11,7 @@ const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
+const { resolveDataScope } = require('../auth/dataScope');
 
 // POST /workspaces/:wid/transactions/:txId/post-sale
 // Normally the webhook handler calls this when a payment settles. Exposed here
@@ -46,8 +47,8 @@ router.get('/payouts/summary', requirePermission('commissions.view'), asyncHandl
   const data = await withWorkspace(wid(req), uid(req), async (c) => {
     const totals = (await c.query(
       `SELECT
-         COALESCE(SUM(creator_amount),0)  AS creators,
-         COALESCE(SUM(chatter_amount),0)  AS chatters,
+         COALESCE(SUM(account_amount),0)  AS accounts,
+         COALESCE(SUM(agent_amount),0)    AS agents,
          COALESCE(SUM(agency_amount),0)   AS agency,
          COALESCE(SUM(platform_margin),0) AS higherpays_margin,
          COALESCE(SUM(gross - psp_fee),0) - COALESCE(SUM(chargeback_fee),0) AS expected_settlement,
@@ -56,99 +57,116 @@ router.get('/payouts/summary', requirePermission('commissions.view'), asyncHandl
          COUNT(*) FILTER (WHERE entry_type='chargeback')                AS chargebacks
        FROM commission_entries WHERE workspace_id=$1`, [wid(req)])).rows[0];
 
-    // monthly salary obligations for salaried creators (separate from per-sale)
+    // monthly salary obligations for salaried accounts (separate from per-sale)
     const salaries = (await c.query(
       `SELECT COALESCE(SUM(salary),0) AS monthly_salaries
-       FROM creators WHERE workspace_id=$1 AND revenue_model='salary' AND status='active'`, [wid(req)])).rows[0];
+       FROM accounts WHERE workspace_id=$1 AND revenue_model='salary' AND status='active'`, [wid(req)])).rows[0];
 
-    const perCreator = (await c.query(
-      `SELECT cr.id, cr.stage_name, cr.revenue_model,
-              COALESCE(SUM(ce.creator_amount),0) AS net_creator,
+    const perAccount = (await c.query(
+      `SELECT a.id, a.stage_name, a.revenue_model,
+              COALESCE(SUM(ce.account_amount),0) AS net_account,
               COALESCE(SUM(ce.chargeback_fee) FILTER (WHERE ce.entry_type='chargeback'),0) AS chargeback_fees,
               COUNT(*) FILTER (WHERE ce.entry_type='chargeback') AS chargebacks
-       FROM creators cr LEFT JOIN commission_entries ce ON ce.creator_id=cr.id
-       WHERE cr.workspace_id=$1 GROUP BY cr.id, cr.stage_name, cr.revenue_model
-       ORDER BY net_creator DESC`, [wid(req)])).rows;
+       FROM accounts a LEFT JOIN commission_entries ce ON ce.account_id=a.id
+       WHERE a.workspace_id=$1 GROUP BY a.id, a.stage_name, a.revenue_model
+       ORDER BY net_account DESC`, [wid(req)])).rows;
 
-    return { totals, monthlySalaries: salaries.monthly_salaries, perCreator };
+    return { totals, monthlySalaries: salaries.monthly_salaries, perAccount };
   });
   res.json(data);
 }));
 
-// GET /workspaces/:wid/creators/:id/earnings
-// What a rev-share creator sees on her console: net earnings + chargeback detail.
-router.get('/creators/:id/earnings', requirePermission('commissions.view'), asyncHandler(async (req, res) => {
+// GET /workspaces/:wid/accounts/:id/earnings
+// What a rev-share account sees on its console: net earnings + chargeback detail.
+router.get('/accounts/:id/earnings', requirePermission('commissions.view'), asyncHandler(async (req, res) => {
   const data = await withWorkspace(wid(req), uid(req), async (c) => {
-    const cr = (await c.query('SELECT id, stage_name, revenue_model, salary FROM creators WHERE id=$1 AND workspace_id=$2', [req.params.id, wid(req)])).rows[0];
-    if (!cr) return null;
+    const acct = (await c.query('SELECT id, stage_name, revenue_model, salary FROM accounts WHERE id=$1 AND workspace_id=$2', [req.params.id, wid(req)])).rows[0];
+    if (!acct) return null;
     const e = (await c.query(
       `SELECT
-         COALESCE(SUM(creator_amount) FILTER (WHERE entry_type='sale'),0)       AS gross_earnings,
-         COALESCE(SUM(-creator_amount) FILTER (WHERE entry_type='chargeback'),0) AS chargeback_amount,
+         COALESCE(SUM(account_amount) FILTER (WHERE entry_type='sale'),0)        AS gross_earnings,
+         COALESCE(SUM(-account_amount) FILTER (WHERE entry_type='chargeback'),0) AS chargeback_amount,
          COALESCE(SUM(chargeback_fee) FILTER (WHERE entry_type='chargeback'),0)  AS chargeback_fees,
-         COALESCE(SUM(creator_amount),0)                                         AS net_earnings,
+         COALESCE(SUM(account_amount),0)                                         AS net_earnings,
          COUNT(*) FILTER (WHERE entry_type='chargeback')                         AS chargebacks
-       FROM commission_entries WHERE creator_id=$1`, [cr.id])).rows[0];
-    return { creator: cr, earnings: e };
+       FROM commission_entries WHERE account_id=$1`, [acct.id])).rows[0];
+    return { account: acct, earnings: e };
   });
   if (!data) return res.status(404).json({ error: 'not_found' });
   res.json(data);
 }));
 
 // GET /workspaces/:wid/transactions?limit&cursor — the Payments tab feed, newest first.
+// An agent sees sales credited to them; an account sees sales on its own
+// record. Both lose platform_fee — gross minus fee is the agency's take, which
+// is not theirs to compute. An account also loses the agent's name.
 router.get('/transactions', requirePermission('payments.view'), asyncHandler(async (req, res) => {
   const limit = parseLimit(req.query.limit);
   const cursor = decodeCursor(req.query.cursor);
-  const rows = await withWorkspace(wid(req), uid(req), async (c) => (await c.query(
-    `SELECT t.id, t.provider_transaction_id, t.gross, t.platform_fee, t.status, t.occurred_at,
-            cr.stage_name AS creator, cu.alias AS customer, u.full_name AS chatter
-     FROM transactions t
-     LEFT JOIN creators cr ON cr.id = t.creator_id
-     LEFT JOIN customers cu ON cu.id = t.customer_id
-     LEFT JOIN memberships m ON m.id = t.attributed_membership_id
-     LEFT JOIN users u ON u.id = m.user_id
-     WHERE t.workspace_id = $1
-       AND ($2::timestamptz IS NULL OR (t.occurred_at, t.id) < ($2::timestamptz, $3::uuid))
-     ORDER BY t.occurred_at DESC, t.id DESC LIMIT $4`,
-    [wid(req), cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1])).rows);
+  const out = await withWorkspace(wid(req), uid(req), async (c) => {
+    const scope = await resolveDataScope(c, req);
+    const rows = (await c.query(
+      `SELECT t.id, t.provider_transaction_id, t.gross, t.platform_fee, t.status, t.occurred_at,
+              a.stage_name AS account, cu.alias AS customer, u.full_name AS agent
+       FROM transactions t
+       LEFT JOIN accounts a ON a.id = t.account_id
+       LEFT JOIN customers cu ON cu.id = t.customer_id
+       LEFT JOIN memberships m ON m.id = t.attributed_membership_id
+       LEFT JOIN users u ON u.id = m.user_id
+       WHERE t.workspace_id = $1
+         AND ($2::uuid IS NULL OR t.attributed_membership_id = $2::uuid)
+         AND ($3::uuid IS NULL OR t.account_id = $3::uuid)
+         AND ($4::timestamptz IS NULL OR (t.occurred_at, t.id) < ($4::timestamptz, $5::uuid))
+       ORDER BY t.occurred_at DESC, t.id DESC LIMIT $6`,
+      [wid(req),
+        scope.kind === 'agent' ? scope.membershipId : null,
+        scope.kind === 'account' ? scope.accountId : null,
+        cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1])).rows;
+    return { rows, scope };
+  });
+  const rows = out.scope.kind === 'workspace' ? out.rows : out.rows.map((r) => {
+    const { platform_fee, ...rest } = r;
+    if (out.scope.kind === 'account') delete rest.agent;
+    return rest;
+  });
   res.json(page(rows, limit, (r) => r.occurred_at, (r) => r.id));
 }));
 
-// GET /workspaces/:wid/payouts/breakdown?from&to — accrued owed per creator + per chatter
+// GET /workspaces/:wid/payouts/breakdown?from&to — accrued owed per account + per agent
 router.get('/payouts/breakdown', requirePermission('commissions.view'), asyncHandler(async (req, res) => {
   const to = req.query.to ? new Date(req.query.to) : new Date();
   const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 86400000);
   const F = from.toISOString(), T = to.toISOString();
   const data = await withWorkspace(wid(req), uid(req), async (c) => {
-    const perCreator = (await c.query(`
-      SELECT cr.id, cr.stage_name AS name, cr.revenue_model AS model, cr.salary,
+    const perAccount = (await c.query(`
+      SELECT a.id, a.stage_name AS name, a.revenue_model AS model, a.salary,
              COALESCE(agg.revenue,0) AS revenue, COALESCE(agg.owed,0) AS owed
-      FROM creators cr
+      FROM accounts a
       LEFT JOIN (
-        SELECT ce.creator_id, SUM(ce.gross) AS revenue, SUM(ce.creator_amount) FILTER (WHERE ce.creator_payout_id IS NULL) AS owed
+        SELECT ce.account_id, SUM(ce.gross) AS revenue, SUM(ce.account_amount) FILTER (WHERE ce.account_payout_id IS NULL) AS owed
         FROM commission_entries ce JOIN transactions t ON t.id = ce.transaction_id
-        WHERE t.occurred_at >= $1 AND t.occurred_at <= $2 GROUP BY ce.creator_id
-      ) agg ON agg.creator_id = cr.id
-      WHERE cr.workspace_id = $3 ORDER BY owed DESC`, [F, T, wid(req)])).rows;
-    const perChatter = (await c.query(`
+        WHERE t.occurred_at >= $1 AND t.occurred_at <= $2 GROUP BY ce.account_id
+      ) agg ON agg.account_id = a.id
+      WHERE a.workspace_id = $3 ORDER BY owed DESC`, [F, T, wid(req)])).rows;
+    const perAgent = (await c.query(`
       SELECT m.id, u.full_name AS name, COALESCE(agg.owed,0) AS owed, COALESCE(agg.sales,0) AS sales
       FROM memberships m JOIN users u ON u.id = m.user_id
       LEFT JOIN (
-        SELECT ce.chatter_membership_id AS mid, SUM(ce.chatter_amount) FILTER (WHERE ce.chatter_payout_id IS NULL) AS owed,
+        SELECT ce.agent_membership_id AS mid, SUM(ce.agent_amount) FILTER (WHERE ce.agent_payout_id IS NULL) AS owed,
                COUNT(*) FILTER (WHERE ce.entry_type='sale') AS sales
         FROM commission_entries ce JOIN transactions t ON t.id = ce.transaction_id
-        WHERE t.occurred_at >= $1 AND t.occurred_at <= $2 GROUP BY ce.chatter_membership_id
+        WHERE t.occurred_at >= $1 AND t.occurred_at <= $2 GROUP BY ce.agent_membership_id
       ) agg ON agg.mid = m.id
-      WHERE m.workspace_id = $3 AND m.role = 'chatter' AND m.status = 'active'
+      WHERE m.workspace_id = $3 AND m.role = 'agent' AND m.status = 'active'
       ORDER BY owed DESC`, [F, T, wid(req)])).rows;
-    return { perCreator, perChatter };
+    return { perAccount, perAgent };
   });
   const num = (v) => Number(v || 0);
   const round2 = (v) => Math.round(v * 100) / 100;
 
   // Rolling reserve: the provider holds a % of settled volume. It is the agency's
   // own money, released later — but until then the agency is fronting it if it
-  // pays creators/chatters their full share.
+  // pays accounts/agents their full share.
   const reserve = await withWorkspace(wid(req), uid(req), async (c) => {
     const cfg = (await c.query(
       `SELECT r.reserve_pct, r.reserve_release_days
@@ -173,8 +191,8 @@ router.get('/payouts/breakdown', requirePermission('commissions.view'), asyncHan
     return { pct, releaseDays: days, held: round2(Number(gross) * pct / 100), source: 'estimated' };
   });
 
-  const creatorsOwed = data.perCreator.reduce((s, r) => s + num(r.owed), 0);
-  const chattersOwed = data.perChatter.reduce((s, r) => s + num(r.owed), 0);
+  const accountsOwed = data.perAccount.reduce((s, r) => s + num(r.owed), 0);
+  const agentsOwed = data.perAgent.reduce((s, r) => s + num(r.owed), 0);
   // What actually reached the agency this period: gross minus every fee.
   const received = await withWorkspace(wid(req), uid(req), async (c) => num((await c.query(
     `SELECT COALESCE(SUM(ce.distributable),0) AS received
@@ -183,48 +201,48 @@ router.get('/payouts/breakdown', requirePermission('commissions.view'), asyncHan
 
   res.json({
     range: { from: F, to: T },
-    perCreator: data.perCreator.map((r) => ({ id: r.id, name: r.name, model: r.model, salary: num(r.salary), revenue: num(r.revenue), owed: num(r.owed) })),
-    perChatter: data.perChatter.map((r) => ({ id: r.id, name: r.name, owed: num(r.owed), sales: num(r.sales) })),
+    perAccount: data.perAccount.map((r) => ({ id: r.id, name: r.name, model: r.model, salary: num(r.salary), revenue: num(r.revenue), owed: num(r.owed) })),
+    perAgent: data.perAgent.map((r) => ({ id: r.id, name: r.name, owed: num(r.owed), sales: num(r.sales) })),
     reserve,
-    cash: cashPosition({ owed: creatorsOwed + chattersOwed, received, held: reserve.held }),
+    cash: cashPosition({ owed: accountsOwed + agentsOwed, received, held: reserve.held }),
   });
 }));
 
 // One fixed statement set per payee type: the money path carries no
 // string-built SQL. $1 from, $2 to, $3 optional target id (NULL = everyone).
 const PAYOUT_SQL = {
-  creator: {
+  account: {
     unpaid: `
-      SELECT ce.creator_id AS rid, SUM(ce.creator_amount) AS amount,
+      SELECT ce.account_id AS rid, SUM(ce.account_amount) AS amount,
              MIN(t.occurred_at)::date AS ps, MAX(t.occurred_at)::date AS pe
         FROM commission_entries ce JOIN transactions t ON t.id = ce.transaction_id
        WHERE t.occurred_at >= $1 AND t.occurred_at <= $2
-         AND ce.creator_payout_id IS NULL AND ce.creator_id IS NOT NULL
-         AND ($3::uuid IS NULL OR ce.creator_id = $3::uuid)
-       GROUP BY ce.creator_id HAVING SUM(ce.creator_amount) > 0`,
+         AND ce.account_payout_id IS NULL AND ce.account_id IS NOT NULL
+         AND ($3::uuid IS NULL OR ce.account_id = $3::uuid)
+       GROUP BY ce.account_id HAVING SUM(ce.account_amount) > 0`,
     insert: `
-      INSERT INTO payouts (workspace_id, payee_type, creator_id, period_start, period_end, amount, net, currency, status)
-      VALUES ($1, 'creator', $2, $3, $4, $5, $5, $6, 'recorded') RETURNING id`,
+      INSERT INTO payouts (workspace_id, payee_type, account_id, period_start, period_end, amount, net, currency, status)
+      VALUES ($1, 'account', $2, $3, $4, $5, $5, $6, 'recorded') RETURNING id`,
     settle: `
-      UPDATE commission_entries SET creator_payout_id = $1, creator_paid_at = now()
-       WHERE creator_id = $2 AND creator_payout_id IS NULL
+      UPDATE commission_entries SET account_payout_id = $1, account_paid_at = now()
+       WHERE account_id = $2 AND account_payout_id IS NULL
          AND transaction_id IN (SELECT id FROM transactions WHERE occurred_at >= $3 AND occurred_at <= $4)`,
   },
-  chatter: {
+  agent: {
     unpaid: `
-      SELECT ce.chatter_membership_id AS rid, SUM(ce.chatter_amount) AS amount,
+      SELECT ce.agent_membership_id AS rid, SUM(ce.agent_amount) AS amount,
              MIN(t.occurred_at)::date AS ps, MAX(t.occurred_at)::date AS pe
         FROM commission_entries ce JOIN transactions t ON t.id = ce.transaction_id
        WHERE t.occurred_at >= $1 AND t.occurred_at <= $2
-         AND ce.chatter_payout_id IS NULL AND ce.chatter_membership_id IS NOT NULL
-         AND ($3::uuid IS NULL OR ce.chatter_membership_id = $3::uuid)
-       GROUP BY ce.chatter_membership_id HAVING SUM(ce.chatter_amount) > 0`,
+         AND ce.agent_payout_id IS NULL AND ce.agent_membership_id IS NOT NULL
+         AND ($3::uuid IS NULL OR ce.agent_membership_id = $3::uuid)
+       GROUP BY ce.agent_membership_id HAVING SUM(ce.agent_amount) > 0`,
     insert: `
       INSERT INTO payouts (workspace_id, payee_type, membership_id, period_start, period_end, amount, net, currency, status)
-      VALUES ($1, 'chatter', $2, $3, $4, $5, $5, $6, 'recorded') RETURNING id`,
+      VALUES ($1, 'agent', $2, $3, $4, $5, $5, $6, 'recorded') RETURNING id`,
     settle: `
-      UPDATE commission_entries SET chatter_payout_id = $1, chatter_paid_at = now()
-       WHERE chatter_membership_id = $2 AND chatter_payout_id IS NULL
+      UPDATE commission_entries SET agent_payout_id = $1, agent_paid_at = now()
+       WHERE agent_membership_id = $2 AND agent_payout_id IS NULL
          AND transaction_id IN (SELECT id FROM transactions WHERE occurred_at >= $3 AND occurred_at <= $4)`,
   },
 };
@@ -306,8 +324,8 @@ router.post('/transactions/:txId/refund', requirePermission('commissions.manage'
     ok: true, external, providerRefundAvailable,
     refunded: result.gross, currency: result.currency,
     refundFee: Number(e.chargeback_fee || 0),
-    creatorAdjustment: Number(e.creator_amount || 0),
-    chatterAdjustment: Number(e.chatter_amount || 0),
+    accountAdjustment: Number(e.account_amount || 0),
+    agentAdjustment: Number(e.agent_amount || 0),
     agencyAdjustment: Number(e.agency_amount || 0),
   });
 }));

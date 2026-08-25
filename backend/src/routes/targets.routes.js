@@ -10,6 +10,7 @@ const config = require('../config');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
+const { resolveDataScope } = require('../auth/dataScope');
 const num = (v) => Number(v || 0);
 const METRICS = ['gross', 'sales', 'aov', 'buyers', 'conversion'];
 const PERIODS = ['day', 'week', 'month', 'quarter'];
@@ -55,7 +56,8 @@ router.delete('/:id', requirePermission('team.manage'), asyncHandler(async (req,
   res.json({ ok: true });
 }));
 
-// GET /leaderboard?period=&from=&to= — chatter actuals vs targets, ranked
+// GET /leaderboard?period=&from=&to= — agent actuals vs targets, ranked.
+// This board is about agents, so an account has no place on it or in it.
 router.get('/leaderboard', requirePermission('analytics.view'), asyncHandler(async (req, res) => {
   const period = PERIODS.includes(req.query.period) ? req.query.period : 'month';
   let { from, to } = periodRange(period);
@@ -63,6 +65,8 @@ router.get('/leaderboard', requirePermission('analytics.view'), asyncHandler(asy
   if (req.query.to) to = new Date(req.query.to).toISOString();
 
   const data = await withWorkspace(wid(req), uid(req), async (c) => {
+    const scope = await resolveDataScope(c, req);
+    if (scope.kind === 'account') return { forbidden: true };
     const led = (await c.query(`
       SELECT m.id AS membership_id, u.full_name AS name,
              COALESCE(SUM(ce.gross),0) AS gross,
@@ -70,7 +74,7 @@ router.get('/leaderboard', requirePermission('analytics.view'), asyncHandler(asy
              COUNT(DISTINCT t.customer_id) FILTER (WHERE ce.entry_type='sale') AS buyers
       FROM commission_entries ce
       JOIN transactions t ON t.id = ce.transaction_id
-      JOIN memberships m ON m.id = ce.chatter_membership_id
+      JOIN memberships m ON m.id = ce.agent_membership_id
       JOIN users u ON u.id = m.user_id
       WHERE t.occurred_at >= $1 AND t.occurred_at <= $2
       GROUP BY m.id, u.full_name`, [from, to])).rows;
@@ -81,10 +85,11 @@ router.get('/leaderboard', requirePermission('analytics.view'), asyncHandler(asy
     const members = (await c.query(`
       SELECT m.id AS membership_id, u.full_name AS name
       FROM memberships m JOIN users u ON u.id = m.user_id
-      WHERE m.role = 'chatter' AND m.status = 'active'`)).rows;
+      WHERE m.role = 'agent' AND m.status = 'active'`)).rows;
     const targets = (await c.query('SELECT membership_id, metric, target_value FROM kpi_targets WHERE period = $1', [period])).rows;
-    return { led, links, members, targets };
+    return { led, links, members, targets, scope };
   });
+  if (data.forbidden) return res.status(403).json({ error: 'forbidden' });
 
   const lmap = Object.fromEntries(data.links.map((r) => [r.membership_id, r]));
   const ledmap = Object.fromEntries(data.led.map((r) => [r.membership_id, r]));
@@ -94,7 +99,7 @@ router.get('/leaderboard', requirePermission('analytics.view'), asyncHandler(asy
     else wsTargets[t.metric] = num(t.target_value);
   });
   const ids = new Set([...data.members.map((m) => m.membership_id), ...data.led.map((r) => r.membership_id)]);
-  const rows = [...ids].map((id) => {
+  const full = [...ids].map((id) => {
     const l = ledmap[id] || {}; const lk = lmap[id];
     const name = (data.members.find((m) => m.membership_id === id) || l).name || '—';
     const gross = num(l.gross), sales = num(l.sales), buyers = num(l.buyers);
@@ -102,6 +107,15 @@ router.get('/leaderboard', requirePermission('analytics.view'), asyncHandler(asy
     const actuals = { gross, sales, buyers, aov: sales ? +(gross / sales).toFixed(2) : 0, conversion: created ? +(paid / created * 100).toFixed(1) : 0 };
     return { membershipId: id, name, actuals, targets: tByMember[id] || {} };
   }).sort((a, b) => b.actuals.gross - a.actuals.gross);
+
+  // The entity model gives an agent a LIMITED leaderboard: where they place,
+  // not what everyone earns. Rank is computed here so the figures never leave
+  // the server; their own row stays complete.
+  const rows = data.scope.kind === 'workspace' ? full : full.map((r, i) => (
+    r.membershipId === data.scope.membershipId
+      ? { ...r, rank: i + 1 }
+      : { membershipId: r.membershipId, name: r.name, rank: i + 1 }
+  ));
   res.json({ period, from, to, metrics: METRICS, rows, workspaceTargets: wsTargets });
 }));
 

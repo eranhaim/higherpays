@@ -9,6 +9,7 @@ const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
+const { hasPermission } = require('../auth/permissions');
 
 // GET /workspaces/:workspaceId/platform-fee — the blended rate the agency sees.
 router.get('/platform-fee', requirePermission('payments.view'), asyncHandler(async (req, res) => {
@@ -25,18 +26,24 @@ router.get('/platform-fee', requirePermission('payments.view'), asyncHandler(asy
        LEFT JOIN LATERAL effective_platform_fee(w.organization_id, now()) f ON true
       WHERE w.id = $1`, [wid(req)])).rows[0]);
   const n = (v) => (v == null ? 0 : Number(v));
+  // The blended rate and the fixed fee are what the link fee preview needs, so
+  // every role that can create or read a link gets them. The rest — reserve,
+  // reversal fees — is the agency's treasury and belongs to the roles that run
+  // the agency.
+  const seesTreasury = hasPermission(req.membership, 'data.view_all');
   res.json({
-    // Agencies see the blended rate + the flat fees that affect them.
     blendedRatePct: n(r && r.blended),
     pspFixedFee: n(r && r.fixed_fee),
-    refundFee: n(r && r.refund_fee),
-    chargebackFee: n(r && r.chargeback_fee),
-    declineFee: n(r && r.decline_fee),
-    // The reserve is the agency's own money held by the provider — they should see it.
-    reservePct: n(r && r.reserve_pct),
-    reserveReleaseDays: n(r && r.reserve_release_days),
     // The provider has no refund API today; the console records refunds instead.
     providerRefundAvailable: !!require('../config').mantapayRefundEnabled,
+    ...(seesTreasury ? {
+      refundFee: n(r && r.refund_fee),
+      chargebackFee: n(r && r.chargeback_fee),
+      declineFee: n(r && r.decline_fee),
+      // The reserve is the agency's own money held by the provider.
+      reservePct: n(r && r.reserve_pct),
+      reserveReleaseDays: n(r && r.reserve_release_days),
+    } : {}),
     // The PSP/HigherPays split is operator-only — it is our cost basis and margin.
     ...(req.membership.isPlatformOperator
       ? { pspRatePct: n(r && r.psp_rate_pct), marginRatePct: n(r && r.margin_rate_pct) }
