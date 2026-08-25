@@ -67,8 +67,17 @@ function NavSection({ group }: { group: NavGroup }) {
   );
 }
 
+const ROLE_LABEL: Record<string, string> = {
+  owner: 'Owner',
+  admin: 'Admin',
+  manager: 'Manager',
+  analyst: 'Analyst',
+  chatter: 'Chatter',
+  creator: 'Creator',
+};
+
 export default function Layout() {
-  const { workspaces, activeWorkspace, activeWorkspaceId } = useCurrentSession();
+  const { workspaces, activeWorkspace, activeWorkspaceId, role } = useCurrentSession();
   const user = useAuthStore((s) => s.user);
   const setActiveWorkspaceId = useSessionStore((s) => s.setActiveWorkspaceId);
   const clearAuth = useAuthStore((s) => s.clear);
@@ -123,7 +132,10 @@ export default function Layout() {
         <div className="side-foot">
           {user && (
             <div className="user-block">
-              <div className="user-name">{user.fullName}</div>
+              <div className="user-name">
+                {user.fullName}
+                <span className="rolebadge" style={{ marginLeft: 8 }}>{ROLE_LABEL[role] ?? role}</span>
+              </div>
               <div className="user-email">{user.email}</div>
             </div>
           )}

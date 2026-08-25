@@ -1,4 +1,5 @@
 import type { Transaction } from '../../types';
+import { isPaid } from '../../api/endpoints';
 
 export interface PaymentsFilters {
   status: '' | 'paid' | 'declined';
@@ -14,8 +15,8 @@ export function filterTransactions(rows: Transaction[], f: PaymentsFilters): Tra
   const fromTs = f.from ? new Date(`${f.from}T00:00:00`).getTime() : null;
   const toTs = f.to ? new Date(`${f.to}T23:59:59`).getTime() : null;
   return rows.filter((t) => {
-    if (f.status === 'paid' && !t.paid) return false;
-    if (f.status === 'declined' && t.paid) return false;
+    if (f.status === 'paid' && !isPaid(t.status)) return false;
+    if (f.status === 'declined' && isPaid(t.status)) return false;
     if (fromTs && t.ts < fromTs) return false;
     if (toTs && t.ts > toTs) return false;
     if (q) {

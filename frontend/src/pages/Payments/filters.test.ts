@@ -12,8 +12,7 @@ function tx(partial: Partial<Transaction>): Transaction {
     chatter: 'Carol',
     amount: 100,
     currency: 'EUR',
-    paid: true,
-    refunded: false,
+    status: 'approved',
     notes: '',
     ts: Date.now(),
     ...partial,
@@ -27,17 +26,17 @@ describe('filterTransactions', () => {
   });
 
   it('keeps only paid rows for status=paid', () => {
-    const rows = [tx({ paid: true }), tx({ id: 't2', paid: false })];
+    const rows = [tx({ status: 'approved' }), tx({ id: 't2', status: 'declined' })];
     const out = filterTransactions(rows, { status: 'paid', from: '', to: '', search: '' });
     expect(out).toHaveLength(1);
-    expect(out[0]?.paid).toBe(true);
+    expect(out[0]?.status).toBe('approved');
   });
 
   it('keeps only declined rows for status=declined', () => {
-    const rows = [tx({ paid: true }), tx({ id: 't2', paid: false })];
+    const rows = [tx({ status: 'approved' }), tx({ id: 't2', status: 'declined' })];
     const out = filterTransactions(rows, { status: 'declined', from: '', to: '', search: '' });
     expect(out).toHaveLength(1);
-    expect(out[0]?.paid).toBe(false);
+    expect(out[0]?.status).toBe('declined');
   });
 
   it('filters by search across text fields', () => {

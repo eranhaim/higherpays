@@ -25,8 +25,7 @@ function apiToLegacyTx(t: ApiTransaction): Transaction {
     chatter: t.chatter ?? '',
     amount: t.gross,
     currency: 'EUR',
-    paid: t.status === 'settled' || t.status === 'authorized',
-    refunded: t.status === 'refunded' || t.status === 'reversed',
+    status: t.status,
     notes: '',
     ts: Date.parse(t.occurredAt),
   };

@@ -1,7 +1,29 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
 
-export type TransactionStatus = 'authorized' | 'settled' | 'reversed' | 'refunded' | 'chargeback' | 'declined' | 'pending';
+/**
+ * Transaction status vocabulary. This matches the DB `txn_status` enum
+ * exactly — do not add values here unless you also add the migration.
+ * The DB is the single source of truth.
+ */
+export type TransactionStatus = 'approved' | 'declined' | 'refunded' | 'charged_back';
+
+/** True when a transaction represents money currently in our account. */
+export const isPaid = (s: TransactionStatus): boolean => s === 'approved';
+
+/** True when a transaction has been refunded (funds returned to payer). */
+export const isRefunded = (s: TransactionStatus): boolean =>
+  s === 'refunded' || s === 'charged_back';
+
+/** UI label + tone for a given status; single place, no drift. */
+export function displayStatus(s: TransactionStatus): { label: string; tone: 'ok' | 'no' | 'muted' } {
+  switch (s) {
+    case 'approved':     return { label: 'Paid',       tone: 'ok'    };
+    case 'declined':     return { label: 'Declined',   tone: 'no'    };
+    case 'refunded':     return { label: 'Refunded',   tone: 'muted' };
+    case 'charged_back': return { label: 'Chargeback', tone: 'no'    };
+  }
+}
 
 export interface Transaction {
   id: string;

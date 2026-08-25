@@ -21,6 +21,7 @@ import {
   type Column, type DateRange,
 } from '../../components/ui';
 import type { Transaction } from '../../types';
+import { isPaid, isRefunded, displayStatus } from '../../api/endpoints';
 import { usePaymentsData } from './usePaymentsData';
 import { filterTransactions, DEFAULT_FILTERS, type PaymentsFilters } from './filters';
 
@@ -45,7 +46,7 @@ export default function PaymentsPage() {
     () => filterTransactions(transactions, filters),
     [transactions, filters],
   );
-  const paid = useMemo(() => filtered.filter((t) => t.paid), [filtered]);
+  const paid = useMemo(() => filtered.filter((t) => isPaid(t.status)), [filtered]);
   const gross = useMemo(() => paid.reduce((s, t) => s + t.amount, 0), [paid]);
   const fee = platFee(gross);
   const splits = useMemo(
@@ -69,13 +70,16 @@ export default function PaymentsPage() {
     { key: 'gross', header: 'Gross', align: 'right', render: (t) => <Money amount={t.amount} /> },
     {
       key: 'status', header: 'Status',
-      render: (t) => <Pill tone={t.paid ? 'ok' : 'no'}>{t.paid ? 'Paid' : 'Declined'}</Pill>,
+      render: (t) => {
+        const s = displayStatus(t.status);
+        return <Pill tone={s.tone}>{s.label}</Pill>;
+      },
     },
     { key: 'date', header: 'Date', render: (t) => <DateCell ts={t.ts} /> },
   ];
 
   const recordRefund = (t: Transaction) => {
-    const next = demoTx.map((x) => (x.id === t.id ? { ...x, refunded: true, paid: false } : x));
+    const next = demoTx.map((x) => (x.id === t.id ? { ...x, status: 'refunded' as const } : x));
     updateStateDemo({ transactions: next });
     setRefunding(null); setDetail(null); setRefundConfirmed(false);
     toast(`Refunded ${formatMoney(t.amount)} (demo).`);
@@ -158,7 +162,7 @@ export default function PaymentsPage() {
               <h3>Transaction</h3>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '2px 0 16px' }}>
                 <span className="ref mono">{detail.referenceId}</span>
-                <Pill tone={detail.paid ? 'ok' : 'no'}>{detail.paid ? 'Paid' : 'Declined'}</Pill>
+                {(() => { const s = displayStatus(detail.status); return <Pill tone={s.tone}>{s.label}</Pill>; })()}
               </div>
               <DetailRow label="Customer">{detail.clientName || '—'}</DetailRow>
               <DetailRow label="Creator">{detail.creator || '—'}</DetailRow>
@@ -167,13 +171,13 @@ export default function PaymentsPage() {
               <DetailRow label={`Platform fee (${rc.blended.toFixed(1)}%)`}><Money amount={pf} direction="out" /></DetailRow>
               <DetailRow label="Net"><Money amount={detail.amount - pf} direction="in" emphasis /></DetailRow>
               <DetailRow label="Date">{new Date(detail.ts).toLocaleString()}</DetailRow>
-              {detail.refunded && (
+              {isRefunded(detail.status) && (
                 <div className="warnbar" style={{ marginTop: 12 }}>
                   Refunded — the sale has been reversed in the ledger.
                 </div>
               )}
               <div className="modal-actions">
-                {detail.paid && !detail.refunded && can('commissions.manage') && (
+                {isPaid(detail.status) && can('commissions.manage') && (
                   <button
                     className="btn danger"
                     onClick={() => { setRefunding(detail); setRefundConfirmed(false); }}

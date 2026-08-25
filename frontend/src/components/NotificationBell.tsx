@@ -64,7 +64,7 @@ export default function NotificationBell() {
   // Generate demo notifications
   const demoNotifs = useCallback((): Notification[] => {
     if (!subscribedEvents.includes('payment.paid')) return [];
-    const paid = transactions.filter(t => t.paid).slice(0, 6);
+    const paid = transactions.filter(t => t.status === 'approved').slice(0, 6);
     return paid.map((t, i) => ({
       id: 'n' + i,
       event: 'payment.paid',

@@ -98,6 +98,8 @@ export interface PaymentLink {
   checkoutUrl?: string | null;
 }
 
+import type { TransactionStatus } from '../api/endpoints/payouts';
+
 export interface Transaction {
   id: string;
   referenceId: string;
@@ -108,8 +110,7 @@ export interface Transaction {
   chatter: string;
   amount: number;
   currency: string;
-  paid: boolean;
-  refunded: boolean;
+  status: TransactionStatus;
   notes: string;
   ts: number;
 }

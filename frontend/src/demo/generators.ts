@@ -54,14 +54,14 @@ export function createDemoState(): AppState {
   ];
 
   const transactions: Transaction[] = [
-    { id: 'tx-10231', referenceId: 'order-10231', clientName: 'Anna Bauer', username: '@anna_b', creator: 'Ava Lane', chatter: 'Sam Ortiz', notes: 'Custom set #12', amount: 49.99, currency: 'EUR', paid: true, refunded: false, ts: now - 2 * 3600e3 },
-    { id: 'tx-10230', referenceId: 'order-10230', clientName: 'Luca Rossi', username: '@luca_r', creator: 'Ava Lane', chatter: 'Priya Nair', notes: 'PPV bundle', amount: 129.00, currency: 'EUR', paid: true, refunded: false, ts: now - 5 * 3600e3 },
-    { id: 'tx-10229', referenceId: 'order-10229', clientName: 'Sophie Meyer', username: '@sky_blue', creator: 'Mia Cole', chatter: 'Priya Nair', notes: 'Top-up', amount: 20.00, currency: 'EUR', paid: false, refunded: false, ts: now - 1 * DAY },
-    { id: 'tx-10228', referenceId: 'order-10228', clientName: 'Karel Novak', username: '@karel_n', creator: 'Ava Lane', chatter: 'Sam Ortiz', notes: 'Custom video', amount: 340.50, currency: 'EUR', paid: true, refunded: false, ts: now - 1 * DAY - 3600e3 },
-    { id: 'tx-10227', referenceId: 'order-10227', clientName: 'Marta Kowal', username: '@marta_k', creator: 'Mia Cole', chatter: 'Leo Marsh', notes: 'PPV', amount: 14.99, currency: 'EUR', paid: true, refunded: false, ts: now - 2 * DAY },
-    { id: 'tx-10226', referenceId: 'order-10226', clientName: 'Jonas Vik', username: '@jonas_v', creator: 'Mia Cole', chatter: 'Leo Marsh', notes: 'Tip', amount: 88.00, currency: 'EUR', paid: false, refunded: false, ts: now - 3 * DAY },
-    { id: 'tx-10225', referenceId: 'order-10225', clientName: 'Elena Popa', username: '@elena_p', creator: 'Ava Lane', chatter: 'Priya Nair', notes: 'Custom set', amount: 49.99, currency: 'EUR', paid: true, refunded: false, ts: now - 6 * DAY },
-    { id: 'tx-10224', referenceId: 'order-10224', clientName: 'Tom Fischer', username: '@tom_f', creator: 'Ava Lane', chatter: 'Sam Ortiz', notes: 'PPV bundle', amount: 210.00, currency: 'EUR', paid: true, refunded: false, ts: now - 9 * DAY },
+    { id: 'tx-10231', referenceId: 'order-10231', clientName: 'Anna Bauer', username: '@anna_b', creator: 'Ava Lane', chatter: 'Sam Ortiz', notes: 'Custom set #12', amount: 49.99, currency: 'EUR', status: 'approved', ts: now - 2 * 3600e3 },
+    { id: 'tx-10230', referenceId: 'order-10230', clientName: 'Luca Rossi', username: '@luca_r', creator: 'Ava Lane', chatter: 'Priya Nair', notes: 'PPV bundle', amount: 129.00, currency: 'EUR', status: 'approved', ts: now - 5 * 3600e3 },
+    { id: 'tx-10229', referenceId: 'order-10229', clientName: 'Sophie Meyer', username: '@sky_blue', creator: 'Mia Cole', chatter: 'Priya Nair', notes: 'Top-up', amount: 20.00, currency: 'EUR', status: 'declined', ts: now - 1 * DAY },
+    { id: 'tx-10228', referenceId: 'order-10228', clientName: 'Karel Novak', username: '@karel_n', creator: 'Ava Lane', chatter: 'Sam Ortiz', notes: 'Custom video', amount: 340.50, currency: 'EUR', status: 'approved', ts: now - 1 * DAY - 3600e3 },
+    { id: 'tx-10227', referenceId: 'order-10227', clientName: 'Marta Kowal', username: '@marta_k', creator: 'Mia Cole', chatter: 'Leo Marsh', notes: 'PPV', amount: 14.99, currency: 'EUR', status: 'approved', ts: now - 2 * DAY },
+    { id: 'tx-10226', referenceId: 'order-10226', clientName: 'Jonas Vik', username: '@jonas_v', creator: 'Mia Cole', chatter: 'Leo Marsh', notes: 'Tip', amount: 88.00, currency: 'EUR', status: 'declined', ts: now - 3 * DAY },
+    { id: 'tx-10225', referenceId: 'order-10225', clientName: 'Elena Popa', username: '@elena_p', creator: 'Ava Lane', chatter: 'Priya Nair', notes: 'Custom set', amount: 49.99, currency: 'EUR', status: 'approved', ts: now - 6 * DAY },
+    { id: 'tx-10224', referenceId: 'order-10224', clientName: 'Tom Fischer', username: '@tom_f', creator: 'Ava Lane', chatter: 'Sam Ortiz', notes: 'PPV bundle', amount: 210.00, currency: 'EUR', status: 'approved', ts: now - 9 * DAY },
   ];
 
   const commission: Commission = { creatorSplit: 70, agencySplit: 30, chatterPct: 8 };
