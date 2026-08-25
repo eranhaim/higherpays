@@ -59,6 +59,14 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    # Non-root process (Dockerfile), immutable filesystem, bounded resources.
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 512m
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
 
   frontend:
     build:
@@ -68,9 +76,19 @@ services:
     container_name: higherpays
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     ports:
-      - "8083:80"
+      - "8083:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+    mem_limit: 128m
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   pgdata:
