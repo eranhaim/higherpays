@@ -409,15 +409,31 @@ tbody tr.txrow:hover { background: var(--surface-2); }
 }
 .overlay.show { display: grid; }
 .modal {
+  position: relative;
   background: var(--surface); border: 1px solid var(--rule);
-  border-radius: var(--radius-lg); padding: 26px;
+  border-radius: var(--radius-lg);
   width: 100%; max-width: 460px;
-  max-height: calc(100vh - 40px); overflow-y: auto;
+  max-height: calc(100vh - 40px);
+  display: flex; flex-direction: column;
   box-shadow: 0 24px 60px -20px rgba(15, 14, 12, 0.25);
 }
+.modal-body {
+  padding: 26px;
+  overflow-y: auto;
+  flex: 1; min-height: 0;
+}
+.modal-close {
+  position: absolute; top: 10px; right: 12px;
+  width: 32px; height: 32px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: 999px;
+  font-size: 22px; line-height: 1; color: var(--muted);
+  cursor: pointer; padding: 0; z-index: 1;
+}
+.modal-close:hover { background: var(--surface-2); color: var(--ink); }
 .modal h3 {
   font-family: var(--display); font-size: 24px; font-weight: 400;
-  letter-spacing: -0.01em; margin-bottom: 4px;
+  letter-spacing: -0.01em; margin-bottom: 4px; padding-right: 36px;
 }
 .modal p.sub { font-size: 13.5px; color: var(--muted); margin-bottom: 20px; }
 .modal .field { margin-bottom: 14px; }
@@ -698,9 +714,10 @@ select:hover:not(:disabled) { border-color: var(--muted); }
   .overlay { place-items: end center; padding: 0; }
   .modal {
     max-width: none; width: 100%; border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    padding: 24px; max-height: 92vh; overflow-y: auto;
+    max-height: 92vh;
   }
-  .modal::before { content: ''; display: block; width: 40px; height: 4px; border-radius: 2px; background: var(--rule); margin: 0 auto 16px; }
+  .modal-body { padding: 24px; }
+  .modal-body::before { content: ''; display: block; width: 40px; height: 4px; border-radius: 2px; background: var(--rule); margin: 0 auto 16px; }
   .overlay { padding-bottom: env(safe-area-inset-bottom); }
 }
 @media (max-width: 430px) {

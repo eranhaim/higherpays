@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 
 interface ModalProps {
   open: boolean;
@@ -7,8 +7,6 @@ interface ModalProps {
 }
 
 export default function Modal({ open, onClose, children }: ModalProps) {
-  const overlayRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     if (!open) return;
     const handleKey = (e: KeyboardEvent) => {
@@ -26,13 +24,19 @@ export default function Modal({ open, onClose, children }: ModalProps) {
   if (!open) return null;
 
   return (
-    <div
-      ref={overlayRef}
-      className="overlay show"
-      onClick={e => { if (e.target === overlayRef.current) onClose(); }}
-    >
+    <div className="overlay show" role="dialog" aria-modal="true">
       <div className="modal">
-        {children}
+        <button
+          type="button"
+          className="modal-close"
+          aria-label="Close"
+          onClick={onClose}
+        >
+          ×
+        </button>
+        <div className="modal-body">
+          {children}
+        </div>
       </div>
     </div>
   );
