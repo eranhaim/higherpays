@@ -297,7 +297,7 @@ ledger and the transaction now disagree.
 
 ```js
 cash: {
-  owed: round2(creatorsOwed + chattersOwed),
+  owed: round2(accountsOwed + agentsOwed),
   heldInReserve: reserve.held,
   // negative => the agency must front cash to cover payouts this period
   shortfallIfPaidNow: round2(reserve.held),
@@ -306,7 +306,7 @@ cash: {
 
 The comment describes a signed shortfall. The value is just the reserve, always positive. It never
 compares what is owed against what is available. An agency owner reading this number to decide
-whether they can pay their creators is reading a number that does not answer that question.
+whether they can pay their accounts is reading a number that does not answer that question.
 
 - [x] `services/cash.js`: `available = received − held`, `shortfallIfPaidNow = max(0, owed − available)`,
       where `received` is the period's distributable total (gross minus every fee)
@@ -318,7 +318,7 @@ whether they can pay their creators is reading a number that does not answer tha
 
 Login, refresh, and both 2FA endpoints are unbounded. Password brute-force is free. `TooManyRequestsError`
 exists in `lib/errors.js:46` and is never thrown anywhere. The only rate limit in the product is one
-payment link per chatter per 30 seconds.
+payment link per agent per 30 seconds.
 
 - [x] `lib/rateLimit.js`: 100 requests per IP per 15 minutes on login, refresh and 2FA; an account
       locks for 15 minutes after 10 failed sign-ins (only failures count, so a correct password is
@@ -417,8 +417,8 @@ request while it runs.
 
 ```sql
 dist   := t.gross - plat_fee;
-c_amt  := (dist * split)   / 100;   -- creator
-ch_amt := (dist * chatpct) / 100;   -- chatter
+c_amt  := (dist * split)   / 100;   -- account
+ch_amt := (dist * chatpct) / 100;   -- agent
 ag_amt := dist - c_amt - ch_amt;    -- agency takes the remainder
 ```
 
@@ -432,9 +432,8 @@ every display truncates them somewhere, and nothing records where the remainder 
 party must absorb the rounding, which means the shares must be rounded first and the third derived
 from them. See `DATA-MODEL.md` §D1 for the column-level fix.
 
-**Splits can exceed 100%.** `creators.revenue_split_pct` and `commission_rules.chatter_pct` each
-have a `CHECK (0..100)`, individually. Nothing checks their sum. A creator on 70% revshare plus a
-chatter on 50% yields `ag_amt = -20%` — the agency silently pays out more than it received, and the
+**Splits can exceed 100%.** `accounts.revenue_split_pct` and `commission_rules.agent_pct` each
+have a `CHECK (0..100)`, individually. Nothing checks their sum. An account on 70% revshare plus an agent on 50% yields `ag_amt = -20%` — the agency silently pays out more than it received, and the
 dashboard reports it as normal.
 
 **Distributable can go negative.** `plat_fee` is MDR plus a fixed fee plus settlement cost plus
@@ -446,10 +445,10 @@ exceed gross. Nothing guards `dist > 0`, so every downstream amount flips sign.
 `psp_fee` and the `distributable` it should have produced will disagree, and nothing reconciles
 them. Dormant today only because P0.3 leaves the Search API credentials unreachable.
 
-- [x] Migration 028: `fn_post_sale` rounds the platform fee, creator and chatter cuts to cents and
+- [x] Migration 028: `fn_post_sale` rounds the platform fee, account and agent cuts to cents and
       gives the agency the exact remainder
 - [x] `commission_entries_sale_parts_sum` CHECK (`NOT VALID`, so pre-028 rows are left as they are)
-- [x] `fn_post_sale` raises `split_exceeds_100`; the creators, commissions and memberships routes
+- [x] `fn_post_sale` raises `split_exceeds_100`; the accounts, commissions and memberships routes
       refuse the change up front (`services/splits.js`)
 - [x] `fn_post_sale` raises `nothing_to_distribute` when fees consume the gross
 - [ ] Recompute `distributable` when an actual fee replaces an estimate — the Search API
@@ -467,7 +466,7 @@ No endpoint deletes a membership or sets its status to anything but `active`. `g
 removal returns nothing. The only role-assignment path is `invites.routes.js:85`, which upserts on
 accept.
 
-An agency that fires a chatter cannot revoke their access. That person keeps their login, their
+An agency that fires an agent cannot revoke their access. That person keeps their login, their
 workspace membership, their `links.create` permission, and their view of customer data
 indefinitely.
 
@@ -491,7 +490,7 @@ refresh token expires.
 ```sql
 SELECT m.id, u.full_name, u.email, m.status, m.shift, m.commission_pct
   FROM memberships m JOIN users u ON u.id = m.user_id
- WHERE m.role = 'chatter' ORDER BY u.full_name
+ WHERE m.role = 'agent' ORDER BY u.full_name
 ```
 
 The `memberships` policy is deliberately wider than the current workspace
@@ -505,7 +504,7 @@ That `OR user_id = current_user_id()` exists so login can list a user's own memb
 workspace is chosen. But `withWorkspace` sets `app.user_id` too — so inside a normal request the
 policy also admits the caller's own rows from every other workspace.
 
-Effect: a caller with `team.view` who is also a chatter at another agency on the platform sees
+Effect: a caller with `team.view` who is also an agent at another agency on the platform sees
 their own membership from that agency in this agency's team list — a duplicate row carrying the
 commission rate they earn elsewhere. Narrow precondition, real leak, and a wrong list either way.
 
@@ -517,7 +516,7 @@ this one scans.
 - [x] Every membership query now filters on `workspace_id`
 - [x] Every query against `roles` and `workspaces` already constrains by workspace id (checked 2026-08-25)
 - [x] `memberships.routes.js` says why the filter is there
-- [x] `memberships.test.js`: a chatter at two agencies sees one seat in each
+- [x] `memberships.test.js`: an agent at two agencies sees one seat in each
 
 ### P1.13 SECURITY DEFINER functions with an unpinned search_path
 
@@ -526,7 +525,7 @@ pin their resolution with `SET search_path = public`. Four do not:
 
 | Migration | Function |
 |---|---|
-| `016_chatter_commission_and_payout_runs.sql:62` | payout run helper |
+| `016_agent_commission_and_payout_runs.sql:62` | payout run helper |
 | `019_fixed_fee_and_refunds.sql:81` | fee helper |
 | `026_fee_model_cascade.sql:119` | `fn_post_sale` |
 | `027_fee_itemisation.sql:117` | `fn_post_sale` (current) |
@@ -671,8 +670,8 @@ Separately, `ipOf()` (`auth.routes.js:13`) reads `X-Forwarded-For` directly and 
 ### P2.8 Weak random in identifier generation
 
 `links.routes.js:113` builds `reference_id` from `Date.now()` plus four random chars. This is the
-key MantaPay echoes back for attribution — a collision misattributes a payment to the wrong creator,
-customer, and chatter. `auth.routes.js:40` has the same pattern for the org slug against a UNIQUE
+key MantaPay echoes back for attribution — a collision misattributes a payment to the wrong account,
+customer, and agent. `auth.routes.js:40` has the same pattern for the org slug against a UNIQUE
 constraint, where a collision throws a raw 500 during signup.
 
 - [x] `crypto.randomBytes` in both places: 64 random bits for the reference (short enough for
@@ -734,11 +733,9 @@ parts that move money — have almost none.
 ### P2.12 Commission rate changes are not audited
 
 `audit()` is called from 30 sites and covers role changes, workspace settings, invites, links and
-settlements well. It is missing from `memberships.routes.js:27` — the endpoint that sets a
-chatter's personal commission percentage.
+settlements well. It is missing from `memberships.routes.js:27` — the endpoint that sets an agent's personal commission percentage.
 
-That is a direct money-affecting change to a named individual's pay, and it leaves no trace. When a
-chatter disputes a payout, there is no record of what their rate was or who changed it.
+That is a direct money-affecting change to a named individual's pay, and it leaves no trace. When an agent disputes a payout, there is no record of what their rate was or who changed it.
 
 - [x] `membership.commission` audit entry with `{ from, to }`; payout runs audit `payout.run`
 - [ ] Sweep the remaining handlers for money-affecting writes with no audit entry

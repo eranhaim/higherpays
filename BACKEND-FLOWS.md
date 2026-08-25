@@ -51,7 +51,7 @@ flowchart LR
   Admin <-->|manages many agencies| API
 ```
 
-- **Team member** — chatter, manager, admin, or owner of a specific agency.
+- **Team member** — agent, manager, admin, or owner of a specific agency.
 - **Fan** — the customer who actually pays. Only ever talks to MantaPay's
   hosted page. Card details never touch our server.
 - **API** — this backend. Every read and write from a browser passes through
@@ -85,12 +85,12 @@ sequenceDiagram
   participant API as HigherPays API
   participant DB as PostgreSQL
 
-  Client->>API: GET /workspaces/A/creators (token + X-Workspace-Id: A)
+  Client->>API: GET /workspaces/A/accounts (token + X-Workspace-Id: A)
   Note over API: 1. Verify JWT<br/>2. Confirm the user has an ACTIVE membership in workspace A
   API->>DB: BEGIN<br/>SET app.workspace_id = 'A'<br/>SET app.user_id = '...'
-  API->>DB: SELECT * FROM creators
+  API->>DB: SELECT * FROM accounts
   Note over DB: RLS auto-adds:<br/>WHERE workspace_id = 'A'
-  DB-->>API: only workspace A's creators
+  DB-->>API: only workspace A's accounts
   API->>DB: COMMIT
   API-->>Client: rows
 ```
@@ -198,28 +198,28 @@ them to log back in, which is the alarm signal.
 
 ## 6. Creating a payment link
 
-A chatter (or manager/owner) creates a link a fan will pay on. The backend
+An agent (or manager/owner) creates a link a fan will pay on. The backend
 signs a MantaPay hosted-page URL and returns it. No fee is charged and no
 transaction is created yet — that only happens when the fan actually pays.
 
 ```mermaid
 sequenceDiagram
   autonumber
-  participant Chatter as Team member
+  participant Agent as Team member
   participant API
   participant DB
   participant Mantapay
 
-  Chatter->>API: POST /workspaces/A/links<br/>{ creatorId, pricingMode: 'fixed', amount, currency }
+  Agent->>API: POST /workspaces/A/links<br/>{ accountId, pricingMode: 'fixed', amount, currency }
   API->>API: Validate: amount ≥ €3, within workspace min/max, currency supported
-  Note over API: If the caller is a chatter,<br/>enforce 30-second rate limit
-  API->>DB: SELECT creator + (optional) customer<br/>within workspace A
+  Note over API: If the caller is an agent,<br/>enforce 30-second rate limit
+  API->>DB: SELECT account + (optional) customer<br/>within workspace A
   API->>DB: SELECT workspace's provider config (endpoint id, MID)
   API->>API: buildCheckout(amount, currency, reference)<br/>signature = sha256(fields + hashKey)
   Note over API,Mantapay: No HTTP call to MantaPay here.<br/>The signature is computed locally.
   API->>DB: INSERT payment_links (status='created', expires_at = now + 10 min)
-  API-->>Chatter: 201 { link, checkoutUrl }
-  Chatter->>Chatter: Share the URL with the fan
+  API-->>Agent: 201 { link, checkoutUrl }
+  Agent->>Agent: Share the URL with the fan
 ```
 
 - The reference id is a short random string (`ord_...`) and is the only ID
@@ -279,7 +279,7 @@ sequenceDiagram
     Payments->>DB: UPDATE payment_links SET status = 'paid' | 'failed'
     alt status = approved AND no sale yet
       Payments->>DB: SELECT fn_post_sale(tx_id)
-      Note over DB: SQL function computes:<br/>PSP fee, margin, creator split,<br/>chatter commission, agency share.<br/>All in exact NUMERIC.
+      Note over DB: SQL function computes:<br/>PSP fee, margin, account split,<br/>agent commission, agency share.<br/>All in exact NUMERIC.
     end
     Payments->>Notify: notify(client, wsId, event, ...)
     Note over Payments,DB: SAVEPOINT protects the payment:<br/>if the notify insert fails,<br/>only the notify rolls back.
@@ -373,10 +373,10 @@ sequenceDiagram
     API-->>Op: 409 { already_reversed }
   else
     API->>DB: SELECT fn_post_refund(tx_id)
-    Note over DB: Reverses creator/chatter/agency shares in NUMERIC.<br/>Fee reversal follows the workspace's refund fee config.
+    Note over DB: Reverses account/agent/agency shares in NUMERIC.<br/>Fee reversal follows the workspace's refund fee config.
     API->>DB: UPDATE transactions SET status = 'refunded'
     API->>DB: UPDATE payment_links SET status = 'refunded'
-    API-->>Op: 200 { refunded, refundFee, creatorAdjustment, chatterAdjustment }
+    API-->>Op: 200 { refunded, refundFee, accountAdjustment, agentAdjustment }
   end
 ```
 
@@ -400,7 +400,7 @@ sequenceDiagram
 
   Owner->>API: GET /workspaces/A/payouts/breakdown?from=...&to=...
   API->>DB: SELECT commission_entries SUM by payee, in period, unpaid
-  API-->>Owner: { creators: [...], chatters: [...], reserves: {...} }
+  API-->>Owner: { accounts: [...], agents: [...], reserves: {...} }
 
   Owner->>API: POST /workspaces/A/payouts/run<br/>{ from, to, payeeType, note }
   API->>DB: INSERT payouts (new run header)

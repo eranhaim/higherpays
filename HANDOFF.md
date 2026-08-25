@@ -14,18 +14,18 @@ If you only have five minutes, read sections **1**, **2**, and **9**.
 ## 1. What is this product?
 
 **HigherPays** is a payments + operations platform for **creator agencies**
-(agencies that manage content creators, e.g. OnlyFans creators, and the
-"chatters" who message their fans on their behalf).
+(agencies that manage content accounts, e.g. OnlyFans accounts, and the
+"agents" who message their fans on their behalf).
 
 The agency uses the app to:
 
-1. Create **payment links** for their creators' fans (customers).
+1. Create **payment links** for their accounts' fans (customers).
 2. Take payments through **MantaPay** (the payment provider — see §7).
 3. Automatically split each payment across three parties:
-   - the **creator** whose fan paid (rev-share % or fixed salary)
-   - the **chatter** who closed the sale (commission %)
+   - the **account** whose fan paid (rev-share % or fixed salary)
+   - the **agent** who closed the sale (commission %)
    - the **agency** itself (whatever's left after platform + provider fees)
-4. Run **payouts** to creators and chatters on a schedule.
+4. Run **payouts** to accounts and agents on a schedule.
 5. See **analytics, goals, and leaderboards** for the team.
 
 The app is **multi-tenant SaaS**: multiple agencies use the same instance,
@@ -224,7 +224,7 @@ the active workspace id; mutations invalidate). Pages use the API types
 from `api/endpoints/*` directly — there is no second, UI-side type system.
 
 **Reference implementations**: `Payments`, `Links`, `Payouts`,
-`Creators`, `Customers`, `Team`. Copy those. Do NOT invent a new pattern.
+`Accounts`, `Customers`, `Team`. Copy those. Do NOT invent a new pattern.
 
 Loading, error and empty states come from the UI kit (`DataTable`
 handles them for tables; `LoadingCard` / `ErrorCard` / `EmptyState` for
@@ -249,12 +249,12 @@ Every page is live. Per page:
 
 - **Login**: login, 2FA challenge, refresh, logout.
 - **Payments**: `GET /transactions`; record-only refund (`POST /transactions/:id/refund`).
-- **Payment links**: list, create (creator + optional customer + amount), reconcile.
+- **Payment links**: list, create (account + optional customer + amount), reconcile.
 - **Payouts**: breakdown for the period; pay one payee or all of a type (`POST /payouts/run` with `targetId`).
-- **Creators**: list, create (+ assign chatters), suspend/activate, edit rev-share splits.
-- **Customers**: list with segment/creator/search filters, add customer, CSV export.
-- **Team**: chatter list, per-chatter commission %, invite member (role from `/roles`), pending invites.
-- **Analytics**: `GET /analytics` for the range (+ the previous period for deltas), scoped by creator or chatter for agency roles; CSV export.
+- **Accounts**: list, create (+ assign agents), suspend/activate, edit rev-share splits.
+- **Customers**: list with segment/account/search filters, add customer, CSV export.
+- **Team**: agent list, per-agent commission %, invite member (role from `/roles`), pending invites.
+- **Analytics**: `GET /analytics` for the range (+ the previous period for deltas), scoped by account or agent for agency roles; CSV export.
 - **Settings**: workspace rename, fees (read-only from `/platform-fee`), link limits, 2FA setup/enable/disable, time zone (local preference), role permission matrix + custom roles, notification preferences, Telegram channels.
 - **Notification bell**: `GET /notifications`, mark read.
 
@@ -294,13 +294,13 @@ event handling.
 
 ### How the flow works (once wired — see §9)
 
-1. Chatter clicks **New link** in the UI. Frontend POSTs to
-   `POST /workspaces/:id/links` with amount, creator, chatter, customer.
+1. Agent clicks **New link** in the UI. Frontend POSTs to
+   `POST /workspaces/:id/links` with amount, account, agent, customer.
 2. Backend inserts a `payment_links` row, then calls
    `provider.createCheckout` which builds a **signed MantaPay hosted
    URL** with amount, currency, reference, `ExpiredOn`, and a
    per-workspace `notification_url`. That URL is returned to the UI.
-3. Chatter shares the URL with the fan; fan pays on MantaPay's hosted
+3. Agent shares the URL with the fan; fan pays on MantaPay's hosted
    page. Card data never touches our server.
 4. MantaPay POSTs `application/x-www-form-urlencoded` to
    `https://higherpays.com/api/webhooks/payment/<workspace-webhook-endpoint-id>`.
@@ -335,7 +335,7 @@ Health: `GET /health` → `{ ok: true, env }`.
 
 Routers registered in `backend/src/server.js` under `/workspaces/:workspaceId/...`:
 
-- `/creators`, `/customers`, `/links`, `/commissions`
+- `/accounts`, `/customers`, `/links`, `/commissions`
 - `/{payouts,transactions,fees,me,settlements}` (all under workspaces)
 - `/roles`, `/analytics`, `/targets`, `/memberships`, `/notifications`
 - `/invites` (both workspace-scoped and public)
@@ -407,7 +407,7 @@ docker compose logs -f backend | head -50   # confirm it booted
 **Then smoke-test end-to-end:**
 
 1. Open `https://higherpays.com`, sign in, go to **Payment links** → **New link**.
-2. Create a €1 link for any creator/chatter/customer. Copy the URL.
+2. Create a €1 link for any account/agent/customer. Copy the URL.
 3. Open the URL in a private window — you should land on MantaPay's hosted checkout with the €1 baked in.
 4. Complete the payment (real card, €1).
 5. Back in the app, click **Payments** — the transaction should appear within seconds.
@@ -534,7 +534,7 @@ ssh ubuntu@54.173.144.0 "bash /home/ubuntu/higherpays/deploy/check-sites.sh"
    pushing to GitHub does nothing on its own. Run
    `git pull && docker compose up -d --build` on the EC2 (see §3).
 9. **When in doubt, follow the existing pattern.** `Payments`, `Links`,
-   `Payouts`, `Creators`, `Customers`, `Team` are the reference
+   `Payouts`, `Accounts`, `Customers`, `Team` are the reference
    implementations for a page. Copy them, don't reinvent.
 
 ---
@@ -602,7 +602,7 @@ For the exact commit trail run `git log --oneline`. In summary:
   Insight / Admin). Amber demo ribbon on top of `main` in demo mode.
 - Payments / Links / Payouts adopted `direction` prop on money values;
   copy tightened per the frontend-design skill.
-- Creators / Customers / Team wired to their live-data hooks. Loading
+- Accounts / Customers / Team wired to their live-data hooks. Loading
   and error rows added.
 - Deleted `ProductTour` (dead code).
 
