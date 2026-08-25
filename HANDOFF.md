@@ -126,7 +126,7 @@ JS/CSS from cache.
 **Login credentials seeded on first boot** (change these):
 
 - URL: `https://higherpays.com/`
-- Email: `owner@example.com`
+- Email: `owner@higherpays.local`
 - Password: `change-me-please`
 
 ---
@@ -346,7 +346,15 @@ For the full plain-English backend flow diagrams (Mermaid), read
 
 ### P0. Wire real MantaPay credentials so end-to-end payments work
 
-This is the pareto of the product. Everything below it depends on it.
+**Status: link creation works end-to-end as of 2026-08-25.** MantaPay
+credentials are on the box (`MANTAPAY_MERCHANT_ID=7374656`,
+`MANTAPAY_HASH_KEY=...`, `WEBHOOK_PUBLIC_BASE=https://higherpays.com/api`),
+the workspace's `mid` is set, and a fresh `POST /workspaces/:id/links`
+returns a signed hosted URL that MantaPay accepts (HTTP 200, page
+renders our merchant, amount, and description). Still to verify:
+webhook round-trip on a real €1 payment. See §7.
+
+*Below was the original recipe — kept for reference in case the box is rebuilt.*
 
 The workspace on the EC2 today has `mid = 'MID-SET-ME'` and
 `provider_config_ref` is null. Its stable webhook endpoint id is:
@@ -475,7 +483,7 @@ Login smoke test:
 ```bash
 curl -sS -X POST https://higherpays.com/api/auth/login \
   -H 'Content-Type: application/json' \
-  --data '{"email":"owner@example.com","password":"change-me-please"}'
+  --data '{"email":"owner@higherpays.local","password":"change-me-please"}'
 # expect: JSON with accessToken, refreshToken, user, workspaces
 ```
 
