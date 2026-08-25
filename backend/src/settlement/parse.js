@@ -8,7 +8,35 @@
 //  * Column ORDER IS NOT STABLE: non-base-currency sheets insert an extra
 //    "FX rate" column, and "NET USD" can appear twice. So never index by
 //    position — always resolve columns by their header name.
-const XLSX = require('xlsx');
+//
+// Parsing a workbook is CPU-bound (zip + XML), so the route runs it in a
+// worker thread (`parseInWorker`) rather than on the request path.
+const path = require('path');
+const { Worker } = require('worker_threads');
+const ExcelJS = require('exceljs');
+
+const HEADER_ROW = 3;
+const FIRST_DATA_ROW = 4;
+const WORKER_TIMEOUT_MS = 30_000;
+
+/** Flattens exceljs cell values (rich text, formulas, hyperlinks) to a plain value. */
+function cellValue(v) {
+  if (v == null) return null;
+  if (v instanceof Date || typeof v !== 'object') return v;
+  if (Array.isArray(v.richText)) return v.richText.map((p) => p.text).join('');
+  if ('result' in v) return cellValue(v.result);
+  if ('text' in v) return cellValue(v.text);
+  if ('error' in v) return null;
+  return v;
+}
+
+/** Row values as a 0-based array, blanks as null. */
+function rowValues(ws, rowNumber) {
+  const raw = ws.getRow(rowNumber).values;
+  const out = [];
+  for (let i = 1; i < raw.length; i++) out.push(cellValue(raw[i]));
+  return out;
+}
 
 const norm = (v) => String(v == null ? '' : v).split('\n')[0].trim().toLowerCase();
 const secondLine = (v) => {
@@ -34,11 +62,11 @@ function pct(s) { const m = s && /([\d.]+)\s*%/.exec(s); return m ? Number(m[1])
 function money(s) { const m = s && /([\d.]+)\s*([A-Z]{3})/.exec(s); return m ? { amount: Number(m[1]), currency: m[2] } : null; }
 
 function parseInfo(wb) {
-  const ws = wb.Sheets['Info'];
+  const ws = wb.getWorksheet('Info');
   if (!ws) return {};
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false });
   const out = {};
-  for (const r of rows) {
+  for (let i = 1; i <= ws.rowCount; i++) {
+    const r = rowValues(ws, i);
     const k = norm(r[0]);
     if (k === 'merchant') out.merchant = String(r[1] || '').trim();
     if (k === 'base settlement currency') out.baseCurrency = String(r[1] || '').trim().toUpperCase();
@@ -47,10 +75,9 @@ function parseInfo(wb) {
   return out;
 }
 
-function parseSheet(wb, sheetName) {
-  const currency = sheetName.replace(/^settlement\s*/i, '').trim().toUpperCase();
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, blankrows: false, raw: true });
-  const header = rows[2] || [];
+function parseSheet(ws) {
+  const currency = ws.name.replace(/^settlement\s*/i, '').trim().toUpperCase();
+  const header = rowValues(ws, HEADER_ROW);
 
   // name -> first index (duplicates like "NET USD" keep the first)
   const col = {};
@@ -72,9 +99,9 @@ function parseSheet(wb, sheetName) {
   const g = (r, key) => (col[key] == null ? null : r[col[key]]);
 
   const out = [];
-  for (let i = 3; i < rows.length; i++) {
-    const r = rows[i];
-    if (!r || r.every((c) => c == null || c === '')) continue;
+  for (let i = FIRST_DATA_ROW; i <= ws.rowCount; i++) {
+    const r = rowValues(ws, i);
+    if (r.every((c) => c == null || c === '')) continue;
     const periodStart = parseDate(g(r, 'start date'));
     const periodEnd = parseDate(g(r, 'end date'));
     if (!periodStart || !periodEnd) continue;
@@ -108,12 +135,13 @@ function parseSheet(wb, sheetName) {
   return { currency, settings, rows: out };
 }
 
-function parseSettlementWorkbook(buffer) {
-  const wb = XLSX.read(buffer, { type: 'buffer' });
+async function parseSettlementWorkbook(buffer) {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer);
   const info = parseInfo(wb);
-  const sheets = wb.SheetNames
-    .filter((n) => /^settlement\s+/i.test(n))
-    .map((n) => parseSheet(wb, n))
+  const sheets = wb.worksheets
+    .filter((ws) => /^settlement\s+/i.test(ws.name))
+    .map(parseSheet)
     .filter((s) => s.rows.length || s.currency);
   if (!sheets.length) {
     throw Object.assign(new Error('no_settlement_sheets'), {
@@ -124,4 +152,21 @@ function parseSettlementWorkbook(buffer) {
   return { info, sheets };
 }
 
-module.exports = { parseSettlementWorkbook, parseDate, num };
+/** Same result as parseSettlementWorkbook, computed off the request thread. */
+function parseInWorker(buffer) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(path.join(__dirname, 'parse.worker.js'), { workerData: buffer });
+    const timer = setTimeout(() => {
+      worker.terminate();
+      reject(Object.assign(new Error('parse_timeout'), { status: 400, detail: 'The workbook took too long to parse.' }));
+    }, WORKER_TIMEOUT_MS);
+    worker.once('message', (msg) => {
+      clearTimeout(timer);
+      if (msg.ok) resolve(msg.result);
+      else reject(Object.assign(new Error(msg.error), { status: msg.status || 400, detail: msg.detail }));
+    });
+    worker.once('error', (err) => { clearTimeout(timer); reject(err); });
+  });
+}
+
+module.exports = { parseSettlementWorkbook, parseInWorker, parseDate, num };
