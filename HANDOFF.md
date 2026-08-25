@@ -97,8 +97,19 @@ If the EC2 is ever rebuilt: drop that file into `sites-available`,
 `ln -sf ... sites-enabled/`, `nginx -t && systemctl reload nginx`,
 `certbot --nginx -d higherpays.com -d www.higherpays.com`.
 
-All wired in `docker-compose.yml`. Secrets come from `.env` next to the
-compose file (never committed — see `.env.example` for the shape).
+All wired in `docker-compose.yml`. Every setting comes from `.env` next to
+the compose file (never committed — `.env.example` lists all of them). The
+backend container receives the whole file; compose refuses to start
+without `POSTGRES_PASSWORD`, `HP_APP_PASSWORD` and `JWT_SECRET`. Changing a
+value in `.env` takes effect on the next `docker compose up -d`.
+
+**Backups.** `deploy/backup-postgres.sh` dumps the database nightly (cron
+line in the script header), keeps 30 local copies under
+`/var/backups/higherpays`, and uploads to `BACKUP_S3_BUCKET` when set.
+Restore a dump with `deploy/restore-postgres.sh <dump> [target_db]` —
+without a target it replaces the live database (stop the API first), with
+one it restores side by side, which is how to restore-test without touching
+production data. Restore-test after setting up the cron and every quarter.
 
 **Common ops commands** (run from `~/higherpays` on the box):
 
@@ -438,20 +449,41 @@ ssh ubuntu@54.173.144.0 "sudo certbot update_account --email <you@domain>"
 ```bash
 cd frontend
 npm run build      # tsc + Vite build; MUST pass before pushing
-npm test           # Vitest — currently 44 tests across business/ and pages/
+npm run lint
+npm test           # Vitest — 27 tests across business/, lib/ and pages/
 ```
 
 **Backend:**
 ```bash
 cd backend
-npm test                  # unit tests (signature, payout engine)
-npm run test:integration  # runs against a live Postgres — needs docker compose up
+npm test                  # unit tests (MantaPay signatures) — no DB needed
+npm run test:integration  # 20 tests against a live Postgres — see below
 ```
+
+The integration suite connects as `hp_app`, so it exercises RLS for real.
+It needs the compose Postgres reachable from the host. Compose does not
+expose it by default; add a gitignored `docker-compose.override.yml`:
+
+```yaml
+services:
+  postgres:
+    ports:
+      - "55432:5432"   # 5432 if nothing else on the machine uses it
+```
+
+then `docker compose up -d postgres` and run with the passwords from `.env`:
+
+```bash
+HP_APP_PASSWORD=<from .env> POSTGRES_PASSWORD=<from .env> PGHOST=localhost PGPORT=55432 npm run test:integration
+```
+
+CI (`.github/workflows/ci.yml`) does exactly this on every push and PR.
 
 **End-to-end sanity** (on EC2):
 ```bash
 curl -sS https://higherpays.com/api/health
-# expect: {"ok":true,"env":"production"}
+# expect: {"ok":true,"env":"production","db":"up","staleWebhooks":0}
+# 503 means Postgres is down, or an authentic webhook has sat unprocessed for over an hour
 ```
 
 Login smoke test:
