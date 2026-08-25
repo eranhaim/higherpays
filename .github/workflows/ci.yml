@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc -b
+      - run: npx vitest run
+      - run: npm run build
+
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm test
+      # Integration tests run against the same Postgres image and init script
+      # as production, so RLS is exercised with the restricted role.
+      - name: Start Postgres
+        working-directory: .
+        run: |
+          cp .env.example .env
+          printf 'POSTGRES_PASSWORD=devpass\nHP_APP_PASSWORD=hp_app_dev\nJWT_SECRET=ci-only-secret-with-at-least-32-characters\n' >> .env
+          printf 'services:\n  postgres:\n    ports:\n      - "5432:5432"\n' > docker-compose.override.yml
+          docker compose up -d --wait postgres
+      - name: Migrate
+        run: MIGRATIONS_DATABASE_URL=postgres://postgres:devpass@localhost:5432/higherpays npm run migrate
+      - run: npm run test:integration
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build images
+        run: |
+          cp .env.example .env
+          printf 'POSTGRES_PASSWORD=x\nHP_APP_PASSWORD=x\nJWT_SECRET=ci-only-secret-with-at-least-32-characters\n' >> .env
+          docker compose build
