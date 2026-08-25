@@ -56,6 +56,9 @@ services:
       # Provider (leave empty until MantaPay integration is turned on).
       MANTAPAY_MERCHANT_ID: ${MANTAPAY_MERCHANT_ID:-}
       MANTAPAY_HASH_KEY: ${MANTAPAY_HASH_KEY:-}
+      # Public base for MantaPay's notification callback. Baked into every
+      # signed checkout URL as notification_url.
+      WEBHOOK_PUBLIC_BASE: ${WEBHOOK_PUBLIC_BASE:-}
     # No ports exposed — the frontend nginx proxies /api/ to us over the
     # internal Docker network.
     expose:
