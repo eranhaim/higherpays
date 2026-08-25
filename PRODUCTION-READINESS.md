@@ -254,20 +254,22 @@ and both insert a payout row. The second `UPDATE` is guarded by `payCol IS NULL`
 entries, but its `payouts` row is already committed at the full amount. You now have two paid
 payout records for one set of commissions.
 
-- [ ] `SELECT ... FOR UPDATE` on the commission entries, or a per-workspace advisory lock
-- [ ] Insert the payout and update the entries in one statement chain; roll back if the update
-      affects zero rows
-- [ ] Accept a client-supplied idempotency key on the endpoint
-- [ ] Add a concurrency test that fires two runs at once and asserts one payout row
+- [x] Runs for one workspace + payee type are serialised with `pg_advisory_xact_lock`; the second
+      run sees nothing unpaid and records nothing
+- [x] Payout insert and entry update happen in one transaction; a settle that touches zero rows
+      throws and rolls the payout back
+- [ ] Client-supplied idempotency key — not needed for a double click now that a retry is a no-op;
+      add it when a payout rail makes the call non-idempotent
+- [x] `test/integration/payouts.test.js` fires two runs at once and asserts one payout row
 
 ### P1.2 Payouts are marked paid without money moving
 
 The same handler writes `status='paid'` at insert time. No money has moved — there is no payout
 rail wired. The ledger records intent as completed fact.
 
-- [ ] Model the real lifecycle: `pending` → `processing` → `paid` / `failed`
+- [ ] Model the real lifecycle: `pending` → `processing` → `paid` / `failed` — when a rail exists
 - [ ] Only `paid` when something external confirms it
-- [ ] Until a payout rail exists, call it `recorded` so nobody reads the dashboard as settlement truth
+- [x] Payout runs now write `status = 'recorded'` (enum value added in migration 028)
 
 ### P1.3 A late decline can un-approve a paid sale
 
@@ -282,9 +284,9 @@ A declined event arriving after an approved one for the same provider transactio
 transaction to declined and marks the link failed — while the commission entries stay posted. The
 ledger and the transaction now disagree.
 
-- [ ] Never downgrade `approved`: add `WHERE transactions.status <> 'approved'` to the DO UPDATE,
-      or an explicit state machine
-- [ ] Test: approved event, then declined event, assert the sale survives
+- [x] The DO UPDATE carries `WHERE transactions.status <> 'approved'`; a late decline leaves the
+      transaction, the link and the ledger untouched
+- [x] `test/integration/money.test.js`: approved then declined, the sale survives
 
 ### P1.4 `shortfallIfPaidNow` does not mean what it says
 
@@ -303,8 +305,10 @@ The comment describes a signed shortfall. The value is just the reserve, always 
 compares what is owed against what is available. An agency owner reading this number to decide
 whether they can pay their creators is reading a number that does not answer that question.
 
-- [ ] Compute it: `available - owed`, where available accounts for held reserve
-- [ ] Unit-test it in `frontend/src/business/` per the project convention
+- [x] `services/cash.js`: `available = received − held`, `shortfallIfPaidNow = max(0, owed − available)`,
+      where `received` is the period's distributable total (gross minus every fee)
+- [x] Unit-tested in `backend/test/cash.test.js` (the value is computed server-side, so the test
+      lives there); the Payouts page shows the shortfall as a warning
 - [ ] Audit the other money-facing derived fields for the same class of mistake
 
 ### P1.5 No rate limiting on authentication
@@ -313,10 +317,13 @@ Login, refresh, and both 2FA endpoints are unbounded. Password brute-force is fr
 exists in `lib/errors.js:46` and is never thrown anywhere. The only rate limit in the product is one
 payment link per chatter per 30 seconds.
 
-- [ ] Per-IP and per-account limits on `/auth/login`
-- [ ] Progressive lockout after repeated failures
-- [ ] Rate limit `/auth/refresh` and `/auth/2fa/*`
-- [ ] Alert on burst failures against one account
+- [x] `lib/rateLimit.js`: 100 requests per IP per 15 minutes on login, refresh and 2FA; an account
+      locks for 15 minutes after 10 failed sign-ins (only failures count, so a correct password is
+      never blocked by someone else's guesses). In-memory — move the store before running two replicas
+- [ ] Progressive lockout (longer each time)
+- [x] Rate limit `/auth/refresh` and `/auth/2fa/*`
+- [ ] Alert on burst failures against one account — lockouts are audited as `auth.login.locked`;
+      alerting is P1.8
 
 ### P1.6 Refresh token handling
 
@@ -401,11 +408,13 @@ ag_amt := dist - c_amt - ch_amt;    -- agency takes the remainder
 
 Four problems, all in the product's central calculation.
 
-**Rounding drift.** These are full-precision `numeric`. The columns are `numeric(14,2)`, so
-Postgres rounds each one on insert — but `ag_amt` was derived from the *unrounded* values. After
-storage, `creator_amount + chatter_amount + agency_amount` is not guaranteed to equal
-`distributable`. The remainder party must absorb the rounding, which means it must be computed
-after the others are rounded, not before.
+**No rounding at all.** Correction to an earlier assumption here: the `commission_entries` money
+columns are bare `numeric`, not `numeric(14,2)` — verified against the live schema. `transactions`
+uses `numeric(14,2)`; the ledger derived from it does not. So `(dist * split) / 100` is stored
+verbatim as `33.333333333333333333`. The ledger holds fractions of a cent that no transfer can pay,
+every display truncates them somewhere, and nothing records where the remainder went. The remainder
+party must absorb the rounding, which means the shares must be rounded first and the third derived
+from them. See `DATA-MODEL.md` §D1 for the column-level fix.
 
 **Splits can exceed 100%.** `creators.revenue_split_pct` and `commission_rules.chatter_pct` each
 have a `CHECK (0..100)`, individually. Nothing checks their sum. A creator on 70% revshare plus a
@@ -421,12 +430,17 @@ exceed gross. Nothing guards `dist > 0`, so every downstream amount flips sign.
 `psp_fee` and the `distributable` it should have produced will disagree, and nothing reconciles
 them. Dormant today only because P0.3 leaves the Search API credentials unreachable.
 
-- [ ] Round `c_amt` and `ch_amt` to 2dp explicitly, then derive `ag_amt` from the rounded values
-- [ ] Add a CHECK or trigger asserting the three amounts sum to `distributable`
-- [ ] Validate `split + chatpct <= 100` when either is set, not just each in isolation
-- [ ] Raise rather than post when `dist <= 0`, and surface it as a real error
-- [ ] Recompute `distributable` when an actual fee replaces an estimate
-- [ ] Property test: for any gross, split and chatter rate, the parts sum to the whole
+- [x] Migration 028: `fn_post_sale` rounds the platform fee, creator and chatter cuts to cents and
+      gives the agency the exact remainder
+- [x] `commission_entries_sale_parts_sum` CHECK (`NOT VALID`, so pre-028 rows are left as they are)
+- [x] `fn_post_sale` raises `split_exceeds_100`; the creators, commissions and memberships routes
+      refuse the change up front (`services/splits.js`)
+- [x] `fn_post_sale` raises `nothing_to_distribute` when fees consume the gross
+- [ ] Recompute `distributable` when an actual fee replaces an estimate — the Search API
+      reconciliation does not rewrite ledger entries today; decide whether it should before P0.3's
+      credentials go in
+- [x] `money.test.js` posts a 10.01 sale (every cut lands on a fraction of a cent) and checks the
+      parts sum; `engine.test.js` checks the documented €100 figures
 
 The database is the right place for these invariants. A CHECK constraint cannot be forgotten by a
 future caller; a code comment can.
@@ -446,11 +460,13 @@ refresh tokens 30 days, and nothing in the codebase touches `refresh_tokens` out
 `auth.routes.js`. Even once removal exists, a removed member stays authenticated until their
 refresh token expires.
 
-- [ ] `DELETE /workspaces/:id/memberships/:membershipId` behind `team.manage`
-- [ ] `PATCH` to change a member's role without a re-invite
-- [ ] Revoke that user's refresh tokens on removal, role change, or permission change
-- [ ] Never let the last owner be removed
-- [ ] Audit all three
+- [x] `DELETE /workspaces/:id/memberships/:membershipId` (archives the seat) behind `team.manage`
+- [x] `PATCH /memberships/:id/role`; a caller may only assign a role whose permissions they hold,
+      so an admin cannot mint an owner
+- [x] `auth/sessions.js` revokes the user's refresh tokens on removal and role change; workspace
+      routes re-check the membership on every request, so removal is immediate
+- [x] The last owner cannot be removed or demoted (`last_owner`, 409)
+- [x] All three audited; the Team page has role selects and a Remove button
 
 ### P1.12 The team list leaks rows from other workspaces
 
@@ -482,10 +498,10 @@ have policies with self-access `OR` clauses. On those three tables, RLS is not a
 `workspace_id` filter. Every other route that touches them constrains the rows through a join key;
 this one scans.
 
-- [ ] Add `WHERE m.workspace_id = $1` here
-- [ ] Add an explicit `workspace_id` predicate to every query against those three tables
-- [ ] Comment the policies to say why they are wider, so the next reader does not assume otherwise
-- [ ] Extend `tenant-isolation.test.js` to cover a user who belongs to two workspaces
+- [x] Every membership query now filters on `workspace_id`
+- [ ] Sweep the remaining queries against `roles` and `workspaces` for the same predicate
+- [x] `memberships.routes.js` says why the filter is there
+- [x] `memberships.test.js`: a chatter at two agencies sees one seat in each
 
 ### P1.13 SECURITY DEFINER functions with an unpinned search_path
 
@@ -511,10 +527,11 @@ That precondition is a SQL-injection foothold, and the codebase parameterises co
 this is defence in depth, not a live hole. It is also the difference between a future SQLi being
 contained to one tenant's data and being full database compromise.
 
-- [ ] Add `SET search_path = public, pg_temp` to all four functions in a new migration
-- [ ] `REVOKE TEMPORARY ON DATABASE higherpays FROM PUBLIC;`
-- [ ] `REVOKE CREATE ON SCHEMA public FROM PUBLIC;` if not already the PG16 default
-- [ ] Add a test that fails when any `SECURITY DEFINER` function lacks a pinned search_path
+- [x] Migration 028 pins `search_path = public, pg_temp` on `fn_post_sale` (the four unpinned
+      definitions were all earlier versions of it), `fn_post_refund` and `fn_post_chargeback`
+- [x] `REVOKE TEMPORARY ON DATABASE ... FROM PUBLIC`
+- [x] `REVOKE CREATE ON SCHEMA public FROM PUBLIC`
+- [x] `security.test.js` fails on any `SECURITY DEFINER` function without a search_path
 
 ### P1.14 The platform-admin role enum is decorative
 
@@ -535,9 +552,9 @@ A `support` account exists to look, not to reprice every agency on the platform.
 enforced correctly in one place — `requireWorkspace` checks `pa.role === 'super_admin'` before
 granting synthetic full membership (`middleware/index.js:42`) — and ignored everywhere else.
 
-- [ ] `requirePlatformRole('super_admin')` on every platform write
-- [ ] Give `finance` read plus fee endpoints; give `support` read only
-- [ ] Audit every platform write with the acting role recorded
+- [x] `requirePlatformRole(...)` middleware; `super_admin` for onboarding and status changes
+- [x] `finance` (and `super_admin`) may set fees; `support` is read-only
+- [x] Every platform write audits `platformRole`
 
 ---
 
@@ -632,7 +649,10 @@ customer, and chatter. `auth.routes.js:40` has the same pattern for the org slug
 constraint, where a collision throws a raw 500 during signup.
 
 - [ ] `crypto.randomUUID()` in both places
-- [ ] Add a UNIQUE constraint on `payment_links.reference_id` if there is not one
+- [x] A UNIQUE constraint on `payment_links.reference_id` already exists
+      (`idx_links_reference` on `(workspace_id, reference_id)`), so a collision raises rather than
+      misattributing. The generator still needs fixing — the failure mode is a 500 on link
+      creation, not silent corruption.
 
 ### P2.9 Three abstractions built and never adopted
 
@@ -687,7 +707,7 @@ chatter's personal commission percentage.
 That is a direct money-affecting change to a named individual's pay, and it leaves no trace. When a
 chatter disputes a payout, there is no record of what their rate was or who changed it.
 
-- [ ] Audit the change, with the old and new value in `metadata`
+- [x] `membership.commission` audit entry with `{ from, to }`; payout runs audit `payout.run`
 - [ ] Sweep the remaining handlers for money-affecting writes with no audit entry
 - [ ] Consider a rate history table rather than an in-place update, so past payouts stay explicable
 
@@ -715,9 +735,8 @@ chatter disputes a payout, there is no record of what their rate was or who chan
   Size it against expected concurrency and Postgres `max_connections`, and add a statement timeout.
 - **Root clutter.** Four untracked markdown files and `merchant-console-mock.html` at the top level.
   Move docs into `docs/`.
-- **String-built SQL in the payout path.** `payouts.routes.js:194-208` interpolates column names
-  from `payeeType`. It is allowlist-validated and safe today, but it is string-built SQL in the money
-  path — one careless edit from injection. Replace with an explicit branch per payee type.
+- ~~**String-built SQL in the payout path.**~~ Done: `payouts.routes.js` carries one fixed
+  statement set per payee type (`PAYOUT_SQL`), nothing interpolated.
 
 ---
 
@@ -748,8 +767,9 @@ why the other two went unnoticed.
 Current results, so you can tell whether a change helped:
 
 ```bash
-cd backend  && npm test                    # 34 pass (unit)
-cd backend  && npm run test:integration    # 20 pass — needs the local Postgres, see HANDOFF §10
+cd backend  && npm test                    # 37 pass (unit; engine suite skips without TEST_DATABASE_URL)
+cd backend  && npm run test:integration    # 31 pass — needs the local Postgres, see HANDOFF §10
+cd backend  && npm run test:db             # 12 pass — TEST_DATABASE_URL as the postgres owner
 cd backend  && npm audit --omit=dev        # 1 high (xlsx), no fix available
 cd frontend && npx vitest run              # 27 pass
 cd frontend && npm run lint                # 0 errors
