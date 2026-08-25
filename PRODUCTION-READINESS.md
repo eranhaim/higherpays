@@ -32,16 +32,19 @@ it, and nobody would find out.
 | Tenant isolation | Strong | RLS + boot-time assertion the DB role cannot bypass it |
 | Provider integration | Strong | Signature scheme verified against live vectors, regression-tested |
 | Auth primitives | Good | scrypt, timingSafeEqual, hashed refresh tokens, TOTP |
-| Auth hardening | Weak | No rate limit, no lockout, no reuse detection |
-| Authorization | **Broken** | Any admin can grant themselves owner rights; no offboarding |
-| Money math | Weak | No rounding discipline, splits can exceed 100%, no invariants |
-| API surface | Weak | No pagination, two error conventions, no versioning |
-| Build & CI | **Broken** | Tree does not compile; no CI exists |
-| Secrets delivery | **Broken** | 18 env vars never reach the container; JWT guard bypassable |
-| Data durability | **Missing** | No backups of any kind |
-| Observability | **Missing** | No request logs, no metrics, no alerting |
-| Container security | Weak | Runs as root, no healthchecks, no limits |
-| Accessibility | Missing | 2 ARIA attributes in the entire frontend |
+| Auth hardening | Good | Rate limits + account lockout, refresh-token reuse detection, session revoke (2026-08-25) |
+| Authorization | Good | Escalation closed, offboarding + role changes revoke sessions, platform roles enforced (2026-08-25) |
+| Money math | Good | Cents rounding, DB-enforced sum, split bounds, no late un-approve, one payout per run (2026-08-25) |
+| API surface | Fair | Keyset pagination and request ids; two error conventions and no versioning remain |
+| Build & CI | Good | Tree compiles; CI runs lint, tsc, unit, integration (with RLS) and image builds (2026-08-25) |
+| Secrets delivery | Good | Compose refuses to boot without secrets; the whole `.env` reaches the container (2026-08-25) |
+| Data durability | Fair | Backup + restore scripts, restore-tested locally; cron, S3 and WAL archiving still to set up on the box |
+| Observability | Fair | Structured request logs with ids, DB-aware health; no error tracking or alerting yet |
+| Container security | Good | Non-root, read-only, resource limits, healthchecks, security headers (2026-08-25) |
+| Accessibility | Fair | Dialogs, labels and tables fixed, jsx-a11y in CI; keyboard pass still to do |
+
+Rows marked 2026-08-25 were re-graded after the fixes on branch `cleanup/raise-standard`; the
+original findings are kept below with their checkboxes.
 
 ---
 
@@ -512,7 +515,7 @@ have policies with self-access `OR` clauses. On those three tables, RLS is not a
 this one scans.
 
 - [x] Every membership query now filters on `workspace_id`
-- [ ] Sweep the remaining queries against `roles` and `workspaces` for the same predicate
+- [x] Every query against `roles` and `workspaces` already constrains by workspace id (checked 2026-08-25)
 - [x] `memberships.routes.js` says why the filter is there
 - [x] `memberships.test.js`: a chatter at two agencies sees one seat in each
 
@@ -752,17 +755,15 @@ chatter disputes a payout, there is no record of what their rate was or who chan
 - **`schema.sql`** is an untracked 2,788-line `pg_dump` at the repo root, complete with its
   `\restrict` token. It is a second source of truth beside 27 migrations. Delete it, or generate it
   into `docs/` as a build artifact.
-- **N+1 in settlements.** `settlements.routes.js:108` runs two extra queries per row, up to 200 rows
-  — 400 round-trips in one request. Fold into one aggregate query.
+- ~~**N+1 in settlements.**~~ Done: one aggregate query for the whole page.
 - **`fn_post_sale` is redefined across 6 migrations** (007→027). Correct per the never-edit rule, but
   there is no single place to read the current definition. Generate a schema reference into
   `BACKEND-FLOWS.md`.
 - **`mantapay-signature.js`** carries five responsibilities in 285 lines with two `module.exports`
-  blocks, and ships test fixtures (`test()`, `testValidatorVector()`) inside `src/`. Split it.
-- **Page sizes.** `Settings` (600) and `Analytics` (620) shape data inline instead of following the
-  `use<Page>Data` pattern that Payments, Links and Payouts use.
-- **Connection pool is unconfigured.** `new Pool({ connectionString })` uses the default max of 10.
-  Size it against expected concurrency and Postgres `max_connections`, and add a statement timeout.
+  blocks. The test fixtures now live in `test/mantapay.test.js`; the split is still open.
+- ~~**Page sizes.**~~ Done: `Settings` and `Analytics` use `use<Page>Data` hooks and per-pane files.
+- ~~**Connection pool is unconfigured.**~~ Done: `PG_POOL_MAX` (default 20), 30 s idle timeout,
+  5 s connect timeout, `PG_STATEMENT_TIMEOUT_MS` (default 30 s).
 - **Root clutter.** Four untracked markdown files and `merchant-console-mock.html` at the top level.
   Move docs into `docs/`.
 - ~~**String-built SQL in the payout path.**~~ Done: `payouts.routes.js` carries one fixed
