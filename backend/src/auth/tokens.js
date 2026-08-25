@@ -3,10 +3,11 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const config = require('../config');
 
-// Short-lived access token (stateless JWT).
-function signAccessToken(user) {
+// Short-lived access token (stateless JWT). `sid` is the refresh-token family
+// the token was issued from, so a request can tell which session it is on.
+function signAccessToken(user, sessionId) {
   return jwt.sign(
-    { sub: user.id, email: user.email, name: user.full_name },
+    { sub: user.id, email: user.email, name: user.full_name, sid: sessionId },
     config.jwtSecret,
     { expiresIn: config.accessTokenTtl }
   );

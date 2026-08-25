@@ -58,17 +58,35 @@ export function SessionsCard() {
       <div className="tablewrap flush">
         <table>
           <thead>
-            <tr><th>Device</th><th>Address</th><th>Last active</th><th>Expires</th><th></th></tr>
+            <tr>
+              <th scope="col">Device</th>
+              <th scope="col">Address</th>
+              <th scope="col">Last active</th>
+              <th scope="col">Expires</th>
+              <th scope="col"><span className="sr-only">Actions</span></th>
+            </tr>
           </thead>
           <tbody>
             {sessions.data.map((s) => (
               <tr key={s.id}>
-                <td className="cname">{describe(s.userAgent)}</td>
+                <td className="cname">
+                  {describe(s.userAgent)}
+                  {s.isCurrent ? <span className="sub inline"> (this device)</span> : null}
+                </td>
                 <td className="mono">{s.ip ?? '—'}</td>
                 <td><DateCell ts={s.lastRefreshedAt} /></td>
                 <td><DateCell ts={s.expiresAt} /></td>
-                <td className="actions-right">
-                  <button className="btn ghost small" onClick={() => endSession(s)} disabled={revoke.isPending}>End</button>
+                <td className="cell-actions">
+                  <button
+                    className="btn ghost small"
+                    aria-label={s.isCurrent
+                      ? 'Sign out this device'
+                      : `End session on ${describe(s.userAgent)}`}
+                    onClick={() => endSession(s)}
+                    disabled={revoke.isPending}
+                  >
+                    {s.isCurrent ? 'Sign out' : 'End'}
+                  </button>
                 </td>
               </tr>
             ))}

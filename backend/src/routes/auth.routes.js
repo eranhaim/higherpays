@@ -30,12 +30,13 @@ const accountKey = (email) => String(email || '').trim().toLowerCase();
 async function issueRefreshToken(userId, req, familyId = null) {
   const token = generateRefreshToken();
   const expires = new Date(Date.now() + config.refreshTokenDays * 86400 * 1000);
-  await query(
+  const row = (await query(
     `INSERT INTO refresh_tokens (user_id, token_hash, expires_at, user_agent, ip, family_id)
-     VALUES ($1,$2,$3,$4,$5,COALESCE($6, gen_random_uuid()))`,
+     VALUES ($1,$2,$3,$4,$5,COALESCE($6, gen_random_uuid()))
+     RETURNING family_id`,
     [userId, hashRefreshToken(token), expires, req.headers['user-agent'] || null, ipOf(req), familyId]
-  );
-  return token;
+  )).rows[0];
+  return { token, familyId: row.family_id };
 }
 
 // POST /auth/register — self-serve signup that bootstraps a new tenant:
@@ -75,10 +76,10 @@ router.post('/register', asyncHandler(async (req, res) => {
 
   const { ws, user } = created;
   await audit({ workspaceId: ws.id, actorUserId: user.id, action: 'auth.register', ip: ipOf(req) });
-  const accessToken = signAccessToken(user);
-  const refreshToken = await issueRefreshToken(user.id, req);
+  const session = await issueRefreshToken(user.id, req);
+  const accessToken = signAccessToken(user, session.familyId);
   res.status(201).json({
-    accessToken, refreshToken,
+    accessToken, refreshToken: session.token,
     user: { id: user.id, email: user.email, fullName: user.full_name },
     workspaces: [{ id: ws.id, role: 'owner', name: organizationName }],
   });
@@ -122,10 +123,10 @@ router.post('/login', limitByIp, asyncHandler(async (req, res) => {
      WHERE m.user_id = $1 AND m.status = 'active'`, [user.id])).rows);
 
   await audit({ actorUserId: user.id, action: 'auth.login', ip: ipOf(req) });
-  const accessToken = signAccessToken(user);
-  const refreshToken = await issueRefreshToken(user.id, req);
+  const session = await issueRefreshToken(user.id, req);
+  const accessToken = signAccessToken(user, session.familyId);
   res.json({
-    accessToken, refreshToken,
+    accessToken, refreshToken: session.token,
     user: { id: user.id, email: user.email, fullName: user.full_name, twoFactorEnabled: !!user.twofa_enabled },
     workspaces: memberships,
   });
@@ -188,9 +189,10 @@ router.post('/refresh', limitByIp, asyncHandler(async (req, res) => {
   if (new Date(rec.expires_at) < new Date()) return res.status(401).json({ error: 'invalid_refresh' });
   // rotate: revoke the old, issue the next one in the same family
   await query('UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1', [rec.id]);
-  const newRefresh = await issueRefreshToken(rec.user_id, req, rec.family_id);
-  const accessToken = signAccessToken({ id: rec.user_id, email: rec.email, full_name: rec.full_name });
-  res.json({ accessToken, refreshToken: newRefresh });
+  const next = await issueRefreshToken(rec.user_id, req, rec.family_id);
+  const accessToken = signAccessToken(
+    { id: rec.user_id, email: rec.email, full_name: rec.full_name }, next.familyId);
+  res.json({ accessToken, refreshToken: next.token });
 }));
 
 // POST /auth/logout — revoke a refresh token
@@ -217,6 +219,7 @@ router.get('/sessions', requireAuth, asyncHandler(async (req, res) => {
   res.json({
     sessions: rows.map((r) => ({
       id: r.family_id, userAgent: r.user_agent, ip: r.ip, lastRefreshedAt: r.created_at, expiresAt: r.expires_at,
+      isCurrent: r.family_id === req.user.sessionId,
     })),
   });
 }));
