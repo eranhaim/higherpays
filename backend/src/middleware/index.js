@@ -59,11 +59,15 @@ const requireWorkspace = asyncHandler(async (req, _res, next) => {
 
 // 3) requirePermission — gate a handler on a specific permission string. Prefers
 // the workspace's editable role definition; falls back to the built-in matrix.
+// `settings.danger` is what separates owner from admin, so it is tied to the
+// owner role itself rather than to any editable permission list.
 const requirePermission = (permission) => (req, _res, next) => {
   if (!req.membership) return next(new HttpError(500, 'workspace_context_missing'));
-  const ok = req.membership.permissions
+  const ownerOnly = permission === 'settings.danger'
+    && req.membership.role !== 'owner' && !req.membership.isPlatformOperator;
+  const ok = !ownerOnly && (req.membership.permissions
     ? req.membership.permissions.has(permission)
-    : can(req.membership.role, permission);
+    : can(req.membership.role, permission));
   if (!ok) return next(new ForbiddenError('forbidden', 'permission required', { needed: permission }));
   next();
 };

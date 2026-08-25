@@ -57,7 +57,10 @@ export function RolesPane() {
     <>
       <div className="card">
         <div className="sechead">Role permissions</div>
-        <p className="sub">What each role can see and do in this workspace.</p>
+        <p className="sub">
+          What each role can see and do in this workspace. Built-in roles are fixed; add a custom role
+          for a different set. You can only grant permissions you hold yourself.
+        </p>
         <div className="tablewrap">
           <table>
             <thead>
@@ -74,7 +77,7 @@ export function RolesPane() {
                     const granted = role.permissions.includes(permission);
                     return (
                       <td key={role.name}>
-                        {editable && role.name !== 'owner' ? (
+                        {editable && !role.isSystem ? (
                           <input type="checkbox" checked={granted} disabled={setPermissions.isPending}
                             onChange={(e) => toggle(role, permission, e.target.checked)} />
                         ) : granted ? <Pill tone="ok">Yes</Pill> : '—'}

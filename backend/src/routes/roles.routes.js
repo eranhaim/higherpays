@@ -12,6 +12,13 @@ const uid = (req) => req.user.id;
 
 const cleanPerms = (arr) => Array.isArray(arr) ? [...new Set(arr.filter((p) => PERMISSIONS.includes(p)))] : null;
 
+// A caller may only hand out permissions they already hold. Without this an
+// admin could write `settings.danger` into any role and become an owner.
+function unheldPermissions(req, perms) {
+  const held = req.membership.permissions;
+  return perms.filter((p) => !(held ? held.has(p) : false));
+}
+
 // GET /workspaces/:wid/roles — all roles + their permissions
 router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) => {
   const roles = await withWorkspace(wid(req), uid(req), async (c) => (await c.query(
@@ -25,6 +32,8 @@ router.post('/', requirePermission('team.manage'), asyncHandler(async (req, res)
   if (!isStr(name, 40)) return badRequest(res, 'name is required', ['name']);
   name = name.toLowerCase().replace(/[^a-z0-9_]/g, '_');
   const perms = cleanPerms(permissions) || [];
+  const unheld = unheldPermissions(req, perms);
+  if (unheld.length) return res.status(403).json({ error: 'cannot_grant_unheld_permission', detail: unheld.join(',') });
   const out = await withWorkspace(wid(req), uid(req), async (c) => {
     const dup = (await c.query('SELECT 1 FROM roles WHERE workspace_id=$1 AND name=$2', [wid(req), name])).rows[0];
     if (dup) return { err: 'role_exists' };
@@ -33,21 +42,32 @@ router.post('/', requirePermission('team.manage'), asyncHandler(async (req, res)
        RETURNING name, permissions, is_system`, [wid(req), name, JSON.stringify(perms)])).rows[0] };
   });
   if (out.err) return res.status(409).json({ error: out.err });
-  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'role.create', metadata: { name } });
+  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'role.create', metadata: { name, permissions: perms } });
   res.status(201).json(out.row);
 }));
 
-// PATCH /workspaces/:wid/roles/:name — set a role's permissions
+// PATCH /workspaces/:wid/roles/:name — set a custom role's permissions.
+// System roles are immutable: the owner/admin/manager split is a product
+// guarantee, not workspace configuration. Callers cannot edit their own role
+// and cannot grant what they do not hold, so nobody can escalate themselves.
 router.patch('/:name', requirePermission('team.manage'), asyncHandler(async (req, res) => {
   const perms = cleanPerms(req.body && req.body.permissions);
   if (!perms) return badRequest(res, 'permissions must be an array', ['permissions']);
-  if (req.params.name === 'owner') return res.status(403).json({ error: 'owner_is_immutable' });
-  const row = await withWorkspace(wid(req), uid(req), async (c) => (await c.query(
-    `UPDATE roles SET permissions=$3 WHERE workspace_id=$1 AND name=$2
-     RETURNING name, permissions, is_system`, [wid(req), req.params.name, JSON.stringify(perms)])).rows[0]);
-  if (!row) return res.status(404).json({ error: 'not_found' });
-  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'role.update', metadata: { name: req.params.name } });
-  res.json(row);
+  if (req.params.name === req.membership.role) return res.status(403).json({ error: 'cannot_edit_own_role' });
+  const unheld = unheldPermissions(req, perms);
+  if (unheld.length) return res.status(403).json({ error: 'cannot_grant_unheld_permission', detail: unheld.join(',') });
+
+  const out = await withWorkspace(wid(req), uid(req), async (c) => {
+    const role = (await c.query('SELECT is_system FROM roles WHERE workspace_id=$1 AND name=$2', [wid(req), req.params.name])).rows[0];
+    if (!role) return { err: 'not_found', code: 404 };
+    if (role.is_system) return { err: 'system_role_immutable', code: 403 };
+    return { row: (await c.query(
+      `UPDATE roles SET permissions=$3 WHERE workspace_id=$1 AND name=$2
+       RETURNING name, permissions, is_system`, [wid(req), req.params.name, JSON.stringify(perms)])).rows[0] };
+  });
+  if (out.err) return res.status(out.code).json({ error: out.err });
+  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'role.update', metadata: { name: req.params.name, permissions: perms } });
+  res.json(out.row);
 }));
 
 // DELETE /workspaces/:wid/roles/:name — remove a custom role (not system, not in use)
