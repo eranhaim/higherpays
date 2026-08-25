@@ -16,6 +16,7 @@
 // resolved) or withWorkspace() (reconciler, where the caller is authenticated).
 
 const notifier = require('../notify');
+const { log } = require('../lib/log');
 
 /**
  * Record an outcome (approved or declined) for a payment attempt.
@@ -133,7 +134,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
     await client.query('RELEASE SAVEPOINT notify_sp');
   } catch (e) {
     await client.query('ROLLBACK TO SAVEPOINT notify_sp').catch(() => {});
-    console.error('[payments] notify failed (payment still recorded):', e.message);
+    log.error({ transactionId: tx.id, err: e.message }, 'notify failed; payment still recorded');
   }
 
   return { transactionId: tx.id, linkId: link ? link.id : null, newSale };

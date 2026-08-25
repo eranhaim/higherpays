@@ -70,6 +70,12 @@ const config = {
   // Payment-link expiry (minutes). MantaPay honours ExpiredOn on the hosted
   // page and we mirror the same TTL locally for the reconciler.
   linkTtlMinutes: parseInt(process.env.LINK_TTL_MINUTES || '10', 10),
+
+  // Browser origins allowed to call the API directly. In production the
+  // frontend is served from the same origin (nginx proxies /api), so this
+  // only matters for local development and any future separate host.
+  corsOrigins: (process.env.CORS_ORIGINS || 'https://higherpays.com,https://www.higherpays.com,http://localhost:5173')
+    .split(',').map((o) => o.trim()).filter(Boolean),
 };
 
 // Check the property, not a specific string: a guard that matches one exact

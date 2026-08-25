@@ -3,6 +3,7 @@
 // (currently Telegram). Delivery is best-effort and never blocks the caller —
 // a failed Telegram send must not fail a payment webhook.
 const config = require('./config');
+const { log } = require('./lib/log');
 
 const EVENTS = ['payment.paid', 'payment.failed', 'payment.refunded', 'payment.chargeback', 'payout.paid'];
 
@@ -87,7 +88,7 @@ async function notify(c, workspaceId, n) {
     } catch (e) {
       // Never fail the caller (a payment must still be recorded).
       const msg = (e.detail || e.message || 'send failed').toString().slice(0, 300);
-      console.error('[notify] telegram delivery failed:', msg);
+      log.error({ channelId: ch.id, err: msg }, 'telegram delivery failed');
       await c.query('UPDATE notification_channels SET last_error=$2 WHERE id=$1', [ch.id, msg]).catch(() => {});
     }
   }

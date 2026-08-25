@@ -3,6 +3,7 @@ const { verifyAccessToken } = require('../auth/tokens');
 const { can, PERMISSIONS } = require('../auth/permissions');
 const { query, withUser } = require('../db');
 const { asyncHandler } = require('../lib/http');
+const { log } = require('../lib/log');
 const {
   HttpError, UnauthorizedError, ForbiddenError, BadRequestError,
 } = require('../lib/errors');
@@ -96,6 +97,7 @@ function errorHandler(err, req, res, next) {
   if (res.headersSent) return next(err);
 
   if (err instanceof HttpError) {
+    if (err.status === 429) (req.log || log).warn({ code: err.code, ip: req.ip }, 'rate limited');
     return res.status(err.status).json(err.toJSON());
   }
 
@@ -103,12 +105,16 @@ function errorHandler(err, req, res, next) {
   // adapters). Honour them, but don't pretend they're safe error surfaces.
   const status = err.status || err.statusCode || 500;
   const code = err.code || 'server_error';
+  const logger = req.log || log;
   if (status >= 500) {
-    console.error('[error]', err.stack || err.message);
+    logger.error({ err: err.stack || err.message, code }, 'unhandled error');
   } else {
-    console.warn(`[${code}]`, err.message);
+    logger.warn({ code, message: err.message }, 'request failed');
   }
-  res.status(status).json({ error: code, message: err.message });
+  // Internal details stay in the log; the client gets the request id to quote.
+  res.status(status).json(status >= 500
+    ? { error: code, message: 'Something went wrong on our side.', requestId: req.id }
+    : { error: code, message: err.message });
 }
 
 module.exports = {

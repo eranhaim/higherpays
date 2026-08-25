@@ -1,7 +1,9 @@
 'use strict';
 const express = require('express');
+const path = require('path');
 const config = require('./config');
 const { pool } = require('./db');
+const { log, requestLogger } = require('./lib/log');
 const authRoutes = require('./routes/auth.routes');
 const creatorsRoutes = require('./routes/creators.routes');
 const customersRoutes = require('./routes/customers.routes');
@@ -18,30 +20,41 @@ const notificationsRoutes = require('./routes/notifications.routes');
 const settlementsRoutes = require('./routes/settlements.routes');
 const feesRoutes = require('./routes/fees.routes');
 const meRoutes = require('./routes/me.routes');
+const webhooksRoutes = require('./routes/webhooks.routes');
 const { wsRouter: invitesWsRoutes, publicRouter: invitesPublicRoutes } = require('./routes/invites.routes');
-const { requireAuth, requireWorkspace, requirePermission, requirePlatformAdmin, errorHandler } = require('./middleware');
-const { asyncHandler } = require('./util/audit');
+const { requireAuth, requireWorkspace, requirePlatformAdmin, errorHandler } = require('./middleware');
+const { asyncHandler } = require('./lib/http');
 const { ROLE_PERMISSIONS } = require('./auth/permissions');
 
 const app = express();
-const path = require('path');
 
-// CORS — lets the browser console (served from any origin) call the API.
+// One reverse proxy (the EC2 nginx) sits in front; trust its X-Forwarded-* so
+// req.ip and req.protocol describe the client, not the proxy.
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+
+app.use(requestLogger);
+
+// CORS — only the origins we serve the console from. Same-origin requests
+// (production, via the nginx /api proxy) carry no Origin and pass untouched.
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', req.headers.origin || '*');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Workspace-Id');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  const origin = req.headers.origin;
+  if (origin && config.corsOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Vary', 'Origin');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-Workspace-Id, X-Request-Id');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+  }
   if (req.method === 'OPTIONS') return res.sendStatus(204);
   next();
 });
 
 // Webhooks receive a raw body (needed for signature verification), so they are
 // mounted BEFORE the JSON parser.
-const webhooksRoutes = require('./routes/webhooks.routes');
 app.use('/webhooks', express.raw({ type: '*/*', limit: '1mb' }), webhooksRoutes);
 
-app.use(express.json({ limit: '20mb' }));
+app.use(express.json({ limit: '8mb' }));
 
 // Static assets (favicons, provider callback pages, etc.). The React frontend
 // lives in ../frontend and is served separately (Vite in dev, nginx in prod).
@@ -57,7 +70,7 @@ app.get('/health', asyncHandler(async (req, res) => {
     const staleWebhooks = rows[0].stale;
     res.status(staleWebhooks ? 503 : 200).json({ ok: staleWebhooks === 0, env: config.env, db: 'up', staleWebhooks });
   } catch (e) {
-    console.error('[health] database check failed:', e.message);
+    req.log.error({ err: e.message }, 'health: database check failed');
     res.status(503).json({ ok: false, env: config.env, db: 'down' });
   }
 }));
@@ -100,8 +113,6 @@ app.get('/workspaces/:workspaceId/permissions',
 
 app.use(errorHandler);
 
-if (require.main === module) {
-  
 // A superuser (or a BYPASSRLS role) ignores every RLS policy, so tenant isolation
 // would be silently off even with USE_RLS=true. Verify the DB role at boot.
 async function assertRlsEffective() {
@@ -112,19 +123,23 @@ async function assertRlsEffective() {
   if (r.superuser || r.rolbypassrls) {
     const msg = `DB role "${process.env.PGUSER || 'app'}" bypasses RLS (superuser=${!!r.superuser}, bypassrls=${!!r.rolbypassrls}). Tenant isolation would NOT be enforced.`;
     if (config.env === 'production') throw new Error(msg);
-    console.warn('[startup] WARNING: ' + msg);
+    log.warn(msg);
   } else {
-    console.log('[startup] RLS active and the DB role is subject to it.');
+    log.info('RLS active and the DB role is subject to it');
   }
 }
 
-assertRlsEffective().catch((e) => { console.error('[startup] ' + e.message); if (config.env === 'production') process.exit(1); });
+if (require.main === module) {
+  assertRlsEffective().catch((e) => {
+    log.error({ err: e.message }, 'startup check failed');
+    if (config.env === 'production') process.exit(1);
+  });
 
-for (const i of config.integrations) {
-  console.log(`[startup] ${i.name}: ${i.enabled ? 'enabled' : `disabled (set ${i.needs})`}`);
-}
+  for (const i of config.integrations) {
+    log.info({ integration: i.name, enabled: i.enabled, needs: i.enabled ? undefined : i.needs }, 'integration');
+  }
 
-app.listen(config.port, () => console.log(`HigherPays API on :${config.port} (${config.env})`));
+  app.listen(config.port, () => log.info({ port: config.port }, 'HigherPays API listening'));
 }
 
 module.exports = app;

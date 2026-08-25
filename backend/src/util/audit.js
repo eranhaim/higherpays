@@ -1,5 +1,6 @@
 'use strict';
 const { query } = require('../db');
+const { log } = require('../lib/log');
 // Re-export from lib/http for backwards compatibility with existing route
 // files that do `require('../util/audit').asyncHandler`.
 const { asyncHandler } = require('../lib/http');
@@ -14,7 +15,9 @@ async function audit({ workspaceId = null, actorUserId = null, action, entityTyp
       [workspaceId, actorUserId, action, entityType, entityId, metadata, ip]
     );
   } catch (err) {
-    console.error('[audit] failed to write entry:', err.message);
+    // Never block the request on this, but it must be visible: an audit gap
+    // is itself a finding.
+    log.error({ action, workspaceId, actorUserId, err: err.message }, 'audit write failed');
   }
 }
 
