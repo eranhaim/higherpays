@@ -3,6 +3,7 @@ const config = require('../config');
 const express = require('express');
 const crypto = require('crypto');
 const { withPlatformAdmin } = require('../db');
+const { requirePlatformRole } = require('../middleware');
 const { asyncHandler, audit } = require('../util/audit');
 const { isStr, badRequest } = require('../util/validate');
 const { seedRolesForWorkspace } = require('../auth/permissions');
@@ -11,9 +12,13 @@ const hashToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
 
 // Mounted at /platform behind requireAuth + requirePlatformAdmin.
 // Every handler runs in a platform-admin DB context (crosses tenants).
+// Reads are open to every platform role; `finance` may reprice an agency;
+// only `super_admin` may onboard or suspend one.
 const router = express.Router();
 const uid = (req) => req.user.id;
 const pct = (v) => typeof v === 'number' && v >= 0 && v <= 100;
+const superAdminOnly = requirePlatformRole('super_admin');
+const financeOrSuperAdmin = requirePlatformRole('super_admin', 'finance');
 
 // GET /platform/overview — the real back office summary across all agencies.
 router.get('/overview', asyncHandler(async (req, res) => {
@@ -70,7 +75,7 @@ router.get('/organizations/:orgId', asyncHandler(async (req, res) => {
 
 // PUT /platform/organizations/:orgId/platform-fee  { pspRatePct, marginRatePct }
 // The operator sets an agency's PSP rate and HigherPays margin (versioned).
-router.put('/organizations/:orgId/platform-fee', asyncHandler(async (req, res) => {
+router.put('/organizations/:orgId/platform-fee', financeOrSuperAdmin, asyncHandler(async (req, res) => {
   const { pspRatePct, marginRatePct } = req.body || {};
   const pspFixedFee = Number((req.body || {}).pspFixedFee || 0);
   if (!pct(pspRatePct)) return badRequest(res, 'pspRatePct must be 0..100', ['pspRatePct']);
@@ -89,25 +94,25 @@ router.put('/organizations/:orgId/platform-fee', asyncHandler(async (req, res) =
     };
   });
   if (row.err) return res.status(404).json({ error: row.err });
-  await audit({ actorUserId: uid(req), action: 'platform.fee.update', entityType: 'organization', entityId: req.params.orgId, metadata: { pspRatePct, marginRatePct, pspFixedFee } });
+  await audit({ actorUserId: uid(req), action: 'platform.fee.update', entityType: 'organization', entityId: req.params.orgId, metadata: { pspRatePct, marginRatePct, pspFixedFee, platformRole: req.platformRole } });
   res.status(201).json(row.fee);
 }));
 
 // PATCH /platform/organizations/:orgId/status  { status: 'active' | 'suspended' }
-router.patch('/organizations/:orgId/status', asyncHandler(async (req, res) => {
+router.patch('/organizations/:orgId/status', superAdminOnly, asyncHandler(async (req, res) => {
   const { status } = req.body || {};
   if (!['active', 'suspended', 'archived'].includes(status)) return badRequest(res, 'invalid status', ['status']);
   const org = await withPlatformAdmin(uid(req), async (c) => (await c.query(
     'UPDATE organizations SET status=$2 WHERE id=$1 RETURNING id, name, status', [req.params.orgId, status])).rows[0]);
   if (!org) return res.status(404).json({ error: 'not_found' });
-  await audit({ actorUserId: uid(req), action: 'platform.org.status', entityType: 'organization', entityId: org.id, metadata: { status } });
+  await audit({ actorUserId: uid(req), action: 'platform.org.status', entityType: 'organization', entityId: org.id, metadata: { status, platformRole: req.platformRole } });
   res.json(org);
 }));
 
 // POST /platform/agencies — super-admin onboards a NEW agency in one step:
 // organization + workspace + roles + platform fee + settlement fee + commission
 // splits + an owner invite (the new owner sets their own password via the link).
-router.post('/agencies', asyncHandler(async (req, res) => {
+router.post('/agencies', superAdminOnly, asyncHandler(async (req, res) => {
   const b = req.body || {};
   const currency = (b.currency || 'EUR').toUpperCase();
   const creatorSplitPct = b.creatorSplitPct == null ? 70 : Number(b.creatorSplitPct);
@@ -146,7 +151,7 @@ router.post('/agencies', asyncHandler(async (req, res) => {
 
   const link = `https://app.higherpays.com/accept-invite?token=${token}`;
   await sendEmail({ to: b.ownerEmail, subject: `You're invited to run ${b.agencyName} on HigherPays`, body: `Set up your owner login: ${link}` });
-  await audit({ actorUserId: uid(req), action: 'platform.agency.onboard', entityType: 'workspace', entityId: out.wsId, metadata: { agencyName: b.agencyName, ownerEmail: b.ownerEmail } });
+  await audit({ actorUserId: uid(req), action: 'platform.agency.onboard', entityType: 'workspace', entityId: out.wsId, metadata: { agencyName: b.agencyName, ownerEmail: b.ownerEmail, platformRole: req.platformRole } });
   res.status(201).json({
     workspaceId: out.wsId, organizationId: out.orgId, name: b.agencyName,
     blendedRatePct: b.pspRatePct + b.marginRatePct,
@@ -157,7 +162,7 @@ router.post('/agencies', asyncHandler(async (req, res) => {
 
 // PUT /platform/organizations/:orgId/settlement-fee
 // Super-admin sets the chargeback fee + settlement fees (mock now, editable).
-router.put('/organizations/:orgId/settlement-fee', asyncHandler(async (req, res) => {
+router.put('/organizations/:orgId/settlement-fee', financeOrSuperAdmin, asyncHandler(async (req, res) => {
   const b = req.body || {};
   const { chargebackFee, settlementFeePct, settlementFeeFlat } = b;
   const refundFee = Number(b.refundFee || 0), declineFee = Number(b.declineFee || 0);
@@ -179,7 +184,7 @@ router.put('/organizations/:orgId/settlement-fee', asyncHandler(async (req, res)
       [req.params.orgId, chargebackFee, settlementFeePct, settlementFeeFlat, refundFee, declineFee, reservePct, reserveReleaseDays, uid(req)])).rows[0] };
   });
   if (row.err) return res.status(404).json({ error: row.err });
-  await audit({ actorUserId: uid(req), action: 'platform.settlement_fee.update', entityType: 'organization', entityId: req.params.orgId, metadata: { chargebackFee, settlementFeePct, settlementFeeFlat, refundFee, declineFee } });
+  await audit({ actorUserId: uid(req), action: 'platform.settlement_fee.update', entityType: 'organization', entityId: req.params.orgId, metadata: { chargebackFee, settlementFeePct, settlementFeeFlat, refundFee, declineFee, platformRole: req.platformRole } });
   res.status(201).json(row.fee);
 }));
 

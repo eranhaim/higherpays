@@ -80,6 +80,15 @@ const requirePlatformAdmin = asyncHandler(async (req, _res, next) => {
   next();
 });
 
+// 4b) requirePlatformRole — narrows a platform route to specific platform
+// roles. Mount after requirePlatformAdmin, which sets req.platformRole.
+const requirePlatformRole = (...roles) => (req, _res, next) => {
+  if (!roles.includes(req.platformRole)) {
+    return next(new ForbiddenError('insufficient_platform_role', 'platform role required', { needed: roles }));
+  }
+  next();
+};
+
 // 5) errorHandler — last middleware. Formats HttpError instances into the
 // canonical response envelope; unknown errors are logged and returned as 500.
 // eslint-disable-next-line no-unused-vars
@@ -103,6 +112,6 @@ function errorHandler(err, req, res, next) {
 }
 
 module.exports = {
-  requireAuth, requireWorkspace, requirePermission, requirePlatformAdmin,
+  requireAuth, requireWorkspace, requirePermission, requirePlatformAdmin, requirePlatformRole,
   errorHandler,
 };

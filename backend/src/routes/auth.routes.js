@@ -7,10 +7,21 @@ const { seedRolesForWorkspace } = require('../auth/permissions');
 const { requireAuth } = require('../middleware');
 const { generateSecret, verifyTotp, otpauthUrl } = require('../auth/totp');
 const { asyncHandler, audit } = require('../util/audit');
+const { createLimiter } = require('../lib/rateLimit');
+const { TooManyRequestsError } = require('../lib/errors');
 const config = require('../config');
 
 const router = express.Router();
 const ipOf = (req) => (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim() || null;
+
+// Brute-force protection. Per-IP limits cap the request rate; the per-account
+// limiter counts only failed sign-ins so a correct password is never blocked
+// by someone else's guesses from another address.
+const FIFTEEN_MINUTES = 15 * 60 * 1000;
+const ipLimiter = createLimiter({ windowMs: FIFTEEN_MINUTES, max: 100 });
+const accountFailures = createLimiter({ windowMs: FIFTEEN_MINUTES, max: 10 });
+const limitByIp = ipLimiter.middleware((req) => ipOf(req) || 'unknown');
+const accountKey = (email) => String(email || '').trim().toLowerCase();
 
 async function issueRefreshToken(userId, req) {
   const token = generateRefreshToken();
@@ -70,9 +81,13 @@ router.post('/register', asyncHandler(async (req, res) => {
 }));
 
 // POST /auth/login
-router.post('/login', asyncHandler(async (req, res) => {
+router.post('/login', limitByIp, asyncHandler(async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'missing_fields' });
+  if (accountFailures.isBlocked(accountKey(email))) {
+    await audit({ action: 'auth.login.locked', metadata: { email }, ip: ipOf(req) });
+    throw new TooManyRequestsError('Too many failed sign-ins. Try again in 15 minutes.', { retryAfterSeconds: 900 });
+  }
 
   const { rows } = await query(
     "SELECT id, email, full_name, password_hash, status, twofa_secret, twofa_enabled FROM users WHERE email = $1", [email]
@@ -80,6 +95,7 @@ router.post('/login', asyncHandler(async (req, res) => {
   const user = rows[0];
   // Same response whether the user exists or not (avoid user enumeration).
   if (!user || !user.password_hash || user.status !== 'active' || !(await verifyPassword(password, user.password_hash))) {
+    accountFailures.hit(accountKey(email));
     return res.status(401).json({ error: 'invalid_credentials' });
   }
 
@@ -88,11 +104,13 @@ router.post('/login', asyncHandler(async (req, res) => {
     const { totp } = req.body || {};
     if (!totp) return res.json({ twoFactorRequired: true });
     if (!verifyTotp(user.twofa_secret, totp)) {
+      accountFailures.hit(accountKey(email));
       await audit({ actorUserId: user.id, action: 'auth.2fa.failed', ip: ipOf(req) });
       return res.json({ twoFactorRequired: true });
     }
   }
 
+  accountFailures.reset(accountKey(email));
   await query('UPDATE users SET last_login_at = now() WHERE id = $1', [user.id]);
   const memberships = await withUser(user.id, async (c) => (await c.query(
     `SELECT m.workspace_id AS id, m.role, w.name
@@ -111,7 +129,7 @@ router.post('/login', asyncHandler(async (req, res) => {
 
 // ---- Two-factor (TOTP) ----------------------------------------------------
 // POST /auth/2fa/setup — create a pending secret + provisioning URI (QR/manual)
-router.post('/2fa/setup', requireAuth, asyncHandler(async (req, res) => {
+router.post('/2fa/setup', limitByIp, requireAuth, asyncHandler(async (req, res) => {
   const u = (await query('SELECT email, twofa_enabled FROM users WHERE id = $1', [req.user.id])).rows[0];
   if (!u) return res.status(404).json({ error: 'not_found' });
   if (u.twofa_enabled) return res.status(400).json({ error: 'already_enabled' });
@@ -121,7 +139,7 @@ router.post('/2fa/setup', requireAuth, asyncHandler(async (req, res) => {
 }));
 
 // POST /auth/2fa/enable — confirm a code from the app, then turn 2FA on
-router.post('/2fa/enable', requireAuth, asyncHandler(async (req, res) => {
+router.post('/2fa/enable', limitByIp, requireAuth, asyncHandler(async (req, res) => {
   const { code } = req.body || {};
   const u = (await query('SELECT twofa_secret, twofa_enabled FROM users WHERE id = $1', [req.user.id])).rows[0];
   if (!u || !u.twofa_secret) return res.status(400).json({ error: 'no_pending_secret' });
@@ -133,7 +151,7 @@ router.post('/2fa/enable', requireAuth, asyncHandler(async (req, res) => {
 }));
 
 // POST /auth/2fa/disable — requires a valid current code
-router.post('/2fa/disable', requireAuth, asyncHandler(async (req, res) => {
+router.post('/2fa/disable', limitByIp, requireAuth, asyncHandler(async (req, res) => {
   const { code } = req.body || {};
   const u = (await query('SELECT twofa_secret, twofa_enabled FROM users WHERE id = $1', [req.user.id])).rows[0];
   if (!u || !u.twofa_enabled) return res.json({ enabled: false });
@@ -144,7 +162,7 @@ router.post('/2fa/disable', requireAuth, asyncHandler(async (req, res) => {
 }));
 
 // POST /auth/refresh — rotate the refresh token, issue a new access token
-router.post('/refresh', asyncHandler(async (req, res) => {
+router.post('/refresh', limitByIp, asyncHandler(async (req, res) => {
   const { refreshToken } = req.body || {};
   if (!refreshToken) return res.status(400).json({ error: 'missing_token' });
   const hash = hashRefreshToken(refreshToken);
