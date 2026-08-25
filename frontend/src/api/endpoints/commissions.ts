@@ -60,10 +60,7 @@ export const commissionsApi = {
   },
 
   async set(input: { creatorSplitPct: number; chatterPct: number }) {
-    const raw = await api.put<RawCommissionResponse & { warning?: string }>(
-      workspacePath('/commissions'),
-      input,
-    );
+    const raw = await api.put<RawCommissionResponse>(workspacePath('/commissions'), input);
     return {
       commission: {
         creatorSplitPct: toNumber(raw.commission.creator_split_pct, 70),
@@ -71,7 +68,6 @@ export const commissionsApi = {
         chatterPct: toNumber(raw.commission.chatter_pct, 0),
         effectiveFrom: raw.commission.effective_from,
       },
-      warning: raw.warning,
     };
   },
 };

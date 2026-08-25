@@ -48,7 +48,8 @@ export default function PayoutsPage() {
   const creatorsOwed = sum(data.perCreator.map((c) => c.owed));
   const chattersOwed = sum(data.perChatter.map((c) => c.owed));
   const owedTotal = creatorsOwed + chattersOwed;
-  const reserveScale = Math.max(owedTotal, data.reserve.held, 1);
+  const { cash } = data;
+  const cashScale = Math.max(owedTotal, cash.received, 1);
 
   const runPayout = async (input: { payeeType: 'creator' | 'chatter'; targetId?: string }, label: string) => {
     try {
@@ -76,26 +77,36 @@ export default function PayoutsPage() {
         />
       </StatGrid>
 
-      {data.reserve.held > 0 && (
+      {(owedTotal > 0 || cash.heldInReserve > 0) && (
         <div className="card section">
           <div className="sechead">Cash position</div>
           <p className="sub">
-            The reserve is your money, held by MantaPay and released later. If you pay everyone in full today, you front that amount yourself.
+            What reached you this period after fees, less the reserve MantaPay holds back, is what you can pay out today.
           </p>
           <div className="metric-row">
-            <span className="ml wide">Owed to creators and team</span>
-            <span className="mt"><span style={{ width: `${(owedTotal / reserveScale) * 100}%` }} /></span>
-            <span className="mv">{formatMoney(owedTotal)}</span>
+            <span className="ml wide">Received after fees</span>
+            <span className="mt"><span className="tone-pos" style={{ width: `${(cash.received / cashScale) * 100}%` }} /></span>
+            <span className="mv">{formatMoney(cash.received)}</span>
           </div>
           <div className="metric-row">
             <span className="ml wide">Held in reserve</span>
-            <span className="mt"><span className="tone-accent" style={{ width: `${(data.reserve.held / reserveScale) * 100}%` }} /></span>
-            <span className="mv">{formatMoney(data.reserve.held)}</span>
+            <span className="mt"><span className="tone-accent" style={{ width: `${(cash.heldInReserve / cashScale) * 100}%` }} /></span>
+            <span className="mv">{formatMoney(cash.heldInReserve)}</span>
           </div>
-          {data.reserve.source === 'estimated' && (
+          <div className="metric-row">
+            <span className="ml wide">Owed to creators and team</span>
+            <span className="mt"><span style={{ width: `${(owedTotal / cashScale) * 100}%` }} /></span>
+            <span className="mv">{formatMoney(owedTotal)}</span>
+          </div>
+          {cash.shortfallIfPaidNow > 0 ? (
             <div className="warnbar">
-              Estimated from your {data.reserve.pct}% reserve rate. Import a settlement report for the exact figure.
+              Paying everyone now leaves you {formatMoney(cash.shortfallIfPaidNow)} short. That is cash you front until the reserve is released.
             </div>
+          ) : (
+            <p className="sub">You can pay everyone in full from this period's receipts.</p>
+          )}
+          {cash.heldInReserve > 0 && data.reserve.source === 'estimated' && (
+            <p className="sub">Reserve estimated from your {data.reserve.pct}% rate. Import a settlement report for the exact figure.</p>
           )}
         </div>
       )}

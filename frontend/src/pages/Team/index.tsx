@@ -3,8 +3,8 @@ import { useCan } from '../../hooks/usePermission';
 import { initials } from '../../lib/format';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
-import { PageHeader, Pill, DateCell, DataTable, type Column } from '../../components/ui';
-import type { Chatter, Invite } from '../../api/endpoints';
+import { PageHeader, DateCell, DataTable, type Column } from '../../components/ui';
+import type { Member, Invite } from '../../api/endpoints';
 import { useTeamData } from './useTeamData';
 
 function clampPct(v: number): number {
@@ -13,7 +13,10 @@ function clampPct(v: number): number {
 
 export default function TeamPage() {
   const can = useCan();
-  const { chatters, pendingInvites, roles, isLoading, isError, setCommission, invite } = useTeamData();
+  const {
+    chatters, members, pendingInvites, roles, isLoading, isError,
+    setCommission, setRole, removeMember, invite,
+  } = useTeamData();
   const canManage = can('team.manage');
   const canViewCommission = can('commissions.view');
   const canEditCommission = can('commissions.manage');
@@ -23,6 +26,7 @@ export default function TeamPage() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState('chatter');
   const [isInviting, setIsInviting] = useState(false);
+  const [removing, setRemoving] = useState<Member | null>(null);
 
   const saveCommission = async () => {
     const dirty = Object.entries(commissionEdits);
@@ -33,6 +37,25 @@ export default function TeamPage() {
       toast('Chatter commission saved.');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not save the commission.');
+    }
+  };
+
+  const changeRole = async (m: Member, role: string) => {
+    try {
+      await setRole(m.membershipId, role);
+      toast(`${m.name} is now ${role}. They will need to sign in again.`);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not change the role.');
+    }
+  };
+
+  const confirmRemove = async (m: Member) => {
+    try {
+      await removeMember(m.membershipId);
+      setRemoving(null);
+      toast(`${m.name} no longer has access.`);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not remove the member.');
     }
   };
 
@@ -53,25 +76,35 @@ export default function TeamPage() {
     }
   };
 
-  const invitableRoles = roles.filter((r) => r.name !== 'owner');
+  const roleNames = roles.map((r) => r.name);
 
-  const chatterColumns: Column<Chatter>[] = [
+  const memberColumns: Column<Member>[] = [
     {
-      key: 'person', header: 'Chatter',
-      render: (c) => (
+      key: 'person', header: 'Member',
+      render: (m) => (
         <div className="person">
-          <div className="avatar">{initials(c.name)}</div>
+          <div className="avatar">{initials(m.name)}</div>
           <div>
-            <div className="cname">{c.name}</div>
-            <div className="cemail">{c.email}</div>
+            <div className="cname">{m.name}{m.isSelf ? <span className="sub inline"> (you)</span> : null}</div>
+            <div className="cemail">{m.email}</div>
           </div>
         </div>
       ),
     },
-    { key: 'shift', header: 'Shift', render: (c) => c.shift },
     {
-      key: 'status', header: 'Status',
-      render: (c) => <Pill tone={c.status === 'active' ? 'ok' : 'muted'}>{c.status === 'active' ? 'Active' : 'Offline'}</Pill>,
+      key: 'role', header: 'Role',
+      render: (m) => canManage && !m.isSelf ? (
+        <select value={m.role} onChange={(e) => changeRole(m, e.target.value)}>
+          {roleNames.map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+      ) : <span className="rolebadge">{m.role}</span>,
+    },
+    { key: 'joined', header: 'Joined', render: (m) => <DateCell ts={m.joinedAt} /> },
+    {
+      key: 'actions', header: '', align: 'right',
+      render: (m) => canManage && !m.isSelf ? (
+        <button className="btn danger small" onClick={() => setRemoving(m)}>Remove</button>
+      ) : null,
     },
   ];
 
@@ -86,17 +119,17 @@ export default function TeamPage() {
       <PageHeader
         eyebrow="People"
         title="Team"
-        subtitle="Chatters in this workspace and who is still to join."
+        subtitle="Everyone with a seat in this workspace, and who is still to join."
         actions={canManage ? <button className="btn" onClick={() => setInviteOpen(true)}>Invite member</button> : null}
       />
 
       <DataTable
-        columns={chatterColumns}
-        rows={chatters}
-        rowKey={(c) => c.membershipId}
+        columns={memberColumns}
+        rows={members}
+        rowKey={(m) => m.membershipId}
         isLoading={isLoading}
-        emptyTitle={isError ? "Couldn't load the team." : 'No chatters yet.'}
-        emptyHint={isError ? 'Try again in a moment.' : canManage ? 'Invite one with the chatter role.' : undefined}
+        emptyTitle={isError ? "Couldn't load the team." : 'No members yet.'}
+        emptyHint={isError ? 'Try again in a moment.' : undefined}
       />
 
       {canViewCommission && chatters.length > 0 && (
@@ -105,12 +138,13 @@ export default function TeamPage() {
           <div className="tablewrap flush">
             <table>
               <thead>
-                <tr><th>Chatter</th><th>Commission</th></tr>
+                <tr><th>Chatter</th><th>Shift</th><th>Commission</th></tr>
               </thead>
               <tbody>
                 {chatters.map((c) => (
                   <tr key={c.membershipId}>
                     <td className="cname">{c.name}</td>
+                    <td>{c.shift ?? '—'}</td>
                     <td>
                       <div className="pct-input">
                         <input
@@ -156,13 +190,28 @@ export default function TeamPage() {
         <div className="field">
           <label htmlFor="invite-role">Role</label>
           <select id="invite-role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
-            {invitableRoles.map((r) => <option key={r.name} value={r.name}>{r.name}</option>)}
+            {roleNames.filter((r) => r !== 'owner').map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
         </div>
         <div className="modal-actions">
           <button className="btn ghost" onClick={closeInvite}>Cancel</button>
           <button className="btn" onClick={submitInvite} disabled={isInviting}>{isInviting ? 'Sending…' : 'Send invite'}</button>
         </div>
+      </Modal>
+
+      <Modal open={removing !== null} onClose={() => setRemoving(null)}>
+        {removing && (
+          <>
+            <h3>Remove {removing.name}?</h3>
+            <p className="sub">
+              Their access ends immediately and they are signed out everywhere. Their past links and sales stay in the ledger.
+            </p>
+            <div className="modal-actions">
+              <button className="btn ghost" onClick={() => setRemoving(null)}>Keep</button>
+              <button className="btn danger" onClick={() => confirmRemove(removing)}>Remove access</button>
+            </div>
+          </>
+        )}
       </Modal>
     </div>
   );

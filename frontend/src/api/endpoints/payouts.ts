@@ -65,7 +65,8 @@ export interface PayoutBreakdown {
   perCreator: Array<{ id: string; name: string; model: RevenueModel; salary: number; revenue: number; owed: number }>;
   perChatter: Array<{ id: string; name: string; owed: number; sales: number }>;
   reserve: { pct: number; releaseDays: number; held: number; source: 'settlements' | 'estimated' };
-  cash: { owed: number; heldInReserve: number; shortfallIfPaidNow: number };
+  /** Can the agency pay everyone today? `available` is receipts minus the reserve. */
+  cash: { owed: number; received: number; heldInReserve: number; available: number; shortfallIfPaidNow: number };
 }
 
 export interface RefundResult {

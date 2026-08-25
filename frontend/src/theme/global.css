@@ -297,6 +297,7 @@ thead th {
   border-bottom: 1px solid var(--rule); background: var(--surface-2);
 }
 tbody td { padding: 14px 18px; border-bottom: 1px solid var(--rule-soft); color: var(--ink); }
+tbody td select { width: auto; min-width: 130px; }
 tbody tr:last-child td { border-bottom: none; }
 tbody tr.clickable { cursor: pointer; transition: background 0.12s ease; }
 tbody tr.clickable:hover { background: var(--surface-2); }

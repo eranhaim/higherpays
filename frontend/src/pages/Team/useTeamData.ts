@@ -2,16 +2,19 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
   membershipsApi, invitesApi, rolesApi,
-  type Chatter, type Invite, type WorkspaceRole,
+  type Chatter, type Member, type Invite, type WorkspaceRole,
 } from '../../api/endpoints';
 
 export interface UseTeamDataResult {
   chatters: Chatter[];
+  members: Member[];
   pendingInvites: Invite[];
   roles: WorkspaceRole[];
   isLoading: boolean;
   isError: boolean;
   setCommission: (membershipId: string, commissionPct: number) => Promise<void>;
+  setRole: (membershipId: string, role: string) => Promise<void>;
+  removeMember: (membershipId: string) => Promise<void>;
   invite: (input: { email: string; role: string }) => Promise<void>;
 }
 
@@ -23,6 +26,11 @@ export function useTeamData(): UseTeamDataResult {
   const chatters = useQuery({
     queryKey: ['team-chatters', activeWorkspaceId],
     queryFn: () => membershipsApi.listChatters(),
+    enabled,
+  });
+  const members = useQuery({
+    queryKey: ['team-members', activeWorkspaceId],
+    queryFn: () => membershipsApi.listMembers(),
     enabled,
   });
   const invites = useQuery({
@@ -37,12 +45,25 @@ export function useTeamData(): UseTeamDataResult {
     staleTime: 5 * 60_000,
   });
 
+  const invalidateTeam = () => {
+    queryClient.invalidateQueries({ queryKey: ['team-chatters', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['team-members', activeWorkspaceId] });
+  };
+
   const commission = useMutation({
     mutationFn: ({ membershipId, commissionPct }: { membershipId: string; commissionPct: number }) =>
       membershipsApi.setCommissionPct(membershipId, commissionPct),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['team-chatters', activeWorkspaceId] }),
+    onSuccess: invalidateTeam,
   });
-
+  const role = useMutation({
+    mutationFn: ({ membershipId, role }: { membershipId: string; role: string }) =>
+      membershipsApi.setRole(membershipId, role),
+    onSuccess: invalidateTeam,
+  });
+  const remove = useMutation({
+    mutationFn: (membershipId: string) => membershipsApi.remove(membershipId),
+    onSuccess: invalidateTeam,
+  });
   const invite = useMutation({
     mutationFn: (input: { email: string; role: string }) => invitesApi.create(input),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['invites', activeWorkspaceId] }),
@@ -50,12 +71,19 @@ export function useTeamData(): UseTeamDataResult {
 
   return {
     chatters: chatters.data ?? [],
+    members: members.data ?? [],
     pendingInvites: (invites.data ?? []).filter((i) => !i.acceptedAt),
     roles: roles.data ?? [],
-    isLoading: chatters.isLoading,
-    isError: chatters.isError,
+    isLoading: chatters.isLoading || members.isLoading,
+    isError: chatters.isError || members.isError,
     setCommission: async (membershipId, commissionPct) => {
       await commission.mutateAsync({ membershipId, commissionPct });
+    },
+    setRole: async (membershipId, next) => {
+      await role.mutateAsync({ membershipId, role: next });
+    },
+    removeMember: async (membershipId) => {
+      await remove.mutateAsync(membershipId);
     },
     invite: async (input) => {
       await invite.mutateAsync(input);

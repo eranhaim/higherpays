@@ -5,7 +5,7 @@ export {
   creatorsApi, REVENUE_MODEL_LABELS, CREATOR_STATUS_LABELS, canTakeLinks,
   type Creator, type CreatorStatus, type RevenueModel, type CreateCreatorInput, type UpdateCreatorInput,
 } from './creators';
-export { membershipsApi, type Chatter, type ChatterStatus, type ChatterShift } from './memberships';
+export { membershipsApi, type Chatter, type ChatterStatus, type ChatterShift, type Member } from './memberships';
 export {
   customersApi, CUSTOMER_SEGMENTS, CUSTOMER_SEGMENT_LABELS,
   type Customer, type CustomerSegment, type ListCustomersQuery, type CreateCustomerInput,

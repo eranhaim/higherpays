@@ -26,6 +26,17 @@ interface RawChatter {
   commissionPct: number | string | null;
 }
 
+/** Anyone with an active seat in the workspace, whatever their role. */
+export interface Member {
+  membershipId: string;
+  userId: string;
+  name: string;
+  email: string;
+  role: string;
+  isSelf: boolean;
+  joinedAt: string;
+}
+
 function toNullableNumber(v: unknown): number | null {
   if (v == null) return null;
   const n = typeof v === 'string' ? parseFloat(v) : (v as number);
@@ -45,10 +56,24 @@ export const membershipsApi = {
     }));
   },
 
-  async setCommissionPct(membershipId: string, commissionPct: number | null) {
+  async listMembers(): Promise<Member[]> {
+    const raw = await api.get<{ members: Member[] }>(workspacePath('/memberships/members'));
+    return raw.members;
+  },
+
+  setCommissionPct(membershipId: string, commissionPct: number | null) {
     return api.patch<{ id: string; commissionPct: number | null }>(
       workspacePath(`/memberships/${membershipId}`),
       { commissionPct },
     );
+  },
+
+  setRole(membershipId: string, role: string) {
+    return api.patch<{ id: string; role: string }>(workspacePath(`/memberships/${membershipId}/role`), { role });
+  },
+
+  /** Revokes the seat and ends the member's sessions. */
+  remove(membershipId: string) {
+    return api.del<void>(workspacePath(`/memberships/${membershipId}`));
   },
 };
