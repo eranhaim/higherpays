@@ -336,10 +336,13 @@ Three related weaknesses:
   notify.
 - No cap on concurrent sessions and no way for a user to see or revoke their own.
 
-- [ ] Move refresh tokens to an `httpOnly; Secure; SameSite=Strict` cookie
-- [ ] Track a family id per session chain; revoke the family on replay
-- [ ] Add a "your sessions" screen with revoke
-- [ ] Fix CORS first (P2.1) — a cookie plus reflected-origin CORS is worse than what exists today
+- [ ] Move refresh tokens to an `httpOnly; Secure; SameSite=Strict` cookie — needs a CSRF story
+      for the same-origin console; CORS is now an allowlist, so this can proceed
+- [x] Migration 029: `refresh_tokens.family_id`; rotation stays in the family, a replayed token
+      revokes the whole family (`refresh_token_reused`, audited as `auth.refresh.reuse`)
+- [x] `GET /auth/sessions`, `DELETE /auth/sessions/:id`, `POST /auth/sessions/revoke-others`;
+      Settings → Security lists sessions with End / Sign out everywhere else
+- [x] CORS fixed first (P2.1)
 
 ### P1.7 No pagination
 
@@ -354,10 +357,13 @@ Only `/customers` accepts `limit` and `offset`. Everything else has a hardcoded 
 This is a functional gap, not a performance one. An agency doing 500 payments cannot see payment
 501. There is no page two. The data is in the database and unreachable through the product.
 
-- [ ] Keyset pagination (`WHERE occurred_at < $cursor ORDER BY occurred_at DESC LIMIT $n`) on every
-      list endpoint
-- [ ] Consistent envelope: `{ items, nextCursor }`
-- [ ] Wire the frontend tables to it
+- [x] Keyset pagination on `(timestamp, id)` for `/transactions`, `/links` and `/settlements`
+      (`lib/cursor.js`; limit 50, max 200; a malformed cursor is ignored)
+- [x] Envelope `{ items, nextCursor }`
+- [x] Payments and Links load pages on demand ("Load more"); client-side filters apply to what is
+      loaded — server-side filters are a roadmap item
+- [ ] `/customers` still uses limit/offset; move it to the same cursor when its filters move
+      server-side
 
 Keyset, not offset — offset pagination drifts when rows are inserted mid-scroll, which for a live
 payments feed is constantly.
@@ -376,12 +382,16 @@ You cannot answer "what happened to this request" in production.
   Telegram delivery (`notify.js:90`), notifications (`payments.service.js:127`). Each is the right
   call. With no alerting, none of them will ever be noticed.
 
-- [ ] `pino` with a request-id middleware; log method, path, status, duration, workspace, user
-- [ ] Never log tokens, password hashes, or `raw_payload`
-- [ ] `/health` should check the DB; add `/ready` for the load balancer
-- [ ] Error tracking (Sentry or equivalent) on both backend and frontend
-- [ ] Alert on: unprocessed webhooks, 5xx rate, auth failure bursts, settlement variance, failed
-      audit writes
+- [x] `lib/log.js`: pino, one JSON line per request with `reqId` (echoed as `X-Request-Id`),
+      method, path, status, duration, workspace, user, ip. Every `console.*` in the request path is
+      gone; 5xx responses return the request id instead of the stack
+- [x] Redaction list covers tokens, password hashes and provider payloads
+- [x] `/health` checks the DB and the webhook backlog (503 on either). `/ready` is not needed while
+      one nginx fronts one container
+- [ ] Error tracking (Sentry or equivalent) on both backend and frontend — needs an account/DSN
+- [ ] Alert on: unprocessed webhooks (`/health` already 503s), 5xx rate, auth failure bursts
+      (`auth.login.locked` audit rows), settlement variance, failed audit writes (now logged at
+      `error`)
 - [ ] Ship container logs off the box — they die with the instance today
 
 ### P1.9 `xlsx@0.18.5` — high severity, no fix available
@@ -391,9 +401,12 @@ SheetJS left npm, so there is no patched version to upgrade to. It parses upload
 `settlements.routes.js:31` — synchronously, up to 15 MB, blocking the event loop for every other
 request while it runs.
 
-- [ ] Migrate to `exceljs`, or install SheetJS from its own CDN at a patched version
-- [ ] Parse in a worker thread or a separate job, not on the request path
-- [ ] Cap the upload well below 15 MB and validate the shape before parsing
+- [x] Migrated to `exceljs`; `xlsx` removed. `npm audit --omit=dev` now reports one moderate
+      finding in `uuid` (via exceljs, a bounds check when a caller passes its own buffer, which
+      exceljs does not)
+- [x] `settlement/parse.worker.js` parses off the request thread, 30 s timeout
+- [x] Upload capped at 4 MB and must start with the zip magic bytes; `test/settlement.test.js`
+      builds a workbook with the provider's layout and checks header-name column resolution
 
 ### P1.10 The commission split has no rounding discipline and no bounds
 
@@ -566,8 +579,9 @@ granting synthetic full membership (`middleware/index.js:42`) — and ignored ev
 Not exploitable today — auth is a bearer token from `localStorage`, which an attacker's page cannot
 read. It becomes exploitable the moment P1.6 introduces a cookie.
 
-- [ ] Allowlist: production origin plus `localhost:5173` in dev
-- [ ] Fix this before, not after, moving tokens to cookies
+- [x] `CORS_ORIGINS` allowlist (defaults to the production hosts and `localhost:5173`); other
+      origins get no CORS headers at all
+- [x] Done before any cookie work
 
 ### P2.2 Containers run as root
 
@@ -638,7 +652,7 @@ Separately, `ipOf()` (`auth.routes.js:13`) reads `X-Forwarded-For` directly and 
 `trust proxy`. A client can send that header and choose the IP recorded in the audit log.
 
 - [ ] `GET /workspaces/:id/audit` behind `settings.view`
-- [ ] `app.set('trust proxy', 1)` and use `req.ip`
+- [x] `app.set('trust proxy', 1)`; audit rows and rate limits use `req.ip`
 - [ ] Log which permission gate allowed each sensitive action, not just the action
 
 ### P2.8 Weak random in identifier generation
@@ -767,10 +781,10 @@ why the other two went unnoticed.
 Current results, so you can tell whether a change helped:
 
 ```bash
-cd backend  && npm test                    # 37 pass (unit; engine suite skips without TEST_DATABASE_URL)
-cd backend  && npm run test:integration    # 31 pass — needs the local Postgres, see HANDOFF §10
+cd backend  && npm test                    # 41 pass (unit; engine suite skips without TEST_DATABASE_URL)
+cd backend  && npm run test:integration    # 35 pass — needs the local Postgres, see HANDOFF §10
 cd backend  && npm run test:db             # 12 pass — TEST_DATABASE_URL as the postgres owner
-cd backend  && npm audit --omit=dev        # 1 high (xlsx), no fix available
+cd backend  && npm audit --omit=dev        # 1 moderate (uuid via exceljs), not reachable
 cd frontend && npx vitest run              # 27 pass
 cd frontend && npm run lint                # 0 errors
 cd frontend && npx tsc -b                  # 0 errors

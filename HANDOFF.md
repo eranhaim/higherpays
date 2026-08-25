@@ -531,6 +531,10 @@ ssh ubuntu@54.173.144.0 "bash /home/ubuntu/higherpays/deploy/check-sites.sh"
 
 ## 12. Where to look when something breaks
 
+Every API response carries an `X-Request-Id`; the backend logs one JSON
+line per request with that id (`docker compose logs backend | grep <id>`),
+and 5xx responses return it to the client instead of a stack trace.
+
 | Symptom                                          | First place to look                                                                                          |
 |--------------------------------------------------|--------------------------------------------------------------------------------------------------------------|
 | Frontend can't reach backend                     | Browser network tab → is it hitting `/api/*`? Check container nginx logs: `docker compose logs -f frontend`. |
