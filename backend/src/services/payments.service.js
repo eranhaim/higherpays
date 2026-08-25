@@ -60,13 +60,18 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   const netValue = net != null ? net : grossValue - feeValue;
 
   // 2) Insert transaction (idempotent on (workspace_id, provider_transaction_id)).
-  const tx = (await client.query(
+  //    An approved sale is final: a decline observed later for the same
+  //    attempt must not flip it back, or the ledger and the transaction
+  //    would disagree. The DO UPDATE returns no row in that case, so the
+  //    existing row is read back.
+  const upserted = (await client.query(
     `INSERT INTO transactions
        (workspace_id, payment_link_id, creator_id, customer_id, attributed_membership_id,
         type, status, gross, fee, net, currency, provider_transaction_id, occurred_at, raw_payload)
      VALUES ($1,$2,$3,$4,$5,'payment'::txn_type,$6::txn_status,$7,$8,$9,$10,$11,now(),$12)
      ON CONFLICT (workspace_id, provider_transaction_id)
        DO UPDATE SET status = EXCLUDED.status, fee = EXCLUDED.fee, net = EXCLUDED.net
+       WHERE transactions.status <> 'approved'
      RETURNING id`,
     [workspaceId,
      link ? link.id : null,
@@ -75,9 +80,13 @@ async function recordPaymentOutcome(client, workspaceId, params) {
      link ? link.created_by : null,
      status, grossValue, feeValue, netValue, currency, providerTransactionId, rawPayload]))
     .rows[0];
+  const tx = upserted ?? (await client.query(
+    'SELECT id FROM transactions WHERE workspace_id = $1 AND provider_transaction_id = $2',
+    [workspaceId, providerTransactionId])).rows[0];
+  const ignoredLateDecline = !upserted && status === 'declined';
 
   // 3) Flip the link status if we attributed to one.
-  if (link) {
+  if (link && !ignoredLateDecline) {
     if (status === 'approved') {
       await client.query(
         "UPDATE payment_links SET status='paid'::link_status, paid_at=now() WHERE id=$1",

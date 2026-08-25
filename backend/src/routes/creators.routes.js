@@ -4,6 +4,14 @@ const { withWorkspace } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler, audit } = require('../util/audit');
 const { isStr, isOptStr, badRequest } = require('../util/validate');
+const { maxChatterPct } = require('../services/splits');
+
+// A rev-share split has to leave room for the highest chatter commission in
+// the workspace; fn_post_sale refuses the sale otherwise.
+async function splitTooHigh(c, workspaceId, split) {
+  const chatterMax = await maxChatterPct(c, workspaceId);
+  return split + chatterMax > 100 ? `${split}% plus a chatter on ${chatterMax}% would exceed 100%` : null;
+}
 
 // mergeParams so :workspaceId from the parent mount is visible here.
 const router = express.Router({ mergeParams: true });
@@ -57,6 +65,10 @@ router.post('/', requirePermission('creators.manage'), asyncHandler(async (req, 
   if (!(split >= 0 && split <= 100)) return badRequest(res, 'revenueSplitPct must be 0..100', ['revenueSplitPct']);
 
   const created = await withWorkspace(wid(req), uid(req), async (c) => {
+    if ((revenueModel || 'revshare') === 'revshare') {
+      const problem = await splitTooHigh(c, wid(req), split);
+      if (problem) return { err: problem };
+    }
     const cr = (await c.query(
       `INSERT INTO creators (workspace_id, stage_name, handle, legal_name, country, revenue_split_pct, brand, revenue_model, salary, salary_increase_pct)
        VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8::creator_revenue_model,'revshare'),$9,COALESCE($10,0))
@@ -65,6 +77,7 @@ router.post('/', requirePermission('creators.manage'), asyncHandler(async (req, 
     await c.query(`INSERT INTO creator_compliance (workspace_id, creator_id) VALUES ($1,$2)`, [wid(req), cr.id]);
     return cr;
   });
+  if (created.err) return badRequest(res, created.err, ['revenueSplitPct']);
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'creator.create', entityType: 'creator', entityId: created.id });
   res.status(201).json(created);
 }));
@@ -78,11 +91,20 @@ router.patch('/:id', requirePermission('creators.manage'), asyncHandler(async (r
     if (req.body && k in req.body && allowed.includes(col)) { vals.push(req.body[k]); sets.push(`${col} = $${vals.length}`); }
   }
   if (!sets.length) return badRequest(res, 'no updatable fields provided');
+  const newSplit = req.body.revenueSplitPct == null ? null : Number(req.body.revenueSplitPct);
+  if (newSplit != null && !(newSplit >= 0 && newSplit <= 100)) return badRequest(res, 'revenueSplitPct must be 0..100', ['revenueSplitPct']);
   vals.push(wid(req), req.params.id);
-  const updated = await withWorkspace(wid(req), uid(req), async (c) => (await c.query(
-    `UPDATE creators SET ${sets.join(', ')} WHERE workspace_id = $${vals.length - 1} AND id = $${vals.length}
-     RETURNING id, stage_name, handle, country, status, revenue_split_pct, updated_at`, vals)).rows[0]);
+  const updated = await withWorkspace(wid(req), uid(req), async (c) => {
+    if (newSplit != null) {
+      const problem = await splitTooHigh(c, wid(req), newSplit);
+      if (problem) return { err: problem };
+    }
+    return (await c.query(
+      `UPDATE creators SET ${sets.join(', ')} WHERE workspace_id = $${vals.length - 1} AND id = $${vals.length}
+       RETURNING id, stage_name, handle, country, status, revenue_split_pct, updated_at`, vals)).rows[0];
+  });
   if (!updated) return res.status(404).json({ error: 'not_found' });
+  if (updated.err) return badRequest(res, updated.err, ['revenueSplitPct']);
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'creator.update', entityType: 'creator', entityId: updated.id });
   res.json(updated);
 }));

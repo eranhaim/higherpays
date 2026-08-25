@@ -5,6 +5,7 @@ const { requirePermission } = require('../middleware');
 const { asyncHandler, audit } = require('../util/audit');
 const provider = require('../providers/mantapay');
 const config = require('../config');
+const { cashPosition } = require('../services/cash');
 
 const router = express.Router({ mergeParams: true });
 const wid = (req) => req.membership.workspaceId;
@@ -169,58 +170,87 @@ router.get('/payouts/breakdown', requirePermission('commissions.view'), asyncHan
 
   const creatorsOwed = data.perCreator.reduce((s, r) => s + num(r.owed), 0);
   const chattersOwed = data.perChatter.reduce((s, r) => s + num(r.owed), 0);
+  // What actually reached the agency this period: gross minus every fee.
+  const received = await withWorkspace(wid(req), uid(req), async (c) => num((await c.query(
+    `SELECT COALESCE(SUM(ce.distributable),0) AS received
+       FROM commission_entries ce JOIN transactions t ON t.id = ce.transaction_id
+      WHERE t.occurred_at >= $1 AND t.occurred_at <= $2`, [F, T])).rows[0].received));
 
   res.json({
     range: { from: F, to: T },
     perCreator: data.perCreator.map((r) => ({ id: r.id, name: r.name, model: r.model, salary: num(r.salary), revenue: num(r.revenue), owed: num(r.owed) })),
     perChatter: data.perChatter.map((r) => ({ id: r.id, name: r.name, owed: num(r.owed), sales: num(r.sales) })),
     reserve,
-    cash: {
-      owed: round2(creatorsOwed + chattersOwed),
-      heldInReserve: reserve.held,
-      // negative => the agency must front cash to cover payouts this period
-      shortfallIfPaidNow: round2(reserve.held),
-    },
+    cash: cashPosition({ owed: creatorsOwed + chattersOwed, received, held: reserve.held }),
   });
 }));
 
-// POST /workspaces/:wid/payouts/run — settle unpaid balances (one recipient or all)
+// One fixed statement set per payee type: the money path carries no
+// string-built SQL. $1 from, $2 to, $3 optional target id (NULL = everyone).
+const PAYOUT_SQL = {
+  creator: {
+    unpaid: `
+      SELECT ce.creator_id AS rid, SUM(ce.creator_amount) AS amount,
+             MIN(t.occurred_at)::date AS ps, MAX(t.occurred_at)::date AS pe
+        FROM commission_entries ce JOIN transactions t ON t.id = ce.transaction_id
+       WHERE t.occurred_at >= $1 AND t.occurred_at <= $2
+         AND ce.creator_payout_id IS NULL AND ce.creator_id IS NOT NULL
+         AND ($3::uuid IS NULL OR ce.creator_id = $3::uuid)
+       GROUP BY ce.creator_id HAVING SUM(ce.creator_amount) > 0`,
+    insert: `
+      INSERT INTO payouts (workspace_id, payee_type, creator_id, period_start, period_end, amount, net, currency, status)
+      VALUES ($1, 'creator', $2, $3, $4, $5, $5, $6, 'recorded') RETURNING id`,
+    settle: `
+      UPDATE commission_entries SET creator_payout_id = $1, creator_paid_at = now()
+       WHERE creator_id = $2 AND creator_payout_id IS NULL
+         AND transaction_id IN (SELECT id FROM transactions WHERE occurred_at >= $3 AND occurred_at <= $4)`,
+  },
+  chatter: {
+    unpaid: `
+      SELECT ce.chatter_membership_id AS rid, SUM(ce.chatter_amount) AS amount,
+             MIN(t.occurred_at)::date AS ps, MAX(t.occurred_at)::date AS pe
+        FROM commission_entries ce JOIN transactions t ON t.id = ce.transaction_id
+       WHERE t.occurred_at >= $1 AND t.occurred_at <= $2
+         AND ce.chatter_payout_id IS NULL AND ce.chatter_membership_id IS NOT NULL
+         AND ($3::uuid IS NULL OR ce.chatter_membership_id = $3::uuid)
+       GROUP BY ce.chatter_membership_id HAVING SUM(ce.chatter_amount) > 0`,
+    insert: `
+      INSERT INTO payouts (workspace_id, payee_type, membership_id, period_start, period_end, amount, net, currency, status)
+      VALUES ($1, 'chatter', $2, $3, $4, $5, $5, $6, 'recorded') RETURNING id`,
+    settle: `
+      UPDATE commission_entries SET chatter_payout_id = $1, chatter_paid_at = now()
+       WHERE chatter_membership_id = $2 AND chatter_payout_id IS NULL
+         AND transaction_id IN (SELECT id FROM transactions WHERE occurred_at >= $3 AND occurred_at <= $4)`,
+  },
+};
+
+// POST /workspaces/:wid/payouts/run — record a payout for unpaid balances
+// (one recipient or all). No rail moves money yet, so the payout row is
+// `recorded`, not `paid`. Runs for the same workspace and payee type are
+// serialised by an advisory lock, so a double click cannot pay twice.
 router.post('/payouts/run', requirePermission('commissions.manage'), asyncHandler(async (req, res) => {
   const { payeeType, targetId = null } = req.body || {};
-  if (!['creator', 'chatter'].includes(payeeType)) return res.status(400).json({ error: 'invalid_payeeType' });
+  const sql = PAYOUT_SQL[payeeType];
+  if (!sql) return res.status(400).json({ error: 'invalid_payeeType' });
   const to = req.body.to ? new Date(req.body.to) : new Date();
   const from = req.body.from ? new Date(req.body.from) : new Date(Date.now() - 30 * 86400000);
   const F = from.toISOString(), T = to.toISOString();
-  const col = payeeType === 'creator' ? 'ce.creator_id' : 'ce.chatter_membership_id';
-  const rawCol = payeeType === 'creator' ? 'creator_id' : 'chatter_membership_id';
-  const idCol = payeeType === 'creator' ? 'creator_id' : 'membership_id';
-  const payCol = payeeType === 'creator' ? 'creator_payout_id' : 'chatter_payout_id';
-  const paidAtCol = payeeType === 'creator' ? 'creator_paid_at' : 'chatter_paid_at';
-  const amtCol = payeeType === 'creator' ? 'ce.creator_amount' : 'ce.chatter_amount';
+
   const runs = await withWorkspace(wid(req), uid(req), async (c) => {
+    await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`payout:${wid(req)}:${payeeType}`]);
     const cur = (await c.query('SELECT currency FROM workspaces WHERE id=$1', [wid(req)])).rows[0].currency;
-    const rows = (await c.query(`
-      SELECT ${col} AS rid, SUM(${amtCol}) AS amount,
-             MIN(t.occurred_at)::date AS ps, MAX(t.occurred_at)::date AS pe
-      FROM commission_entries ce JOIN transactions t ON t.id=ce.transaction_id
-      WHERE t.occurred_at>=$1 AND t.occurred_at<=$2 AND ce.${payCol} IS NULL AND ${col} IS NOT NULL
-        ${targetId ? `AND ${col}=$3` : ''}
-      GROUP BY ${col} HAVING SUM(${amtCol}) > 0`, targetId ? [F, T, targetId] : [F, T])).rows;
+    const rows = (await c.query(sql.unpaid, [F, T, targetId])).rows;
     const out = [];
     for (const r of rows) {
-      const pay = (await c.query(
-        `INSERT INTO payouts(workspace_id, payee_type, ${idCol}, period_start, period_end, amount, net, currency, status)
-         VALUES($1,$2,$3,$4,$5,$6,$6,$7,'paid') RETURNING id`,
-        [wid(req), payeeType, r.rid, r.ps || F.slice(0, 10), r.pe || T.slice(0, 10), r.amount, cur])).rows[0];
-      await c.query(
-        `UPDATE commission_entries SET ${payCol}=$1, ${paidAtCol}=now()
-         WHERE ${rawCol}=$2 AND ${payCol} IS NULL
-           AND transaction_id IN (SELECT id FROM transactions WHERE occurred_at>=$3 AND occurred_at<=$4)`,
-        [pay.id, r.rid, F, T]);
+      const pay = (await c.query(sql.insert,
+        [wid(req), r.rid, r.ps || F.slice(0, 10), r.pe || T.slice(0, 10), r.amount, cur])).rows[0];
+      const settled = await c.query(sql.settle, [pay.id, r.rid, F, T]);
+      if (settled.rowCount === 0) throw new Error(`payout ${pay.id} settled no entries`);
       out.push({ recipientId: r.rid, amount: Number(r.amount), payoutId: pay.id });
     }
     return out;
   });
+  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'payout.run', metadata: { payeeType, targetId, count: runs.length, total: runs.reduce((s, r) => s + r.amount, 0) } });
   res.json({ ran: runs.length, total: runs.reduce((s, r) => s + r.amount, 0), payouts: runs });
 }));
 

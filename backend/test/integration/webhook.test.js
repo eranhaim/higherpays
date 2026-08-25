@@ -6,53 +6,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const request = require('supertest');
-const { app, pool } = require('../helpers/setup');
+const { app } = require('../helpers/setup');
 const { withSystem } = require('../../src/db');
 const { createTenant, createCreator } = require('../helpers/tenant');
-const sig = require('../../src/providers/mantapay-signature');
+const { endpointFor, setMerchantId, encodeForm, buildPaidPayload } = require('../helpers/webhook');
 const paymentsService = require('../../src/services/payments.service');
-
-// `workspaces` is FORCE-RLS, so a bare pool query returns zero rows. Use the
-// same trusted system context the webhook itself uses.
-async function endpointFor(workspaceId) {
-  return withSystem(async (c) => {
-    const { rows } = await c.query(
-      "SELECT webhook_endpoint_id FROM workspaces WHERE id = $1", [workspaceId]);
-    return rows[0].webhook_endpoint_id;
-  });
-}
-
-async function setMerchantId(workspaceId, mid) {
-  await withSystem((c) => c.query(
-    'UPDATE workspaces SET mid = $2 WHERE id = $1', [workspaceId, mid]));
-}
-
-function encodeForm(params) {
-  return Object.entries(params)
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join('&');
-}
-
-function buildPaidPayload({ reference, transId, amount, currency = 'EUR', merchantId }) {
-  const fields = {
-    trans_id: transId,
-    trans_order: reference,
-    reply_code: '000',
-    reply_desc: 'Approved',
-    trans_amount: String(amount),
-    trans_currency: currency,
-    merchant_id: merchantId,
-    trans_date: '01/01/2026 12:00:00',
-    client_email: 'buyer@test.local',
-  };
-  // Notifications sign a subset:
-  //   trans_id + trans_order + reply_code + trans_amount + trans_currency + hashKey
-  const hashKey = process.env.MANTAPAY_HASH_KEY;
-  const base = fields.trans_id + fields.trans_order + fields.reply_code +
-               fields.trans_amount + fields.trans_currency;
-  fields.signature = sig.digest(base + hashKey);
-  return fields;
-}
 
 test('webhook: valid signature -> transaction posted, link paid, notification recorded', async () => {
   const t = await createTenant(app);

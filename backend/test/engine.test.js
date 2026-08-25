@@ -113,10 +113,13 @@ test('splits reconcile exactly and nothing is lost', async () => {
 test('a €100 deal splits to the documented figures', async () => {
   const f = await fixture({ feeModel: 'cascade', mdr: 7, settlement: 1, fixed: 0.50, margin: 5, split: 70, chatterPct: 10 });
   const e = await postSale(f, 100);
-  assert.equal(n(e.platform_fee), 13.425, 'PSP 8.425 + HigherPays 5.00');
-  assert.equal(n(e.distributable), 86.575);
-  assert.ok(Math.abs(n(e.creator_amount) - 60.6025) < 0.0001);
-  assert.ok(Math.abs(n(e.chatter_amount) - 8.6575) < 0.0001);
+  // Fees are itemised to four decimals, but everything paid out is whole cents:
+  // PSP 8.425 + HigherPays 5.00 = 13.425 → 13.43 taken, 86.57 to distribute.
+  assert.equal(n(e.platform_fee), 13.43);
+  assert.equal(n(e.distributable), 86.57);
+  assert.equal(n(e.creator_amount), 60.60, '70% of 86.57, rounded');
+  assert.equal(n(e.chatter_amount), 8.66, '10% of 86.57, rounded');
+  assert.equal(n(e.agency_amount), 17.31, 'the agency takes the remainder');
 });
 
 test('salary and AI creators take no per-sale share', async () => {
@@ -137,8 +140,8 @@ test("a chatter's own commission rate overrides the workspace rule", async () =>
     "INSERT INTO memberships(workspace_id,user_id,role,status,commission_pct) VALUES($1,$2,'chatter','active',25) RETURNING id",
     [f.ws, u])).rows[0].id;
   const e = await postSale(f, 100, { membershipId: m });
-  const expected = n(e.distributable) * 0.25;
-  assert.ok(Math.abs(n(e.chatter_amount) - expected) < 1e-9, '25%, not the workspace default 10%');
+  const expected = Math.round(n(e.distributable) * 0.25 * 100) / 100;
+  assert.equal(n(e.chatter_amount), expected, '25%, not the workspace default 10%');
 });
 
 // ── Reversals ────────────────────────────────────────────────────────────────

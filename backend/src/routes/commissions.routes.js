@@ -4,6 +4,7 @@ const { withWorkspace } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler, audit } = require('../util/audit');
 const { badRequest } = require('../util/validate');
+const { maxCreatorSplitPct } = require('../services/splits');
 
 const router = express.Router({ mergeParams: true });
 const wid = (req) => req.membership.workspaceId;
@@ -43,18 +44,25 @@ router.put('/', requirePermission('commissions.manage'), asyncHandler(async (req
   if (!pct(chatterPct)) return badRequest(res, 'chatterPct must be 0..100', ['chatterPct']);
 
   const agencySplit = 100 - creatorSplitPct;
-  // Soft guard: chatter commission is taken from the agency share; warn (don't block)
-  // if it would exceed it, since the owner may intend a promo/loss-leader.
-  const warning = chatterPct > agencySplit ? 'chatter_pct exceeds agency share; agency net will be negative' : undefined;
+  if (chatterPct > agencySplit) {
+    return badRequest(res, 'chatter commission cannot exceed the agency share', ['chatterPct']);
+  }
 
-  const rule = await withWorkspace(wid(req), uid(req), async (c) => (await c.query(
-    `INSERT INTO commission_rules (workspace_id, creator_id, creator_split_pct, agency_split_pct, chatter_pct, created_by)
-     VALUES ($1, NULL, $2, $3, $4, $5)
-     RETURNING creator_split_pct, agency_split_pct, chatter_pct, effective_from`,
-    [wid(req), creatorSplitPct, agencySplit, chatterPct, uid(req)])).rows[0]);
+  const out = await withWorkspace(wid(req), uid(req), async (c) => {
+    // Each creator's own split is what the ledger applies; the new default
+    // chatter rate must fit next to the highest of them.
+    const creatorMax = await maxCreatorSplitPct(c, wid(req));
+    if (creatorMax + chatterPct > 100) return { err: `a creator on ${creatorMax}% plus ${chatterPct}% commission would exceed 100%` };
+    return { rule: (await c.query(
+      `INSERT INTO commission_rules (workspace_id, creator_id, creator_split_pct, agency_split_pct, chatter_pct, created_by)
+       VALUES ($1, NULL, $2, $3, $4, $5)
+       RETURNING creator_split_pct, agency_split_pct, chatter_pct, effective_from`,
+      [wid(req), creatorSplitPct, agencySplit, chatterPct, uid(req)])).rows[0] };
+  });
+  if (out.err) return badRequest(res, out.err, ['chatterPct']);
 
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'commissions.update', metadata: { creatorSplitPct, chatterPct } });
-  res.status(201).json({ commission: rule, warning });
+  res.status(201).json({ commission: out.rule });
 }));
 
 module.exports = router;
