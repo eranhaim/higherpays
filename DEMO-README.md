@@ -93,3 +93,18 @@ workspace's own hash key and posts it to the webhook, so the server cannot
 tell it from MantaPay — but no card is charged and no money moves. Refunds are
 record-only in production too: the app records a refund issued in MantaPay's
 dashboard, it never calls a refund API.
+
+
+
+## demo payment
+Test Cards
+Only the following credit card number are allowed while in test environment:
+
+Card Number	Issuer
+
+4580000000000000	VISA (IL)
+5326140000000000	MasterCard (IL)
+91000000	IsraCard (IL)
+
+* Use any future expiry date with these test cards.
+** For other credit card types, pass any three digits as CVV2.

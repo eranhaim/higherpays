@@ -30,4 +30,12 @@ export const platformApi = {
     const raw = await api.get<{ workspaces: PlatformWorkspace[] }>('/platform/workspaces', { skipWorkspace: true });
     return raw.workspaces;
   },
+
+  /**
+   * Set the MID MantaPay knows this agency by. Passing null clears it, which
+   * falls the server back to MANTAPAY_MERCHANT_ID.
+   */
+  setMerchantId: (id: string, merchantId: string | null) =>
+    api.patch<{ id: string; name: string; merchantId: string | null }>(
+      `/platform/workspaces/${id}/merchant-id`, { merchantId }, { skipWorkspace: true }),
 };
