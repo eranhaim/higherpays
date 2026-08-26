@@ -358,7 +358,7 @@ The runtime DB role (`hp_app`) is `NOSUPERUSER NOBYPASSRLS`. Migrations run as t
 
 Money math is exact NUMERIC in Postgres, JS `number` in the app. The ledger (splits, payouts, chargebacks) is computed server-side; the frontend only displays it. The one client-side calculation is the fee preview in `frontend/src/business/feeBreakdown.ts` (unit-tested). New currency math belongs there with a unit test, not inline in a page or component.
 
-Money display always goes through `<Money amount={n} direction="in" | "out" emphasis />`. Never hand-format currency in a page — it carries the direction colour and mono font.
+Money display always goes through `<Money amount={n} direction="in" | "out" emphasis />`. Never hand-format currency in a page — it carries the direction colour and tabular numerals.
 
 ### Auth and permissions
 
@@ -388,7 +388,7 @@ There is no demo mode. Every page reads the backend through React Query: `pages/
 
 ### Design tokens
 
-No Tailwind. Styling is plain CSS classes in `frontend/src/theme/global.css` with tokens from `variables.css` (paper/ink ledger palette, JetBrains Mono for money/ids/dates). Pages carry no inline styles except data-driven sizes (bar widths). Use the existing tokens rather than new hex values.
+No Tailwind. Styling is plain CSS classes in `frontend/src/theme/global.css` with tokens from `variables.css` (dark navy console palette, teal brand, Assistant for everything, monospace for ids and codes). `merchant-console-mock.html` at the repo root is the visual reference the app follows. Pages carry no inline styles except data-driven sizes (bar widths). Use the existing tokens rather than new hex values.
 
 Sizes come from the type scale (`--text-micro` … `--text-base`), not new px values. The uppercase micro-label (section heads, field labels, column headers) is one grouped rule in `global.css` — add your selector to it rather than restating the five properties.
 
@@ -396,10 +396,10 @@ Sizes come from the type scale (`--text-micro` … `--text-base`), not new px va
 
 Both are correct; they do different jobs.
 
-* **`<DataTable>`** — the table *is* the content block. Renders its own `.card`, and owns loading, empty, footer, and keyboard-accessible rows. Use it for a page's main list: `Payments`, `Links`, `Customers`, `Team` members.
+* **`<DataTable>`** — the table *is* the content block. Renders its own `.tableblock` frame, and owns loading, empty, footer, and keyboard-accessible rows. Use it for a page's main list: `Payments`, `Links`, `Customers`, `Team` members.
 * **`.tablewrap` + raw `<table>`** — the table is *one section inside* an existing `.card`, under a `.sechead`. Use it for `Payouts`, account splits, agent commission, the permission matrix, sessions, notification channels.
 
-Do not add a flag to `DataTable` to suppress its card — that is the wrapper's whole job. When hand-rolling, put `scope="col"` on every `<th>`, and `<th scope="row">` on the cell that names the row (see `RolesPane`).
+Do not add a flag to `DataTable` to suppress its frame — that is the wrapper's whole job. When hand-rolling, put `scope="col"` on every `<th>`, and `<th scope="row">` on the cell that names the row (see `RolesPane`).
 
 ### Line endings
 

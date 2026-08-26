@@ -35,8 +35,10 @@ export function DataTable<T>(props: DataTableProps<T>) {
   } = props;
 
   return (
-    <div className="card">
-      <div className="tablewrap">
+    <div className="tableblock">
+      {/* The footer sits outside the scroll container so it stays put while
+          the rows scroll under the sticky header. */}
+      <div className="tablewrap flush">
         <table>
           <thead>
             <tr>

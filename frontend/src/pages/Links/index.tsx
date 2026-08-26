@@ -136,7 +136,6 @@ export default function LinksPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="Money in"
         title="Payment links"
         subtitle="Hosted checkout links. The customer pays on MantaPay's page; card details never touch this system."
         actions={

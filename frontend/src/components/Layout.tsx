@@ -1,7 +1,7 @@
 /**
- * App shell: sidebar grouped by intent (money in / money out / people /
- * insight / admin) and the routed page. Nav items are filtered by the
- * caller's real permissions, so a agent only sees what they can act on.
+ * App shell: sidebar grouped by intent (operate / manage / administer) and
+ * the routed page. Nav items are filtered by the caller's real permissions,
+ * so an agent only sees what they can act on.
  */
 
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
@@ -15,6 +15,7 @@ import { authApi } from '../api/endpoints';
 import { NAV, type NavGroup } from '../rbac/nav';
 import { hasUnsavedChanges, clearUnsavedChanges } from '../lib/unsavedChanges';
 import Modal from './Modal';
+import NavIcon from './NavIcon';
 import NotificationBell from './NotificationBell';
 
 interface NavSectionProps {
@@ -37,6 +38,7 @@ function NavSection({ group, onNavigate }: NavSectionProps) {
           className={({ isActive }) => `navitem${isActive ? ' active' : ''}`}
           onClick={(e) => onNavigate(e, item.path)}
         >
+          <NavIcon name={item.icon} />
           {item.label}
         </NavLink>
       ))}
@@ -94,7 +96,8 @@ export default function Layout() {
     <div className="app">
       <aside className="side">
         <div className="brand">
-          <div className="mark" aria-hidden="true">H</div>
+          <img className="brand-logo" src="/logo-mark.png" alt="" />
+          <span className="brand-sep" aria-hidden="true" />
           <h1>HigherPays</h1>
           <span className="brand-spacer" />
           <NotificationBell />

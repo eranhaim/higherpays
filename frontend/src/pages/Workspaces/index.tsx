@@ -77,7 +77,6 @@ export default function WorkspacesPage() {
 
   const header = (
     <PageHeader
-      eyebrow="Admin"
       title="Workspaces"
       subtitle="Every workspace you belong to. Each one is a separate brand with its own MID."
       actions={canCreate ? <button className="btn" onClick={() => setCreateOpen(true)}>New workspace</button> : null}

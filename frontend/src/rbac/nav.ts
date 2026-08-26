@@ -6,42 +6,36 @@
 
 import type { Permission } from './permissions';
 
-export interface NavItem { path: string; label: string; perm: Permission }
+export type NavIconName =
+  | 'payments' | 'links' | 'analytics' | 'payouts'
+  | 'accounts' | 'customers' | 'team' | 'workspaces' | 'settings';
+
+export interface NavItem { path: string; label: string; perm: Permission; icon: NavIconName }
 export interface NavGroup { label: string; items: NavItem[] }
 
 export const NAV: NavGroup[] = [
   {
-    label: 'Money in',
+    label: 'Operate',
     items: [
-      { path: '/payments', label: 'Payments', perm: 'payments.view' },
-      { path: '/links', label: 'Payment links', perm: 'links.view' },
+      { path: '/payments', label: 'Payments', perm: 'payments.view', icon: 'payments' },
+      { path: '/links', label: 'Payment links', perm: 'links.view', icon: 'links' },
+      { path: '/analytics', label: 'Analytics', perm: 'analytics.view', icon: 'analytics' },
+      { path: '/payouts', label: 'Payouts', perm: 'commissions.view', icon: 'payouts' },
     ],
   },
   {
-    label: 'Money out',
+    label: 'Manage',
     items: [
-      { path: '/payouts', label: 'Payouts', perm: 'commissions.view' },
+      { path: '/accounts', label: 'Accounts', perm: 'accounts.view', icon: 'accounts' },
+      { path: '/customers', label: 'Customers', perm: 'customers.view', icon: 'customers' },
     ],
   },
   {
-    label: 'People',
+    label: 'Administer',
     items: [
-      { path: '/accounts', label: 'Accounts', perm: 'accounts.view' },
-      { path: '/customers', label: 'Customers', perm: 'customers.view' },
-      { path: '/team', label: 'Team', perm: 'team.view' },
-    ],
-  },
-  {
-    label: 'Insight',
-    items: [
-      { path: '/analytics', label: 'Analytics', perm: 'analytics.view' },
-    ],
-  },
-  {
-    label: 'Admin',
-    items: [
-      { path: '/workspaces', label: 'Workspaces', perm: 'workspaces.view' },
-      { path: '/settings', label: 'Settings', perm: 'settings.view' },
+      { path: '/workspaces', label: 'Workspaces', perm: 'workspaces.view', icon: 'workspaces' },
+      { path: '/team', label: 'Team', perm: 'team.view', icon: 'team' },
+      { path: '/settings', label: 'Settings', perm: 'settings.view', icon: 'settings' },
     ],
   },
 ];

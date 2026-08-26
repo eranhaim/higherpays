@@ -88,7 +88,6 @@ export default function PaymentsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="Money in"
         title="Payments"
         subtitle="Every payment attempt, with the fees taken on each."
       />

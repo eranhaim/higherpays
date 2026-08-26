@@ -82,79 +82,81 @@ export default function LoginPage() {
     <div className="auth-shell">
       <div className="auth-card">
         <div className="auth-brand">
-          <div className="mark" aria-hidden="true">H</div>
-          <div>
-            <h1>HigherPays</h1>
-            <p className="sub">Sign in to your workspace</p>
-          </div>
+          <img src="/logo-wordmark.png" alt="HigherPays" />
         </div>
 
-        <form onSubmit={handleSubmit} noValidate>
-          {stage === 'credentials' ? (
-            <>
+        <div className="card">
+          <h2>Sign in to your workspace</h2>
+
+          <form onSubmit={handleSubmit} noValidate>
+            {stage === 'credentials' ? (
+              <>
+                <div className="field">
+                  <label htmlFor="email">Email</label>
+                  <input
+                    id="email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    ref={firstFieldRef}
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="password">Password</label>
+                  <input
+                    id="password"
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+              </>
+            ) : (
               <div className="field">
-                <label htmlFor="email">Email</label>
+                <label htmlFor="totp">Authentication code</label>
                 <input
-                  id="email"
-                  type="email"
-                  autoComplete="email"
+                  id="totp"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
                   required
+                  pattern="[0-9]{6}"
+                  maxLength={6}
                   ref={firstFieldRef}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  value={totp}
+                  onChange={(e) => setTotp(e.target.value.replace(/\D/g, ''))}
                 />
+                <p className="sub">Enter the 6-digit code from your authenticator app.</p>
               </div>
-              <div className="field">
-                <label htmlFor="password">Password</label>
-                <input
-                  id="password"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
+            )}
+
+            {(formError || login.error) && (
+              <div className="warnbar" role="alert">
+                {formError ?? loginErrorMessage(login.error)}
               </div>
-            </>
-          ) : (
-            <div className="field">
-              <label htmlFor="totp">Authentication code</label>
-              <input
-                id="totp"
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                required
-                pattern="[0-9]{6}"
-                maxLength={6}
-                ref={firstFieldRef}
-                value={totp}
-                onChange={(e) => setTotp(e.target.value.replace(/\D/g, ''))}
-              />
-              <p className="sub">Enter the 6-digit code from your authenticator app.</p>
-            </div>
-          )}
+            )}
 
-          {(formError || login.error) && (
-            <div className="warnbar" role="alert">
-              {formError ?? loginErrorMessage(login.error)}
-            </div>
-          )}
-
-          <button className="btn full-width" type="submit" disabled={login.isPending}>
-            {login.isPending ? 'Signing in…' : stage === 'credentials' ? 'Sign in' : 'Verify'}
-          </button>
-
-          {stage === 'totp' && (
-            <button
-              type="button"
-              className="btn ghost full-width"
-              onClick={() => { setStage('credentials'); setTotp(''); }}
-            >
-              Back
+            <button className="btn full-width" type="submit" disabled={login.isPending}>
+              {login.isPending ? 'Signing in…' : stage === 'credentials' ? 'Sign in' : 'Verify'}
             </button>
-          )}
-        </form>
+
+            {stage === 'totp' && (
+              <button
+                type="button"
+                className="btn ghost full-width"
+                onClick={() => { setStage('credentials'); setTotp(''); }}
+              >
+                Back
+              </button>
+            )}
+          </form>
+        </div>
+
+        <p className="auth-note">Agencies are onboarded by the HigherPays team.</p>
       </div>
     </div>
   );

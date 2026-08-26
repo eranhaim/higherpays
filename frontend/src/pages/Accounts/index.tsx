@@ -169,7 +169,6 @@ export default function AccountsPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="People"
         title="Accounts"
         subtitle="Accounts operating under this workspace."
         actions={canManage ? <button className="btn" onClick={() => setCreateOpen(true)}>Add account</button> : null}
@@ -210,14 +209,14 @@ export default function AccountsPage() {
                     <div className="ws-meta">{c.handle ?? '—'}</div>
                   </div>
                   {canManage && (
-                    <>
+                    <div className="controls">
                       {hasTerms(c) && (
                         <button className="btn ghost small" onClick={() => openEdit(c)}>Edit</button>
                       )}
                       <button className="btn ghost small" onClick={() => requestStatusChange(c)}>
                         {canTakeLinks(c.status) ? 'Pause' : 'Activate'}
                       </button>
-                    </>
+                    </div>
                   )}
                 </div>
                 <div>

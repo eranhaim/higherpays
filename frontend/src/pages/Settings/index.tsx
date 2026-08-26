@@ -14,7 +14,7 @@ export default function SettingsPage() {
   if (!can('settings.view')) {
     return (
       <div>
-        <PageHeader eyebrow="Admin" title="Settings" />
+        <PageHeader title="Settings" />
         <div className="card">
           <EmptyState
             title="You don't have access to settings."
@@ -35,7 +35,7 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <PageHeader eyebrow="Admin" title="Settings" />
+      <PageHeader title="Settings" />
 
       <div className="tabbar" role="tablist" aria-label="Settings sections">
         {tabs.map((t) => (

@@ -116,7 +116,6 @@ export default function CustomersPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="People"
         title="Customers"
         subtitle="Everyone who paid, what they spent, and which account they belong to."
         actions={

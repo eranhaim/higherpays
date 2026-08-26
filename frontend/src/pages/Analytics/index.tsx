@@ -226,7 +226,6 @@ export default function AnalyticsPage() {
 
   const header = (
     <PageHeader
-      eyebrow="Insight"
       title="Analytics"
       subtitle={canScope ? activeWorkspace?.name ?? '' : 'Your performance'}
       actions={actions}

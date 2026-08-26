@@ -6,9 +6,9 @@ interface MoneyProps {
   currency?: string;
   /**
    * Signals direction so the number picks up its colour cue without the
-   * page having to hand-wire a class. 'in' is forest green (revenue,
-   * approved), 'out' is oxidised red (refund, declined, cost). Left
-   * unset, the number stays plain ink.
+   * page having to hand-wire a class. 'in' is mint (revenue, approved),
+   * 'out' is red (refund, declined, cost). Left unset, the number stays
+   * plain text.
    */
   direction?: 'in' | 'out';
   /** Bold the number, e.g. on totals rows. */
@@ -16,9 +16,9 @@ interface MoneyProps {
 }
 
 /**
- * Renders a money value in tabular mono — the one bold typographic move of
- * this app. Every money number in the UI should come through here so the
- * whole ledger reads with a consistent voice.
+ * Renders a money value with tabular numerals and its direction colour.
+ * Every money number in the UI should come through here so figures line up
+ * in a column and money in never looks like money out.
  */
 export function Money({ amount, currency, direction, emphasis }: MoneyProps) {
   const session = useCurrentSession();

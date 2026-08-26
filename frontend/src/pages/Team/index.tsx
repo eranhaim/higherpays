@@ -193,7 +193,6 @@ export default function TeamPage() {
   return (
     <div>
       <PageHeader
-        eyebrow="People"
         title="Team"
         subtitle="Everyone with a seat in this workspace, and who is still to join."
         actions={canManage ? <button className="btn" onClick={() => setInviteOpen(true)}>Invite member</button> : null}

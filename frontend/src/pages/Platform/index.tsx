@@ -40,7 +40,6 @@ export default function PlatformPage() {
 
   const header = (
     <PageHeader
-      eyebrow="HigherPays"
       title="Platform"
       subtitle="Every agency on the platform. This view crosses tenants."
       actions={role ? <Pill>{role.replace('_', ' ')}</Pill> : null}

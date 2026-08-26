@@ -1,53 +1,62 @@
 /*
  * HigherPays — design tokens.
  *
- * Voice: a modern general ledger. Paper and ink for structure, monospaced
- * numerals with directional colour for money. The one bold move is that
- * every money value in the app is set in mono; everything else is quiet.
+ * A dark console. Deep navy surfaces, teal brand, and one status colour each
+ * for money in (mint), money out (red) and attention (amber). Numbers are
+ * tabular so columns of figures line up; only ids and codes are monospaced.
  */
 :root {
-  /* ── Surfaces and text ───────────────────────────────────────────── */
-  --paper:      #F7F5F0;   /* app background — warm off-white           */
-  --surface:    #FFFFFF;   /* cards, tables, popovers                   */
-  --surface-2:  #EFEBE1;   /* subtly recessed panels                    */
-  --ink:        #0F0E0C;   /* primary text                              */
-  --ink-2:      #3B3830;   /* secondary text                            */
-  --muted:      #7A7566;   /* labels, hints                             */
-  --rule:       #DCD5C4;   /* hairline dividers                         */
-  --rule-soft:  #EAE4D5;   /* even quieter dividers                     */
+  /* ── Surfaces and lines ──────────────────────────────────────────── */
+  --bg:         #030D15;   /* page ground, and the well inside a panel    */
+  --surface:    #111A2B;   /* cards, table headers, popovers              */
+  --surface-2:  #0E1626;   /* sidebar, filter bar, table body             */
+  --rule:       #1E2B44;   /* hairline dividers and control borders       */
+  --rule-soft:  rgba(30, 43, 68, 0.55);  /* quieter dividers inside a box */
 
-  /* Money direction. Never used for anything but numbers and their status. */
-  --pos:        #0B5D3B;   /* money in / approved / paid                */
-  --pos-soft:   #E4EEE4;
-  --neg:        #8B2E2E;   /* money out / refund / declined             */
-  --neg-soft:   #F3E3DF;
+  /* ── Text ────────────────────────────────────────────────────────── */
+  --text:       #E7ECF5;   /* primary                                     */
+  --muted:      #7C8AA5;   /* labels, hints, secondary metadata           */
+  --faint:      #4D5A72;   /* nav group headings, axis ticks              */
 
-  /* One attention colour, spent on focus and key moments. */
-  --accent:     #B8862A;   /* ochre                                     */
-  --accent-soft:#F1E7D0;
+  /* ── Brand ───────────────────────────────────────────────────────── */
+  --brand:      #15C3AF;
+  --brand-2:    #06A185;   /* the darker end of every brand gradient      */
+  --brand-wash: rgba(21, 195, 175, 0.06);  /* hover tint                  */
+  --brand-fill: rgba(21, 195, 175, 0.12);  /* selected background         */
+  --brand-edge: rgba(21, 195, 175, 0.25);  /* selected border             */
+  --brand-ring: rgba(21, 195, 175, 0.15);  /* focus ring                  */
 
-  /* Info tone — used sparingly on informational pills. */
-  --info:       #2E4A5E;
-  --info-soft:  #E3E9EE;
+  /* Money direction and status. Never used for anything but numbers,
+     pills and the bars that stand for them. */
+  --pos:        #4ADE9E;   /* money in / approved / paid                  */
+  --pos-soft:   #173C2E;
+  --neg:        #F4707A;   /* money out / refund / declined               */
+  --neg-soft:   #3A1B21;
+  --neg-edge:   #52242B;
+  --accent:     #F5C451;   /* attention — held, at risk, sandbox          */
+  --accent-soft:#2A2410;
+  --accent-edge:#40381A;
+  --info:       var(--brand);  /* neutral informational pills             */
+  --info-soft:  #1A2740;
+  --info-edge:  rgba(21, 195, 175, 0.2);
 
-  /* ── Typography ───────────────────────────────────────────────────── */
-  --display: 'Instrument Serif', 'Georgia', serif;
-  --sans:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --mono:    'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  /* ── Typography ──────────────────────────────────────────────────── */
+  --sans: 'Assistant', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --mono: ui-monospace, 'Cascadia Code', 'Roboto Mono', Menlo, monospace;
 
-  /* Type scale. Sizes are in px because the ledger look depends on the small
-     end staying exactly where it is at any root font size. */
-  --text-micro: 10.5px;  /* uppercase section and field labels             */
-  --text-xs:    11.5px;  /* pills, secondary metadata                      */
-  --text-sm:    12.5px;  /* table meta, fee lines                          */
-  --text-md:    13.5px;  /* hints and sub-copy                             */
-  --text-base:  14px;    /* body, table cells, controls                    */
-  --tracking-label: 0.1em;
+  /* Type scale. Sizes are in px because the console's density depends on the
+     small end staying exactly where it is at any root font size. */
+  --text-micro: 11.6px;  /* uppercase section and field labels             */
+  --text-xs:    12.7px;  /* pills, badges, secondary metadata              */
+  --text-sm:    13.2px;  /* table meta, fee lines, hints                   */
+  --text-md:    13.8px;  /* sub-copy                                       */
+  --text-base:  14.3px;  /* body, table cells, controls                    */
+  --tracking-label: 0.05em;
 
   /* ── Shape ───────────────────────────────────────────────────────── */
-  --radius:     6px;    /* interactive elements                         */
-  --radius-lg:  10px;   /* cards, modals                                */
-  --shadow-pop: 0 18px 40px -12px rgba(15, 14, 12, 0.22);
+  --radius:     9px;    /* buttons, inputs, nav items                    */
+  --radius-lg:  14px;   /* cards, tables, modals                         */
+  --shadow-pop: 0 14px 40px -12px #000;
 
   /* ── Layers ──────────────────────────────────────────────────────── */
   /* One ladder for everything that stacks. A dialog covers the page and

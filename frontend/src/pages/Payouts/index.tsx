@@ -38,7 +38,6 @@ export default function PayoutsPage() {
 
   const header = (
     <PageHeader
-      eyebrow="Money out"
       title="Payouts"
       subtitle={`What you owe your accounts and team for ${periodLabel}.`}
       actions={
