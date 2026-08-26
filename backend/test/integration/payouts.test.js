@@ -2,45 +2,47 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const request = require('supertest');
-const { app } = require('../helpers/setup');
-const { withSystem } = require('../../src/db');
-const { createTenant, createAccount } = require('../helpers/tenant');
+const { app, pool } = require('../helpers/setup');
+const { createTenant, createAccount, createAgent, assignAgent } = require('../helpers/tenant');
 const { paySale } = require('../helpers/webhook');
 
 test('two concurrent payout runs record one payout, not two', async () => {
   const t = await createTenant(app);
-  const account = await createAccount(app, t, { revenueSplitPct: 70 });
+  const account = await createAccount(app, t);
   await paySale(app, t, account, 100);
-
-  const run = () => request(app)
-    .post(`/workspaces/${t.workspaceId}/payouts/run`)
-    .set(t.authHeaders)
-    .send({ payeeType: 'account', targetId: account.id });
+  const run = () => request(app).post(`/workspaces/${t.workspaceId}/payouts/run`).set(t.authHeaders).send({ payeeType: 'account' });
   const [a, b] = await Promise.all([run(), run()]);
-  assert.equal(a.status, 200);
-  assert.equal(b.status, 200);
-  assert.equal(a.body.ran + b.body.ran, 1, 'exactly one run found something to pay');
-
-  const payouts = await withSystem((c) => c.query(
-    "SELECT status, amount FROM payouts WHERE workspace_id = $1 AND account_id = $2", [t.workspaceId, account.id]));
-  assert.equal(payouts.rows.length, 1);
-  assert.equal(payouts.rows[0].status, 'recorded');
+  const ran = [a, b].map((r) => r.body.ran).sort();
+  assert.deepEqual(ran, [0, 1]);
+  const payouts = (await pool.query("SELECT count(*)::int AS c FROM payouts WHERE workspace_id = $1 AND payee_type = 'account'", [t.workspaceId])).rows[0].c;
+  assert.equal(payouts, 1);
 });
 
-test('breakdown reports what is owed, what came in, and the cash shortfall', async () => {
-  const t = await createTenant(app);
+test('breakdown reports what is owed per account and per agent, what came in, and the cash position', async () => {
+  const t = await createTenant(app, { feeModel: 'flat', pspRatePct: 8, marginRatePct: 5, pspFixedFee: 0 });
   const account = await createAccount(app, t, { revenueSplitPct: 70 });
-  await paySale(app, t, account, 100);
+  const agent = await createAgent(app, t, { commissionPct: 10 });
+  await assignAgent(app, t, account.id, agent.id);
+  await paySale(app, t, account, 100, { headers: agent.headers });
 
-  const from = new Date(Date.now() - 86400000).toISOString();
-  const to = new Date(Date.now() + 86400000).toISOString();
-  const res = await request(app)
-    .get(`/workspaces/${t.workspaceId}/payouts/breakdown?from=${from}&to=${to}`)
-    .set(t.authHeaders).expect(200);
+  const b = (await request(app).get(`/workspaces/${t.workspaceId}/payouts/breakdown`).set(t.authHeaders).expect(200)).body;
+  // 100 - 13% = 87 distributable → account 60.90, agent 8.70
+  const acc = b.perAccount.find((a) => a.id === account.id);
+  assert.equal(acc.owed, 60.9);
+  const ag = b.perAgent.find((a) => a.id === agent.id);
+  assert.equal(ag.owed, 8.7);
+  assert.equal(ag.sales, 1);
+  assert.equal(b.cash.received, 87);
+  assert.equal(b.cash.owed, 69.6);
+  assert.equal(b.cash.shortfallIfPaidNow, 0);
 
-  const c = res.body.cash;
-  assert.ok(c.received > 0 && c.received <= 100, 'received is gross minus fees');
-  assert.ok(c.owed > 0 && c.owed <= c.received, 'what is owed comes out of what was received');
-  assert.equal(c.available, Math.round((c.received - c.heldInReserve) * 100) / 100);
-  assert.equal(c.shortfallIfPaidNow, Math.max(0, Math.round((c.owed - c.available) * 100) / 100));
+  await request(app).post(`/workspaces/${t.workspaceId}/payouts/run`).set(t.authHeaders).send({ payeeType: 'agent', targetId: agent.id }).expect(200);
+  const after = (await request(app).get(`/workspaces/${t.workspaceId}/payouts/breakdown`).set(t.authHeaders).expect(200)).body;
+  assert.equal(after.perAgent.find((a) => a.id === agent.id).owed, 0);
+  assert.equal(after.perAccount.find((a) => a.id === account.id).owed, 60.9);
+
+  const mine = (await request(app).get(`/workspaces/${t.workspaceId}/me/earnings`).set(agent.headers).expect(200)).body;
+  assert.equal(mine.role, 'agent');
+  assert.equal(mine.period.earned, 8.7);
+  assert.equal(mine.balance.paidToDate, 8.7);
 });

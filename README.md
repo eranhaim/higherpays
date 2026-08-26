@@ -35,11 +35,12 @@ npm run dev                # http://localhost:5173
 
 The frontend dev server proxies API calls to the backend on `localhost:3000`.
 
-Seeded owner login: `owner@example.com` / `change-me-please` (change via `SEED_*` env vars).
+Seeded logins: two demo agencies with one login per role, printed by `npm run seed`.
+Password for all of them is `SEED_PASSWORD` (default `higherpays123`).
 
 ## Running database migrations
 
-The backend requires two Postgres roles: one **owner** who runs migrations, one restricted **app role** (`hp_app`) the server connects as. This is what enforces Row-Level Security tenant isolation.
+The backend requires two Postgres roles: one **owner** who runs migrations, one restricted **app role** (`hp_app`) the server connects as, which cannot alter the schema.
 
 Migrations must run as the owner:
 
@@ -48,7 +49,7 @@ cd backend
 DATABASE_URL=postgres://postgres:devpass@localhost:5432/higherpays npm run migrate
 ```
 
-The seed script does the same. After the schema is created, `.env` should point `DATABASE_URL` at `hp_app` so the running server is subject to RLS. See [`backend/README.md`](backend/README.md) for the full setup, including the SQL to create `hp_app`.
+The seed script does the same. After the schema is created, `.env` should point `DATABASE_URL` at `hp_app`, the restricted runtime role. See [`backend/README.md`](backend/README.md) for the full setup, including the SQL to create `hp_app`.
 
 ## Tests
 

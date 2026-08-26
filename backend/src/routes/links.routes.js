@@ -1,13 +1,14 @@
 'use strict';
 const crypto = require('crypto');
 const express = require('express');
-const { withWorkspace } = require('../db');
+const { query, withTransaction } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { badRequest } = require('../util/validate');
 const { parseLimit, decodeCursor, page } = require('../lib/cursor');
-const { resolveDataScope } = require('../auth/dataScope');
+const { resolveDataScope, scopeParams } = require('../auth/dataScope');
+const { status: vocab } = require('../schema/entities');
 const config = require('../config');
 const provider = require('../providers/mantapay');
 const paymentsService = require('../services/payments.service');
@@ -16,205 +17,173 @@ const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
 
 const MIN_FIXED_AMOUNT = 3;             // provider minimum: 3 USD/EUR
-const AGENT_RATE_WINDOW_SECONDS = 30; // rate limit: one link per agent per 30s
+const AGENT_RATE_WINDOW_SECONDS = 30;   // one link per agent per 30s
+
+// A single-use link that went unpaid past its deadline reads as expired even
+// though the column still says active; the reconciler writes it later.
+const EFFECTIVE_STATUS = `CASE WHEN pl.status = 'active' AND pl.expires_at IS NOT NULL AND pl.expires_at < now()
+                               THEN 'expired' ELSE pl.status END`;
+
+const publicLink = (l) => ({
+  id: l.id, type: l.type, pricingMode: l.pricing_mode,
+  amount: l.amount == null ? null : Number(l.amount), currency: l.currency,
+  status: l.status, referenceId: l.reference_id, description: l.description,
+  checkoutUrl: l.checkout_url, expiresAt: l.expires_at, paidAt: l.paid_at, createdAt: l.created_at,
+  accountId: l.account_id, account: l.account, customerId: l.customer_id, customer: l.customer,
+  agentId: l.created_by_agent_id, agent: l.agent,
+});
 
 // -----------------------------------------------------------------------------
-// Provider integration — MantaPay hosted checkout.
-// Card data never touches our server; the fan pays on MantaPay's hosted page.
-// The amount is baked into the signed URL, so pricingMode='open' isn't supported
-// with MantaPay's hosted flow (see validation in POST /links below).
+// MantaPay hosted checkout. Card data never touches this server; the customer
+// pays on MantaPay's page. The amount is baked into the signed URL.
 // -----------------------------------------------------------------------------
-async function generateProviderLink({ ws, currency, amount, referenceId, description }) {
-  // Per-workspace notify URL. If unset, MantaPay falls back to the URL configured
-  // in the merchant profile at their portal.
+async function generateProviderLink({ ws, currency, amount, referenceId, description, expiresAt }) {
   const notificationUrl = config.webhookPublicBase
     ? `${config.webhookPublicBase.replace(/\/$/, '')}/webhooks/payment/${ws.webhook_endpoint_id}`
     : undefined;
-
-  // MantaPay honours ExpiredOn (epoch seconds). Use the workspace-wide link TTL.
-  const expiresAt = new Date(Date.now() + config.linkTtlMinutes * 60_000);
-
   const { checkoutUrl } = await provider.createCheckout(ws, {
-    amount,
-    currency,
-    reference: referenceId,
-    description,
-    notificationUrl,
-    expiresAt,
+    amount, currency, reference: referenceId, description, notificationUrl, expiresAt: expiresAt || undefined,
   });
-  return { providerLinkId: referenceId, url: checkoutUrl, expiresAt };
+  return checkoutUrl;
 }
 
-// GET /workspaces/:workspaceId/links?limit&cursor&status&min&max&from&to&q&accountId
-// Newest first. An agent sees the links they created; an account sees the links
-// issued against it; everyone else sees the whole workspace.
-//
-// Filtering is done HERE, not in the browser. The list is cursor-paginated, so a
-// client-side filter can only ever search the page it happens to have loaded —
-// which reads as "no results" for anything older than the first page.
-//
-// `status` is matched against the EFFECTIVE status, so filtering for `expired`
-// finds links the TTL has aged out even though the column still says 'created'.
+// GET /?limit&cursor&status&type&min&max&from&to&q&accountId
+// Newest first. An agent sees the links they created; an owner the links
+// against their account; everyone else the workspace. Filtering happens here,
+// not in the browser: the list is cursor-paginated.
 router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) => {
   const limit = parseLimit(req.query.limit);
   const cursor = decodeCursor(req.query.cursor);
   const num = (v) => (v === undefined || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
-  const min = num(req.query.min);
-  const max = num(req.query.max);
-  if (min != null && max != null && max < min) {
-    return badRequest(res, 'max must be greater than or equal to min', ['min', 'max']);
-  }
+  const min = num(req.query.min), max = num(req.query.max);
+  if (min != null && max != null && max < min) return badRequest(res, 'max must be >= min', ['min', 'max']);
   const q = typeof req.query.q === 'string' && req.query.q.trim() ? `%${req.query.q.trim().toLowerCase()}%` : null;
 
-  const rows = await withWorkspace(wid(req), uid(req), async (c) => {
+  const rows = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
     return (await c.query(
       `WITH effective AS (
-         SELECT pl.*,
-                CASE WHEN pl.status = 'created' AND pl.created_at < now() - ($2 || ' minutes')::interval
-                     THEN 'expired' ELSE pl.status::text END AS effective_status
-           FROM payment_links pl
-          WHERE pl.workspace_id = $1
+         SELECT pl.*, ${EFFECTIVE_STATUS} AS effective_status FROM payment_links pl WHERE pl.workspace_id = $1
        )
-       SELECT pl.id, pl.pricing_mode, pl.amount, pl.currency, pl.provider_link_id,
-              pl.effective_status AS status,
-              pl.reference_id, pl.created_at, pl.paid_at, pl.checkout_url,
-              a.stage_name AS account, cu.alias AS customer,
-              u.full_name AS agent
-       FROM effective pl
-       LEFT JOIN accounts a ON a.id = pl.account_id
-       LEFT JOIN customers cu ON cu.id = pl.customer_id
-       LEFT JOIN memberships m ON m.id = pl.created_by
-       LEFT JOIN users u ON u.id = m.user_id
-       WHERE ($3::uuid IS NULL OR pl.created_by = $3::uuid)
-         AND ($4::uuid IS NULL OR pl.account_id = $4::uuid)
-         AND ($5::timestamptz IS NULL OR (pl.created_at, pl.id) < ($5::timestamptz, $6::uuid))
-         AND ($8::text IS NULL OR pl.effective_status = $8::text)
-         -- An open-priced link has no amount, so an amount filter cannot
-         -- include it. NULL fails both comparisons, which is what we want.
-         AND ($9::numeric IS NULL OR pl.amount >= $9::numeric)
-         AND ($10::numeric IS NULL OR pl.amount <= $10::numeric)
-         AND ($11::timestamptz IS NULL OR pl.created_at >= $11::timestamptz)
-         AND ($12::timestamptz IS NULL OR pl.created_at <= $12::timestamptz)
-         AND ($13::uuid IS NULL OR pl.account_id = $13::uuid)
-         AND ($14::text IS NULL OR lower(pl.reference_id) LIKE $14::text
-              OR lower(cu.alias) LIKE $14::text OR lower(u.full_name) LIKE $14::text)
-       ORDER BY pl.created_at DESC, pl.id DESC LIMIT $7`,
-      [wid(req), config.linkTtlMinutes,
-        scope.kind === 'agent' ? scope.membershipId : null,
-        scope.kind === 'account' ? scope.accountId : null,
+       SELECT pl.*, pl.effective_status AS status,
+              a.name AS account, cu.name AS customer, u.full_name AS agent
+         FROM effective pl
+         JOIN accounts a ON a.id = pl.account_id
+         LEFT JOIN customers cu ON cu.id = pl.customer_id
+         LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
+         LEFT JOIN users u ON u.id = ag.user_id
+        WHERE ($2::uuid IS NULL OR pl.created_by_agent_id = $2::uuid)
+          AND ($3::uuid IS NULL OR pl.account_id = $3::uuid)
+          AND ($4::timestamptz IS NULL OR (pl.created_at, pl.id) < ($4::timestamptz, $5::uuid))
+          AND ($7::text IS NULL OR pl.effective_status = $7::text)
+          AND ($8::text IS NULL OR pl.type = $8::text)
+          AND ($9::numeric IS NULL OR pl.amount >= $9::numeric)
+          AND ($10::numeric IS NULL OR pl.amount <= $10::numeric)
+          AND ($11::timestamptz IS NULL OR pl.created_at >= $11::timestamptz)
+          AND ($12::timestamptz IS NULL OR pl.created_at <= $12::timestamptz)
+          AND ($13::uuid IS NULL OR pl.account_id = $13::uuid)
+          AND ($14::text IS NULL OR lower(pl.reference_id) LIKE $14::text
+               OR lower(cu.name) LIKE $14::text OR lower(u.full_name) LIKE $14::text)
+        ORDER BY pl.created_at DESC, pl.id DESC LIMIT $6`,
+      [wid(req), ...scopeParams(scope),
         cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1,
-        req.query.status || null, min, max,
+        req.query.status || null, req.query.type || null, min, max,
         req.query.from || null, req.query.to || null,
         req.query.accountId || null, q])).rows;
   });
-  res.json(page(rows, limit, (r) => r.created_at, (r) => r.id));
+  const result = page(rows, limit, (r) => r.created_at, (r) => r.id);
+  res.json({ items: result.items.map(publicLink), nextCursor: result.nextCursor });
 }));
 
-// GET /workspaces/:workspaceId/links/:id
+// GET /:id
 router.get('/:id', requirePermission('links.view'), asyncHandler(async (req, res) => {
-  const out = await withWorkspace(wid(req), uid(req), async (c) => {
+  const out = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
     const row = (await c.query(
-      `SELECT id, account_id, customer_id, created_by, pricing_mode, amount, currency,
-              status, provider_link_id, reference_id, description, created_at, paid_at, checkout_url
-       FROM payment_links WHERE workspace_id = $1 AND id = $2`, [wid(req), req.params.id])).rows[0];
-    return { row, scope };
+      `SELECT pl.*, ${EFFECTIVE_STATUS} AS status, a.name AS account, cu.name AS customer, u.full_name AS agent
+         FROM payment_links pl
+         JOIN accounts a ON a.id = pl.account_id
+         LEFT JOIN customers cu ON cu.id = pl.customer_id
+         LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
+         LEFT JOIN users u ON u.id = ag.user_id
+        WHERE pl.workspace_id = $1 AND pl.id = $2
+          AND ($3::uuid IS NULL OR pl.created_by_agent_id = $3::uuid)
+          AND ($4::uuid IS NULL OR pl.account_id = $4::uuid)`,
+      [wid(req), req.params.id, ...scopeParams(scope)])).rows[0];
+    return row;
   });
-  if (!out.row) return res.status(404).json({ error: 'not_found' });
-  const { row, scope } = out;
-  const mine = scope.kind === 'workspace'
-    || (scope.kind === 'agent' && row.created_by === scope.membershipId)
-    || (scope.kind === 'account' && row.account_id === scope.accountId);
-  if (!mine) return res.status(403).json({ error: 'forbidden' });
-  res.json(row);
+  if (!out) return res.status(404).json({ error: 'not_found' });
+  res.json(publicLink(out));
 }));
 
-// POST /workspaces/:workspaceId/links
-// body: { accountId, customerId?, pricingMode: 'fixed'|'open', amount?, currency, description? }
+// POST /  { accountId, customerId?, type: 'single_use'|'reusable', amount, currency, description? }
 router.post('/', requirePermission('links.create'), asyncHandler(async (req, res) => {
-  const { accountId, customerId, pricingMode = 'fixed', amount, currency, description } = req.body || {};
+  const { accountId, customerId, type, amount, currency, description } = req.body || {};
   if (!accountId) return badRequest(res, 'accountId is required', ['accountId']);
-  // MantaPay's hosted checkout bakes the amount into a signed URL, so we don't
-  // support 'open' pricing today. If we ever do, it'll be via our own pre-page
-  // that captures the amount and hands it off to MantaPay.
-  if (pricingMode !== 'fixed') {
-    return badRequest(res, "pricingMode must be 'fixed' (open pricing not supported by MantaPay hosted checkout)", ['pricingMode']);
-  }
+  if (!vocab.LINK_TYPE.includes(type)) return badRequest(res, `type must be one of ${vocab.LINK_TYPE.join(', ')}`, ['type']);
   if (!/^[A-Za-z]{3}$/.test(currency || '')) return badRequest(res, 'currency must be a 3-letter code', ['currency']);
-
   const amt = Number(amount);
-  if (!(amt > 0)) return badRequest(res, 'amount is required for a fixed link', ['amount']);
+  if (!(amt > 0)) return badRequest(res, 'amount is required', ['amount']);
   if (amt < MIN_FIXED_AMOUNT) return badRequest(res, `minimum amount is ${MIN_FIXED_AMOUNT}`, ['amount']);
-  // Workspace guardrails (set in Settings). Enforced here so the console can't be bypassed.
-  const lim = await withWorkspace(wid(req), uid(req), async (c) => (await c.query(
-    'SELECT min_link_amount, max_link_amount FROM workspaces WHERE id=$1', [wid(req)])).rows[0]);
-  if (lim && lim.min_link_amount != null && amt < Number(lim.min_link_amount)) {
-    return badRequest(res, `amount is below the workspace minimum of ${Number(lim.min_link_amount)}`, ['amount']);
-  }
-  if (lim && lim.max_link_amount != null && amt > Number(lim.max_link_amount)) {
-    return badRequest(res, `amount is above the workspace maximum of ${Number(lim.max_link_amount)}`, ['amount']);
-  }
-
   const cur = currency.toUpperCase();
   if (!config.supportedCurrencies.includes(cur)) {
     return badRequest(res, `currency ${cur} is not enabled (supported: ${config.supportedCurrencies.join(', ')})`, ['currency']);
   }
-  // The provider echoes this back as the attribution key; 64 random bits and
-  // a UNIQUE constraint mean a collision cannot credit the wrong account.
-  const referenceId = 'ord_' + crypto.randomBytes(8).toString('hex');
 
-  const result = await withWorkspace(wid(req), uid(req), async (c) => {
+  const ws = (await query('SELECT * FROM workspaces WHERE id = $1', [wid(req)])).rows[0];
+  // Workspace guardrails, enforced here so the console cannot be bypassed.
+  if (ws.min_link_amount != null && amt < Number(ws.min_link_amount)) {
+    return badRequest(res, `amount is below the workspace minimum of ${Number(ws.min_link_amount)}`, ['amount']);
+  }
+  if (ws.max_link_amount != null && amt > Number(ws.max_link_amount)) {
+    return badRequest(res, `amount is above the workspace maximum of ${Number(ws.max_link_amount)}`, ['amount']);
+  }
+
+  // The provider echoes this back as the attribution key; 64 random bits and a
+  // UNIQUE index mean a collision cannot credit the wrong account.
+  const referenceId = 'ord_' + crypto.randomBytes(8).toString('hex');
+  const expiresAt = type === 'single_use' ? new Date(Date.now() + config.linkTtlMinutes * 60_000) : null;
+
+  const result = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
 
-    // Rate limit: only for agents, one link per AGENT_RATE_WINDOW_SECONDS.
     if (scope.kind === 'agent') {
       const recent = (await c.query(
         `SELECT created_at FROM payment_links
-         WHERE workspace_id = $1 AND created_by = $2
-           AND created_at > now() - ($3 || ' seconds')::interval
-         ORDER BY created_at DESC LIMIT 1`,
-        [wid(req), scope.membershipId, AGENT_RATE_WINDOW_SECONDS])).rows[0];
+          WHERE workspace_id = $1 AND created_by_agent_id = $2 AND created_at > now() - ($3 || ' seconds')::interval
+          ORDER BY created_at DESC LIMIT 1`, [wid(req), scope.agentId, AGENT_RATE_WINDOW_SECONDS])).rows[0];
       if (recent) {
         const elapsed = Math.floor((Date.now() - new Date(recent.created_at).getTime()) / 1000);
         return { rateLimited: Math.max(1, AGENT_RATE_WINDOW_SECONDS - elapsed) };
       }
     }
 
-    // The account must be in this workspace, and — for an agent — one they are
-    // assigned to. An unassigned account reports the same `account_not_found`
-    // as a nonexistent one, so this is not an existence oracle.
+    // The account must be active, in this workspace and, for an agent, one
+    // they are assigned. An unassigned account reports the same not-found as a
+    // nonexistent one, so this is not an existence oracle.
     const account = (await c.query(
       `SELECT id FROM accounts a
-        WHERE a.id = $1 AND a.workspace_id = $2
-          AND ($3::uuid IS NULL OR EXISTS (
-                SELECT 1 FROM account_agents ag
-                 WHERE ag.account_id = a.id AND ag.membership_id = $3::uuid))`,
-      [accountId, wid(req), scope.kind === 'agent' ? scope.membershipId : null])).rows[0];
+        WHERE a.id = $1 AND a.workspace_id = $2 AND a.status = 'active'
+          AND ($3::uuid IS NULL OR EXISTS (SELECT 1 FROM account_agents ag WHERE ag.account_id = a.id AND ag.agent_id = $3::uuid))`,
+      [accountId, wid(req), scope.kind === 'agent' ? scope.agentId : null])).rows[0];
     if (!account) return { err: 'account_not_found' };
     if (customerId) {
       const cust = (await c.query(
-        `SELECT id FROM customers WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL
-           AND ($3::uuid IS NULL OR account_id = $3::uuid)`,
-        [customerId, wid(req), scope.kind === 'agent' ? account.id : null])).rows[0];
+        'SELECT id FROM customers WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL', [customerId, wid(req)])).rows[0];
       if (!cust) return { err: 'customer_not_found' };
     }
 
-    // Workspace provider config (endpoint id + secret-store key name; never the key itself).
-    const ws = (await c.query(
-      `SELECT id, webhook_endpoint_id, provider_config_ref, mid FROM workspaces WHERE id = $1`, [wid(req)])).rows[0];
-
-    // Ask MantaPay for the hosted checkout URL.
-    const built = await generateProviderLink({ ws, currency: cur, amount: amt, referenceId, description });
+    const checkoutUrl = await generateProviderLink({ ws, currency: cur, amount: amt, referenceId, description, expiresAt });
 
     const link = (await c.query(
       `INSERT INTO payment_links
-         (workspace_id, account_id, customer_id, created_by, pricing_mode, amount, currency, status, provider_link_id, reference_id, description, expires_at, checkout_url)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'created',$8,$9,$10,$11,$12)
-       RETURNING id, pricing_mode, amount, currency, status, provider_link_id, reference_id, created_at, expires_at, checkout_url`,
-      [wid(req), accountId, customerId || null, req.membership.id, 'fixed', amt, cur,
-       built.providerLinkId, referenceId, description || null, built.expiresAt, built.url])).rows[0];
-    return { link, url: built.url };
+         (workspace_id, account_id, customer_id, created_by_agent_id, type, pricing_mode, amount, currency,
+          status, reference_id, provider_link_id, description, expires_at, checkout_url)
+       VALUES ($1,$2,$3,$4,$5,'fixed',$6,$7,'active',$8,$8,$9,$10,$11)
+       RETURNING *`,
+      [wid(req), accountId, customerId || null, scope.kind === 'agent' ? scope.agentId : null,
+        type, amt, cur, referenceId, description || null, expiresAt, checkoutUrl])).rows[0];
+    return { link };
   });
 
   if (result.rateLimited) {
@@ -223,91 +192,76 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
   }
   if (result.err) return res.status(404).json({ error: result.err });
 
-  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'link.create', entityType: 'payment_link', entityId: result.link.id, metadata: { pricingMode: 'fixed', amount: amt, currency: cur } });
-  res.status(201).json({ ...result.link, url: result.url });
+  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'link.create', entityType: 'payment_link', entityId: result.link.id, metadata: { type, amount: amt, currency: cur } });
+  res.status(201).json(publicLink(result.link));
 }));
 
-// POST /workspaces/:wid/links/reconcile — safety-net for links whose final
-// webhook never arrived. Polls the provider status endpoint for every link still
-// 'created'/'opened' and older than `graceMinutes`, and applies the outcome
-// idempotently (same keys the webhook uses, so it never double-posts and never
-// overrides a link the webhook already resolved).
-//
-// The window is age-based, NOT expiry-based: a link is paid long before its TTL
-// runs out, so waiting for expiry would leave a just-paid link unreconcilable
-// for the whole TTL.
-router.post('/reconcile', requirePermission('commissions.manage'), asyncHandler(async (req, res) => {
+// POST /:id/cancel — close a link by hand. Only an unpaid one; a paid link is
+// history, not something to withdraw.
+router.post('/:id/cancel', requirePermission('links.create'), asyncHandler(async (req, res) => {
+  const out = await withTransaction(async (c) => {
+    const scope = await resolveDataScope(c, req);
+    const row = (await c.query(
+      `UPDATE payment_links SET status = 'cancelled'
+        WHERE workspace_id = $1 AND id = $2 AND status = 'active'
+          AND ($3::uuid IS NULL OR created_by_agent_id = $3::uuid)
+          AND ($4::uuid IS NULL OR account_id = $4::uuid)
+        RETURNING *`, [wid(req), req.params.id, ...scopeParams(scope)])).rows[0];
+    return row;
+  });
+  if (!out) return res.status(404).json({ error: 'not_found_or_not_active' });
+  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'link.cancel', entityType: 'payment_link', entityId: out.id });
+  res.json(publicLink(out));
+}));
+
+// POST /reconcile — safety net for single-use links whose final webhook never
+// arrived. Polls the provider for every active one older than `graceMinutes`
+// and applies the outcome through the same service the webhook uses, so it
+// never double-posts. Reusable links are not polled: they carry many payments
+// and only the webhook can tell them apart.
+router.post('/reconcile', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
   const requested = Number(req.body && req.body.graceMinutes);
   const graceMin = Number.isFinite(requested) && requested >= 0 ? requested : 10;
   const summary = { checked: 0, updated: [], skipped: [] };
 
-  const ws = (await withWorkspace(wid(req), uid(req), (c) => c.query(
-    'SELECT id, mid, provider_config_ref, webhook_endpoint_id FROM workspaces WHERE id=$1',
-    [wid(req)]))).rows[0];
+  const ws = (await query('SELECT * FROM workspaces WHERE id=$1', [wid(req)])).rows[0];
 
-  await withWorkspace(wid(req), uid(req), async (c) => {
+  await withTransaction(async (c) => {
     const stuck = (await c.query(
-      `SELECT id, reference_id, amount, currency, expires_at, expires_at < now() AS is_expired
-       FROM payment_links
-       WHERE status IN ('created','opened')
-         AND created_at < now() - ($1 || ' minutes')::interval`,
-      [String(graceMin)])).rows;
+      `SELECT id, reference_id, amount, currency, expires_at < now() AS is_expired
+         FROM payment_links
+        WHERE workspace_id = $1 AND type = 'single_use' AND status = 'active'
+          AND created_at < now() - ($2 || ' minutes')::interval`,
+      [wid(req), String(graceMin)])).rows;
 
     for (const link of stuck) {
       summary.checked++;
-
-      // MantaPay's status endpoint is keyed by OUR reference (Order). No
-      // reference => nothing to poll; expire the link if it's genuinely past
-      // its deadline.
-      if (!link.reference_id) {
-        if (link.is_expired) {
-          await c.query("UPDATE payment_links SET status='expired' WHERE id=$1 AND status IN ('created','opened')", [link.id]);
-          summary.updated.push({ linkId: link.id, to: 'expired', via: 'no_reference' });
-        } else summary.skipped.push({ linkId: link.id, reason: 'no_reference' });
-        continue;
-      }
-
       let statusResp;
       try { statusResp = await provider.getPaymentStatus(ws, link.reference_id); }
       catch (e) { summary.skipped.push({ linkId: link.id, reason: 'status_error', detail: e.detail || e.message }); continue; }
 
       if (statusResp.transaction_id) {
-        await c.query('UPDATE payment_links SET provider_request_id=$2 WHERE id=$1',
-          [link.id, statusResp.transaction_id]);
+        await c.query('UPDATE payment_links SET provider_request_id=$2 WHERE id=$1', [link.id, statusResp.transaction_id]);
       }
-
       const st = statusResp.status;   // approved | declined | pending | abandoned | unknown
 
-      if (st === 'pending') {
-        summary.skipped.push({ linkId: link.id, reason: 'still_pending' });
-        continue;
-      }
-      if (st === 'approved' || st === 'declined') {
-        // Delegate to the same service the webhook uses — same idempotency,
-        // same notification behaviour.
+      if (st === 'approved') {
         const outcome = await paymentsService.recordPaymentOutcome(c, wid(req), {
           providerTransactionId: statusResp.transaction_id || ('ref-' + link.reference_id),
-          status: st,
+          status: 'approved',
           gross: statusResp.gross_amount != null ? Number(statusResp.gross_amount) : Number(link.amount || 0),
           fee: null,
-          net: null,
           currency: (statusResp.unit || link.currency || 'EUR').toString().toUpperCase(),
           linkReference: link.reference_id,
           rawPayload: statusResp,
         });
-        summary.updated.push({
-          linkId: link.id,
-          to: st === 'approved' ? 'paid' : 'failed',
-          transactionId: outcome.transactionId,
-          newSale: outcome.newSale,
-        });
+        summary.updated.push({ linkId: link.id, to: 'pending', paymentId: outcome.paymentId, newSale: outcome.newSale });
         continue;
       }
-      // st === 'abandoned' | 'unknown'
-      if (st === 'abandoned') {
-        await c.query("UPDATE payment_links SET status='failed' WHERE id=$1 AND status IN ('created','opened')",
-          [link.id]);
-        summary.updated.push({ linkId: link.id, to: 'failed', reason: 'abandoned' });
+      // Anything short of approval leaves the link open until its deadline.
+      if (link.is_expired) {
+        await c.query("UPDATE payment_links SET status='expired' WHERE id=$1 AND status='active'", [link.id]);
+        summary.updated.push({ linkId: link.id, to: 'expired', via: st });
         continue;
       }
       summary.skipped.push({ linkId: link.id, reason: 'status_' + st });

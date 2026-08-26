@@ -26,10 +26,6 @@ const config = {
   accessTokenTtl: process.env.ACCESS_TOKEN_TTL || '15m',
   refreshTokenDays: parseInt(process.env.REFRESH_TOKEN_DAYS || '30', 10),
 
-  // Turn on to have the app set app.workspace_id / app.user_id per request
-  // (required if you enabled Row-Level Security in migration 002/003).
-  useRls: process.env.USE_RLS === 'true',
-
   // Currencies. EUR-only for now. FX (closing-date cross-rates, per-currency
   // reserves, EUR-denominated fixed fees converted into the transaction
   // currency) is deliberately out of scope. Add a currency here to re-enable.
@@ -67,9 +63,9 @@ const config = {
   // (e.g. https://api.higherpays.com). If unset, MantaPay falls back to the
   // URL configured on the merchant profile.
   webhookPublicBase: process.env.WEBHOOK_PUBLIC_BASE || null,
-  // Payment-link expiry (minutes). MantaPay honours ExpiredOn on the hosted
-  // page and we mirror the same TTL locally for the reconciler.
-  linkTtlMinutes: parseInt(process.env.LINK_TTL_MINUTES || '10', 10),
+  // A single-use payment link dies this long after creation if nobody pays.
+  // MantaPay honours ExpiredOn on the hosted page; the reconciler mirrors it.
+  linkTtlMinutes: parseInt(process.env.LINK_TTL_MINUTES || String(24 * 60), 10),
 
   // Browser origins allowed to call the API directly. In production the
   // frontend is served from the same origin (nginx proxies /api), so this
@@ -83,12 +79,6 @@ const config = {
 const MIN_JWT_SECRET_LENGTH = 32;
 if (config.env === 'production' && String(config.jwtSecret || '').length < MIN_JWT_SECRET_LENGTH) {
   throw new Error(`JWT_SECRET must be at least ${MIN_JWT_SECRET_LENGTH} characters in production`);
-}
-
-// Row-Level Security IS the tenant boundary. Booting production without it would
-// silently expose every agency's data to every other agency.
-if (config.env === 'production' && !config.useRls) {
-  throw new Error('USE_RLS must be true in production (tenant isolation depends on it)');
 }
 
 // Optional integrations, with the env var that turns each one on. Logged at

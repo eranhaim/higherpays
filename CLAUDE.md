@@ -279,7 +279,7 @@ A readability pass must not change behavior.
 
 ## 13. Repository
 
-HigherPays: multi-tenant payments/ops SaaS for creator agencies. See `HANDOFF.md` for the full mental model and `BACKEND-FLOWS.md` for backend flow diagrams — read those before large changes.
+HigherPays: payments/ops SaaS for creator agencies. One workspace = one agency. Read `backend/src/schema/entities.js` (the data model, with its status vocabularies) and `V1-FEATURES.md` before large changes.
 
 Two independent Node projects, plus Postgres:
 
@@ -289,7 +289,7 @@ Two independent Node projects, plus Postgres:
 
 Each of `backend/` and `frontend/` has its own `package.json` and `Dockerfile`. No workspace root. Run npm commands inside the relevant project.
 
-Reference page implementations (copy these patterns, don't invent new ones): `Payments`, `Links`, `Payouts`, `Accounts`, `Customers`, `Team`.
+Reference page implementations (copy these patterns, don't invent new ones): `Payments`, `Links`, `Accounts`, `Agents`, `Customers`, `Team`.
 
 ### Commands
 
@@ -341,18 +341,17 @@ Check the environment before debugging connection issues.
 
 ## 15. Invariants
 
-### Row-Level Security (multi-tenancy)
+### The schema comes from one file
 
-Tenant isolation is enforced by Postgres RLS, not application code. Every request that touches tenant data must run through a request-scoped client from `backend/src/db.js`:
+`backend/src/schema/entities.js` is the data model. `npm run schema` regenerates `backend/migrations/001_init.sql` from it. The revenue engine's SQL functions live in `002_revenue_engine.sql`, by hand. Status vocabularies are exported from the entities file (`status.LINK_STATUS` …) and mirrored in `frontend/src/api/endpoints/*` — change both.
 
-* `withWorkspace(workspaceId, userId, fn)` — normal tenant-scoped request
-* `withUser(userId, fn)` — user context, no workspace (login, `/me`, listing own memberships)
-* `withPlatformAdmin(userId, fn)` — controlled cross-tenant access, only after `requirePlatformAdmin` has verified the caller
-* `withSystem(fn)` — trusted server context with no authenticated user (e.g. webhook tenant resolution before a workspace is known)
+### People
 
-Never call `pool.query()` / plain `query()` directly for tenant data — it bypasses RLS. `query()` is only for auth/global tables (`users`, `refresh_tokens`) and cross-workspace lookups like "which workspaces does this user belong to."
+`users` is the login. `workspace_users` is access: one role per user per workspace (`workspace_admin`, `analyst`, `agent`, `account_owner`). `accounts` and `agents` are the business records; each belongs to a user and its composite foreign key proves that user holds the matching role in that workspace, so the database itself refuses an agent profile on an admin, or one person being both an owner and an agent in the same agency. Creating an agent or account always creates the login (`backend/src/services/people.js`). Platform admins are `users.is_platform_admin` and hold a `workspace_users` row in every workspace.
 
-The runtime DB role (`hp_app`) is `NOSUPERUSER NOBYPASSRLS`. Migrations run as the `postgres` owner, which does bypass RLS — never let the app connect as that role at request time. `backend/src/server.js` refuses to start in production if the runtime role can bypass RLS.
+### Workspace queries
+
+There is no row-level security. Every query filters on `req.access.workspaceId` (`wid(req)`) itself. `requireWorkspace` refuses a header that disagrees with the URL. Which ROWS a caller sees comes from `resolveDataScope` in `backend/src/auth/dataScope.js`: an agent sees the accounts they are assigned and their own links and payments, an account owner their own account, roles with `data.view_all` the whole workspace.
 
 ### Money
 
@@ -362,7 +361,7 @@ Money display always goes through `<Money amount={n} direction="in" | "out" emph
 
 ### Auth and permissions
 
-`requireAuth` → `requireWorkspace` → `requirePermission(permission)` is the standard middleware chain for a workspace-scoped route (`backend/src/middleware/index.js`). `requirePlatformAdmin` gates HigherPays-operator-only routes, above any single tenant.
+`requireAuth` → `requireWorkspace` → `requirePermission(permission)` is the standard middleware chain for a workspace route (`backend/src/middleware/index.js`). Permissions are a matrix in code keyed by role (`backend/src/auth/permissions.js`); there are no per-workspace role definitions. `requirePlatformAdmin` gates HigherPays-operator routes.
 
 A new workspace route without `requireAuth` + `requireWorkspace` is unprotected.
 
@@ -370,13 +369,15 @@ A new workspace route without `requireAuth` + `requireWorkspace` is unprotected.
 
 QRMoney is dead — this project fully migrated off it. Do not reintroduce it or add a second payment-provider integration path.
 
-Live provider code: `backend/src/providers/mantapay-*.js`. Payment outcome handling (idempotent transaction insert, link status update, notification fan-out) is centralised in `backend/src/services/payments.service.js` — called by both the webhook route and the `/reconcile` endpoint. Keep it that way; don't duplicate outcome logic in a route handler.
+Live provider code: `backend/src/providers/mantapay-*.js`. Payment outcome handling (payment + transaction upsert, link status, `fn_post_sale`, notification fan-out) is centralised in `backend/src/services/payments.service.js` — called by both the webhook route and `/links/reconcile`. Keep it that way; don't duplicate outcome logic in a route handler.
+
+A payment link is `single_use` (dies on the first payment or after 24h) or `reusable` (many payments, until cancelled). After a payment the agent completes it (`PATCH /payments/:id/details`: customer + category); that is what moves a single-use link from `pending` to `done`.
 
 Refunds are record-only today (`MANTAPAY_REFUND_ENABLED=false`) — the app records refunds issued in MantaPay's dashboard, it doesn't call a refund API.
 
 ### Migrations
 
-Never edit an already-applied migration in `backend/migrations/`. Write a new one.
+Never edit an already-applied migration in `backend/migrations/`. On a live database a schema change is a new numbered migration written by hand, and `entities.js` is updated to match; regenerating `001_init.sql` is only for a reset.
 
 ---
 
@@ -396,10 +397,10 @@ Sizes come from the type scale (`--text-micro` … `--text-base`), not new px va
 
 Both are correct; they do different jobs.
 
-* **`<DataTable>`** — the table *is* the content block. Renders its own `.tableblock` frame, and owns loading, empty, footer, and keyboard-accessible rows. Use it for a page's main list: `Payments`, `Links`, `Customers`, `Team` members.
-* **`.tablewrap` + raw `<table>`** — the table is *one section inside* an existing `.card`, under a `.sechead`. Use it for `Payouts`, account splits, agent commission, the permission matrix, sessions, notification channels.
+* **`<DataTable>`** — the table *is* the content block. Renders its own `.tableblock` frame, and owns loading, empty, footer, and keyboard-accessible rows. Use it for a page's main list: `Payments`, `Links`, `Customers`, `Agents`, `Team`.
+* **`.tablewrap` + raw `<table>`** — the table is *one section inside* an existing `.card`, under a `.sechead`. Use it for `Payouts`, categories, sessions, notification channels.
 
-Do not add a flag to `DataTable` to suppress its frame — that is the wrapper's whole job. When hand-rolling, put `scope="col"` on every `<th>`, and `<th scope="row">` on the cell that names the row (see `RolesPane`).
+Do not add a flag to `DataTable` to suppress its frame — that is the wrapper's whole job. When hand-rolling, put `scope="col"` on every `<th>`, and `<th scope="row">` on the cell that names the row (see `CategoriesPane`).
 
 ### Line endings
 
@@ -407,13 +408,13 @@ Do not add a flag to `DataTable` to suppress its frame — that is the wrapper's
 
 ### Deploy is manual
 
-Pushing to `main` does nothing on its own. Production deploy is `git pull && docker compose up -d --build` run on the EC2 box (see `HANDOFF.md` §3).
+Pushing to `main` does nothing on its own. Production deploy is `git pull && docker compose up -d --build` run on the EC2 box.
 
 ---
 
 ## 17. Known Issues
 
-See `HANDOFF.md` §6 for what each page calls and §9 for the prioritised next-steps list. `V1-ROADMAP.md` holds the remaining spec gaps.
+`V1-FEATURES.md` is the scope; `V1-ROADMAP.md` holds the remaining spec gaps.
 
 ---
 

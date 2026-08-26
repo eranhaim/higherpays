@@ -1,11 +1,13 @@
 import { useState } from 'react';
 import { useCan } from '../../hooks/usePermission';
-import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
+import { useCurrentSession } from '../../hooks/useCurrentSession';
+import { HttpError } from '../../api/http';
 import { initials } from '../../lib/format';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import { PageHeader, DateCell, DataTable, FilterBar, Pill, type Column } from '../../components/ui';
-import type { Member, Invite } from '../../api/endpoints';
+import { WORKSPACE_ROLE_LABELS, type WorkspaceRole } from '../../api/types';
+import { INVITABLE_ROLES, type Member, type Invite, type InvitableRole } from '../../api/endpoints';
 import { useTeamData } from './useTeamData';
 
 /** A token past its expiry no longer resolves, so the invite is dead. */
@@ -14,96 +16,57 @@ function isExpired(i: Invite): boolean {
   return Number.isFinite(ts) && ts < Date.now();
 }
 
-function clampPct(v: number): number {
-  return Math.min(100, Math.max(0, v));
-}
-
-/** NaN for anything that isn't a usable percentage, so callers can flag it. */
-function parsePct(text: string): number {
-  const n = parseFloat(text);
-  return Number.isFinite(n) && n >= 0 && n <= 100 ? n : Number.NaN;
-}
-
 export default function TeamPage() {
   const can = useCan();
-  const {
-    agents, members, pendingInvites, roles, isLoading, isError,
-    setCommission, setRole, removeMember, invite, cancelInvite,
-  } = useTeamData();
+  const { labels } = useCurrentSession();
+  const { members, pendingInvites, isLoading, isError, setStatus, removeMember, invite, cancelInvite } = useTeamData();
   const canManage = can('team.manage');
-  const canViewCommission = can('commissions.view');
-  const canEditCommission = can('commissions.manage');
 
-  // Raw text, not numbers: parsing on every keystroke turns a cleared field
-  // into 0 and makes the box impossible to retype.
-  const [commissionEdits, setCommissionEdits] = useState<Record<string, string>>({});
-  const [isSavingCommission, setIsSavingCommission] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState('agent');
+  const [inviteRole, setInviteRole] = useState<InvitableRole>('analyst');
   const [isInviting, setIsInviting] = useState(false);
   const [removing, setRemoving] = useState<Member | null>(null);
-  const [roleChange, setRoleChange] = useState<{ member: Member; role: string } | null>(null);
-  const [isChangingRole, setIsChangingRole] = useState(false);
+  const [suspending, setSuspending] = useState<Member | null>(null);
+  const [isBusy, setIsBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [cancelling, setCancelling] = useState<Invite | null>(null);
-  const [isCancelling, setIsCancelling] = useState(false);
 
-  const saveCommission = async () => {
-    const dirty = Object.entries(commissionEdits);
-    if (dirty.length === 0) return;
-    setIsSavingCommission(true);
-    // allSettled, not all: one rejected update must not strand the rows that
-    // did save, or the table keeps offering to re-save them.
-    const results = await Promise.allSettled(
-      dirty.map(([id, text]) => setCommission(id, clampPct(parsePct(text)))),
-    );
-    setIsSavingCommission(false);
+  // The role names an agency uses for its own people.
+  const roleLabel = (role: WorkspaceRole) =>
+    role === 'agent' ? labels.agent : role === 'account_owner' ? `${labels.account} owner` : WORKSPACE_ROLE_LABELS[role];
 
-    const failed = dirty.filter((_, i) => results[i].status === 'rejected').map(([id]) => id);
-    setCommissionEdits(Object.fromEntries(failed.map((id) => [id, commissionEdits[id]])));
-    toast(failed.length === 0
-      ? 'Agent commission saved.'
-      : `Saved ${dirty.length - failed.length} of ${dirty.length}. Try the rest again.`);
-  };
-
-  const confirmRoleChange = async ({ member, role }: { member: Member; role: string }) => {
-    setIsChangingRole(true);
+  const changeStatus = async (m: Member, status: 'active' | 'suspended') => {
+    setIsBusy(true);
     try {
-      await setRole(member.membershipId, role);
-      setRoleChange(null);
-      toast(`${member.name} is now ${role}. They will need to sign in again.`);
+      await setStatus(m.userId, status);
+      setSuspending(null);
+      toast(status === 'active' ? `${m.name} can sign in again.` : `${m.name} suspended.`);
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not change the role.');
+      toast(err instanceof HttpError && err.status === 409 ? 'That is the last admin. Add another first.' : err instanceof Error ? err.message : 'Could not change access.');
     } finally {
-      setIsChangingRole(false);
+      setIsBusy(false);
     }
   };
 
   const confirmRemove = async (m: Member) => {
+    setIsBusy(true);
     try {
-      await removeMember(m.membershipId);
+      await removeMember(m.userId);
       setRemoving(null);
       toast(`${m.name} no longer has access.`);
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not remove the member.');
-    }
-  };
-
-  const closeInvite = () => { setInviteOpen(false); setInviteEmail(''); setInviteRole('agent'); };
-
-  const confirmCancelInvite = async (i: Invite) => {
-    setIsCancelling(true);
-    try {
-      await cancelInvite(i.id);
-      setCancelling(null);
-      toast(isExpired(i) ? 'Expired invite cleared.' : `Invite to ${i.email} cancelled.`);
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not cancel the invite.');
+      if (err instanceof HttpError && err.status === 409) {
+        toast(`${m.name} has a ${roleLabel(m.role).toLowerCase()} record. Suspend them instead so the history stays.`);
+      } else {
+        toast(err instanceof Error ? err.message : 'Could not remove the member.');
+      }
     } finally {
-      setIsCancelling(false);
+      setIsBusy(false);
     }
   };
+
+  const closeInvite = () => { setInviteOpen(false); setInviteEmail(''); setInviteRole('analyst'); };
 
   const submitInvite = async () => {
     const email = inviteEmail.trim();
@@ -120,9 +83,18 @@ export default function TeamPage() {
     }
   };
 
-  // Ownership is not something you hand over from a dropdown, so `owner` is
-  // never offered here — the same rule the invite form already follows.
-  const assignableRoles = roles.map((r) => r.name).filter((r) => r !== 'owner');
+  const confirmCancelInvite = async (i: Invite) => {
+    setIsBusy(true);
+    try {
+      await cancelInvite(i.id);
+      setCancelling(null);
+      toast(isExpired(i) ? 'Expired invite cleared.' : `Invite to ${i.email} cancelled.`);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not cancel the invite.');
+    } finally {
+      setIsBusy(false);
+    }
+  };
 
   const memberColumns: Column<Member>[] = [
     {
@@ -139,54 +111,39 @@ export default function TeamPage() {
     },
     {
       key: 'role', header: 'Role',
-      render: (m) => canManage && !m.isSelf && m.role !== 'owner' ? (
-        <select
-          aria-label={`Role for ${m.name}`}
-          value={m.role}
-          onChange={(e) => setRoleChange({ member: m, role: e.target.value })}
-        >
-          {assignableRoles.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-      ) : <span className="rolebadge">{m.role}</span>,
+      render: (m) => (
+        <>
+          <span className="rolebadge">{roleLabel(m.role)}</span>
+          {m.accountName ? <span className="sub inline"> · {m.accountName}</span> : null}
+        </>
+      ),
     },
+    { key: 'status', header: 'Access', render: (m) => m.status === 'active' ? <Pill tone="ok">Active</Pill> : <Pill tone="muted">Suspended</Pill> },
     { key: 'joined', header: 'Joined', render: (m) => <DateCell ts={m.joinedAt} /> },
-    {
-      key: 'actions', header: 'Actions', hideHeader: true, align: 'right',
-      render: (m) => canManage && !m.isSelf ? (
-        <button className="btn danger small" onClick={() => setRemoving(m)}>Remove</button>
-      ) : null,
-    },
+    ...(canManage ? [{
+      key: 'actions', header: 'Actions', hideHeader: true, align: 'right' as const,
+      render: (m: Member) => m.isSelf ? null : (
+        <div className="cell-actions">
+          {m.status === 'active'
+            ? <button className="btn ghost small" onClick={() => setSuspending(m)}>Suspend</button>
+            : <button className="btn ghost small" disabled={isBusy} onClick={() => changeStatus(m, 'active')}>Reactivate</button>}
+          {/* Only a plain seat can be removed; a profile keeps its login. */}
+          {!m.agentId && !m.accountId && <button className="btn danger small" onClick={() => setRemoving(m)}>Remove</button>}
+        </div>
+      ),
+    }] : []),
   ];
 
-  useUnsavedChanges('agent-commission', Object.keys(commissionEdits).length > 0);
-
   const query = search.trim().toLowerCase();
-  const visibleMembers = query
-    ? members.filter((m) => `${m.name} ${m.email}`.toLowerCase().includes(query))
-    : members;
+  const visibleMembers = query ? members.filter((m) => `${m.name} ${m.email}`.toLowerCase().includes(query)) : members;
 
   const inviteColumns: Column<Invite>[] = [
     { key: 'email', header: 'Email', render: (i) => <span className="cemail">{i.email}</span> },
-    { key: 'role', header: 'Role', render: (i) => <span className="rolebadge">{i.role}</span> },
-    {
-      key: 'expires',
-      header: 'Expires',
-      // An expired invite's token no longer resolves, so say so rather than
-      // showing a past date under a "Pending" heading.
-      render: (i) => (isExpired(i)
-        ? <Pill tone="muted">Expired</Pill>
-        : <DateCell ts={i.expiresAt} />),
-    },
+    { key: 'role', header: 'Role', render: (i) => <span className="rolebadge">{WORKSPACE_ROLE_LABELS[i.role]}</span> },
+    { key: 'expires', header: 'Expires', render: (i) => isExpired(i) ? <Pill tone="muted">Expired</Pill> : <DateCell ts={i.expiresAt} /> },
     ...(canManage ? [{
-      key: 'cancel',
-      header: 'Cancel invite',
-      hideHeader: true,
-      align: 'right' as const,
-      render: (i: Invite) => (
-        <button className="btn ghost small" onClick={() => setCancelling(i)}>
-          {isExpired(i) ? 'Clear' : 'Cancel'}
-        </button>
-      ),
+      key: 'cancel', header: 'Cancel invite', hideHeader: true, align: 'right' as const,
+      render: (i: Invite) => <button className="btn ghost small" onClick={() => setCancelling(i)}>{isExpired(i) ? 'Clear' : 'Cancel'}</button>,
     }] : []),
   ];
 
@@ -194,17 +151,14 @@ export default function TeamPage() {
     <div>
       <PageHeader
         title="Team"
-        subtitle="Everyone with a seat in this workspace, and who is still to join."
-        actions={canManage ? <button className="btn" onClick={() => setInviteOpen(true)}>Invite member</button> : null}
+        subtitle={`Everyone who can sign into this workspace. ${labels.agents} and ${labels.accounts.toLowerCase()} are added on their own pages; admins and analysts by invite.`}
+        actions={canManage ? <button className="btn" onClick={() => setInviteOpen(true)}>Invite admin or analyst</button> : null}
       />
 
       {members.length > 0 && (
         <FilterBar>
-          <input
-            type="search" className="search-input" aria-label="Search members"
-            placeholder="Search name or email" value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+          <input type="search" className="search-input" aria-label="Search members" placeholder="Search name or email"
+            value={search} onChange={(e) => setSearch(e.target.value)} />
           <span className="sub">{visibleMembers.length} of {members.length}</span>
         </FilterBar>
       )}
@@ -212,73 +166,11 @@ export default function TeamPage() {
       <DataTable
         columns={memberColumns}
         rows={visibleMembers}
-        rowKey={(m) => m.membershipId}
+        rowKey={(m) => m.userId}
         isLoading={isLoading}
-        emptyTitle={
-          isError ? "Couldn't load the team."
-            : query ? 'No members match that search.'
-              : 'No members yet.'
-        }
+        emptyTitle={isError ? "Couldn't load the team." : query ? 'No members match that search.' : 'No members yet.'}
         emptyHint={isError ? 'Try again in a moment.' : query ? 'Clear the search to see them all.' : undefined}
       />
-
-      {canViewCommission && agents.length > 0 && (
-        <div className="card section">
-          <div className="sechead">Agent commission <span className="sechead-note">share of distributable, per agent</span></div>
-          <div className="tablewrap flush">
-            <table>
-              <thead>
-                <tr>
-                  <th scope="col">Agent</th>
-                  <th scope="col">Shift</th>
-                  <th scope="col">Commission</th>
-                </tr>
-              </thead>
-              <tbody>
-                {agents.map((c) => {
-                  const text = commissionEdits[c.membershipId] ?? String(c.commissionPct ?? 0);
-                  return (
-                    <tr key={c.membershipId}>
-                      <td className="cname">{c.name}</td>
-                      <td>{c.shift ?? '—'}</td>
-                      <td>
-                        <div className="pct-input">
-                          <input
-                            type="number" min={0} max={100} value={text}
-                            aria-label={`${c.name} commission, percent`}
-                            aria-invalid={Number.isNaN(parsePct(text))}
-                            disabled={!canEditCommission}
-                            onChange={(e) => setCommissionEdits((prev) => ({
-                              ...prev, [c.membershipId]: e.target.value,
-                            }))}
-                          />
-                          <span className="sub">%</span>
-                          {Number.isNaN(parsePct(text)) && <span className="sub text-neg">0–100 only</span>}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          {canEditCommission && (
-            <div className="actions-right">
-              <button
-                className="btn"
-                onClick={saveCommission}
-                disabled={
-                  isSavingCommission
-                  || Object.keys(commissionEdits).length === 0
-                  || Object.values(commissionEdits).some((t) => Number.isNaN(parsePct(t)))
-                }
-              >
-                {isSavingCommission ? 'Saving…' : 'Save commission'}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
 
       {pendingInvites.length > 0 && (
         <div className="section">
@@ -287,20 +179,15 @@ export default function TeamPage() {
         </div>
       )}
 
-      <Modal
-        open={inviteOpen}
-        onClose={closeInvite}
-        title="Invite a team member"
-        subtitle="They receive an email with a link to set their password."
-      >
+      <Modal open={inviteOpen} onClose={closeInvite} title="Invite a team member" subtitle="They receive an email with a link to set their password.">
         <div className="field">
           <label htmlFor="invite-email">Email</label>
           <input id="invite-email" type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
         </div>
         <div className="field">
           <label htmlFor="invite-role">Role</label>
-          <select id="invite-role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
-            {assignableRoles.map((r) => <option key={r} value={r}>{r}</option>)}
+          <select id="invite-role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as InvitableRole)}>
+            {INVITABLE_ROLES.map((r) => <option key={r} value={r}>{WORKSPACE_ROLE_LABELS[r]}</option>)}
           </select>
         </div>
         <div className="modal-actions">
@@ -309,49 +196,34 @@ export default function TeamPage() {
         </div>
       </Modal>
 
-      <Modal
-        open={removing !== null}
-        onClose={() => setRemoving(null)}
-        title={removing ? `Remove ${removing.name}?` : ''}
-        subtitle="Their access ends immediately and they are signed out everywhere. Their past links and sales stay in the ledger."
-      >
+      <Modal open={suspending !== null} onClose={() => setSuspending(null)} title={suspending ? `Suspend ${suspending.name}?` : ''}
+        subtitle="They are signed out everywhere and cannot sign in until reactivated. Their records and history stay.">
+        {suspending && (
+          <div className="modal-actions">
+            <button className="btn ghost" onClick={() => setSuspending(null)}>Keep</button>
+            <button className="btn danger" disabled={isBusy} onClick={() => changeStatus(suspending, 'suspended')}>{isBusy ? 'Suspending…' : 'Suspend'}</button>
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={removing !== null} onClose={() => setRemoving(null)} title={removing ? `Remove ${removing.name}?` : ''}
+        subtitle="Their access ends immediately and they are signed out everywhere.">
         {removing && (
           <div className="modal-actions">
             <button className="btn ghost" onClick={() => setRemoving(null)}>Keep</button>
-            <button className="btn danger" onClick={() => confirmRemove(removing)}>Remove access</button>
+            <button className="btn danger" disabled={isBusy} onClick={() => confirmRemove(removing)}>Remove access</button>
           </div>
         )}
       </Modal>
 
-      <Modal
-        open={roleChange !== null}
-        onClose={() => setRoleChange(null)}
-        title={roleChange ? `Make ${roleChange.member.name} ${roleChange.role}?` : ''}
-        subtitle="Their permissions change immediately and they are signed out everywhere, so they have to sign in again."
-      >
-        {roleChange && (
-          <div className="modal-actions">
-            <button className="btn ghost" onClick={() => setRoleChange(null)}>Cancel</button>
-            <button className="btn" disabled={isChangingRole} onClick={() => confirmRoleChange(roleChange)}>
-              {isChangingRole ? 'Changing…' : `Change to ${roleChange.role}`}
-            </button>
-          </div>
-        )}
-      </Modal>
-
-      <Modal
-        open={cancelling !== null}
-        onClose={() => setCancelling(null)}
+      <Modal open={cancelling !== null} onClose={() => setCancelling(null)}
         title={cancelling ? (isExpired(cancelling) ? 'Clear this invite?' : `Cancel the invite to ${cancelling.email}?`) : ''}
-        subtitle={cancelling && isExpired(cancelling)
-          ? 'It has already expired, so this just removes it from the list.'
-          : 'The link stops working immediately. You can always send a new one.'}
-      >
+        subtitle={cancelling && isExpired(cancelling) ? 'It has already expired, so this just removes it from the list.' : 'The link stops working immediately. You can always send a new one.'}>
         {cancelling && (
           <div className="modal-actions">
             <button className="btn ghost" onClick={() => setCancelling(null)}>Keep it</button>
-            <button className="btn danger" disabled={isCancelling} onClick={() => confirmCancelInvite(cancelling)}>
-              {isCancelling ? 'Cancelling…' : isExpired(cancelling) ? 'Clear invite' : 'Cancel invite'}
+            <button className="btn danger" disabled={isBusy} onClick={() => confirmCancelInvite(cancelling)}>
+              {isBusy ? 'Cancelling…' : isExpired(cancelling) ? 'Clear invite' : 'Cancel invite'}
             </button>
           </div>
         )}

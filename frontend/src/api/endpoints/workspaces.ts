@@ -1,5 +1,6 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
+import type { WorkspaceLabels, WorkspaceRole } from '../types';
 
 /** Response from `GET /workspaces/:wid/platform-fee`. */
 export interface PlatformFee {
@@ -13,19 +14,24 @@ export interface PlatformFee {
   declineFee?: number;
   reservePct?: number;
   reserveReleaseDays?: number;
-  /** Only present when the caller is a platform operator. */
-  pspRatePct?: number;
-  marginRatePct?: number;
 }
 
-/** A workspace this user belongs to, from `GET /auth/me/workspaces`. */
-export interface MyWorkspace {
+export interface WorkspaceSettings {
   id: string;
   name: string;
-  role: string;
-  status: string;
   currency: string;
-  organization: string;
+  status: string;
+  labels: WorkspaceLabels;
+  minLinkAmount: number | null;
+  maxLinkAmount: number | null;
+}
+
+export interface UpdateWorkspaceInput {
+  name?: string;
+  accountLabel?: string;
+  accountLabelPlural?: string;
+  agentLabel?: string;
+  agentLabelPlural?: string;
 }
 
 export interface LinkLimits {
@@ -36,33 +42,21 @@ export interface LinkLimits {
 
 export interface WorkspacePermissions {
   workspaceId: string;
-  role: string;
+  role: WorkspaceRole;
   permissions: string[];
 }
 
 export const workspacesApi = {
-  getPlatformFee: () =>
-    api.get<PlatformFee>(workspacePath('/platform-fee')),
+  get: () => api.get<WorkspaceSettings>(workspacePath('')),
 
-  getLinkLimits: () =>
-    api.get<LinkLimits>(workspacePath('/link-limits')),
+  update: (input: UpdateWorkspaceInput) => api.patch<WorkspaceSettings>(workspacePath(''), input),
+
+  getPlatformFee: () => api.get<PlatformFee>(workspacePath('/platform-fee')),
+
+  getLinkLimits: () => api.get<LinkLimits>(workspacePath('/link-limits')),
 
   setLinkLimits: (input: { minLinkAmount?: number | null; maxLinkAmount?: number | null }) =>
     api.patch<LinkLimits>(workspacePath('/link-limits'), input),
 
-  getPermissions: () =>
-    api.get<WorkspacePermissions>(workspacePath('/permissions')),
-
-  rename: (name: string) =>
-    api.patch<{ id: string; name: string }>(workspacePath(''), { name }),
-
-  /** Every workspace this user belongs to — not scoped to the active one. */
-  async listMine(): Promise<MyWorkspace[]> {
-    const raw = await api.get<{ workspaces: MyWorkspace[] }>('/auth/me/workspaces', { skipWorkspace: true });
-    return raw.workspaces;
-  },
-
-  /** Adds a brand/MID under the active workspace's organization. */
-  create: (input: { name: string; currency?: string }) =>
-    api.post<{ id: string; name: string; currency: string; webhookEndpointId: string }>('/workspaces', input),
+  getPermissions: () => api.get<WorkspacePermissions>(workspacePath('/permissions')),
 };

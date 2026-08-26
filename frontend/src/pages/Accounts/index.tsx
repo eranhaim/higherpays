@@ -1,32 +1,21 @@
 import { useState } from 'react';
 import { useCan } from '../../hooks/usePermission';
+import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { initials } from '../../lib/format';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
-import { PageHeader, Money, Pill, EmptyState, FilterBar, LoadingCard, ErrorCard } from '../../components/ui';
-import {
-  REVENUE_MODEL_LABELS, ACCOUNT_STATUS_LABELS, canTakeLinks,
-  type Account, type AccountStatus, type RevenueModel,
-} from '../../api/endpoints';
-import { useAccountsData } from './useAccountsData';
+import { PageHeader, Pill, EmptyState, FilterBar, LoadingCard, ErrorCard } from '../../components/ui';
+import { ACCOUNT_STATUS_LABELS, type Account, type AccountStatus } from '../../api/endpoints';
+import { useAccountsData, useAccountDetail } from './useAccountsData';
 
 const DEFAULT_SPLIT_PCT = 70;
 
-/** An account whose pay deal was sent — i.e. the caller sees the whole workspace. */
-type AccountWithTerms = Account & { revenueModel: RevenueModel };
-const hasTerms = (a: Account): a is AccountWithTerms => a.revenueModel !== undefined;
-
 const STATUS_TONE: Record<AccountStatus, 'ok' | 'warn' | 'muted'> = {
   active: 'ok',
-  onboarding: 'warn',
-  paused: 'muted',
+  paused: 'warn',
   archived: 'muted',
 };
-
-function clampPct(v: number): number {
-  return Math.min(100, Math.max(0, v));
-}
 
 /** NaN for anything that isn't a usable percentage, so callers can flag it. */
 function parsePct(text: string): number {
@@ -36,210 +25,102 @@ function parsePct(text: string): number {
 
 export default function AccountsPage() {
   const can = useCan();
-  const { accounts, agents, isLoading, isError, createAccount, updateAccount } = useAccountsData();
+  const { labels } = useCurrentSession();
   const canManage = can('accounts.manage');
-  const canViewSplits = can('commissions.view');
-  const canEditSplits = can('commissions.manage');
+  const canViewSplits = can('revenue.view');
+  const canEditSplits = can('revenue.manage');
+  const { accounts, agents, isLoading, isError, createAccount, updateAccount, setAssignedAgents } = useAccountsData(canManage);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [handle, setHandle] = useState('');
-  const [model, setModel] = useState<RevenueModel>('revshare');
-  const [splitText, setSplitText] = useState(String(DEFAULT_SPLIT_PCT));
-  const [salaryText, setSalaryText] = useState('');
-  const [salaryIncreaseText, setSalaryIncreaseText] = useState('');
-  const [assigned, setAssigned] = useState<string[]>([]);
-  const [isSaving, setIsSaving] = useState(false);
-
-  // Raw text, not numbers: parsing on every keystroke turns a cleared field
-  // into 0 and makes the box impossible to retype.
-  const [editing, setEditing] = useState<AccountWithTerms | null>(null);
-  const [editName, setEditName] = useState('');
-  const [editHandle, setEditHandle] = useState('');
-  const [editSplitText, setEditSplitText] = useState('');
-  const [isEditing, setIsEditing] = useState(false);
+  const [editing, setEditing] = useState<Account | null>(null);
+  const [assigning, setAssigning] = useState<Account | null>(null);
   const [pausing, setPausing] = useState<Account | null>(null);
   const [isPausing, setIsPausing] = useState(false);
   const [search, setSearch] = useState('');
 
-  const resetForm = () => {
-    setName(''); setHandle(''); setModel('revshare');
-    setSplitText(String(DEFAULT_SPLIT_PCT)); setSalaryText(''); setSalaryIncreaseText('');
-    setAssigned([]);
+  useUnsavedChanges('account-edit', editing !== null || createOpen);
+
+  // Activating is harmless; pausing stops every new link, so only that
+  // direction is confirmed.
+  const requestStatusChange = (a: Account) => {
+    if (a.status === 'active') { setPausing(a); return; }
+    void applyStatus(a, 'active');
   };
 
-  const closeCreate = () => { setCreateOpen(false); resetForm(); };
-
-  const submitCreate = async () => {
-    if (!name.trim()) { toast('Name is required.'); return; }
-    const cleanHandle = handle.trim();
-    setIsSaving(true);
-    try {
-      await createAccount({
-        stageName: name.trim(),
-        handle: cleanHandle ? (cleanHandle.startsWith('@') ? cleanHandle : `@${cleanHandle}`) : undefined,
-        revenueModel: model,
-        revenueSplitPct: model === 'revshare' ? clampPct(parseFloat(splitText) || 0) : 0,
-        salary: model === 'salary' ? parseFloat(salaryText) || 0 : undefined,
-        salaryIncreasePct: model === 'salary' && salaryIncreaseText ? parseFloat(salaryIncreaseText) || 0 : undefined,
-      }, assigned);
-      closeCreate();
-      toast('Account added.');
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not add the account.');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  // Activating is harmless; pausing stops every new link for the account, so
-  // only that direction is confirmed.
-  const requestStatusChange = (c: Account) => {
-    if (canTakeLinks(c.status)) { setPausing(c); return; }
-    void applyStatus(c, 'active');
-  };
-
-  const applyStatus = async (c: Account, status: AccountStatus) => {
+  const applyStatus = async (a: Account, status: AccountStatus) => {
     setIsPausing(true);
     try {
-      await updateAccount(c.id, { status });
+      await updateAccount(a.id, { status });
       setPausing(null);
-      toast(status === 'active' ? `${c.stageName} activated.` : `${c.stageName} paused. No new links.`);
+      toast(status === 'active' ? `${a.name} activated.` : `${a.name} paused. No new links.`);
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not update the account.');
+      toast(err instanceof Error ? err.message : `Could not update the ${labels.account.toLowerCase()}.`);
     } finally {
       setIsPausing(false);
     }
   };
 
-  const openEdit = (c: AccountWithTerms) => {
-    setEditing(c);
-    setEditName(c.stageName);
-    setEditHandle(c.handle ?? '');
-    setEditSplitText(c.revenueSplitPct === undefined ? '' : String(c.revenueSplitPct));
-  };
-
-  const editSplit = parsePct(editSplitText);
-  const editSplitInvalid = editing?.revenueModel === 'revshare' && Number.isNaN(editSplit);
-
-  const submitEdit = async () => {
-    if (!editing) return;
-    if (!editName.trim()) { toast('Name is required.'); return; }
-    if (editSplitInvalid) { toast('Account share must be 0–100.'); return; }
-    const cleanHandle = editHandle.trim();
-    setIsEditing(true);
-    try {
-      await updateAccount(editing.id, {
-        stageName: editName.trim(),
-        handle: cleanHandle ? (cleanHandle.startsWith('@') ? cleanHandle : `@${cleanHandle}`) : '',
-        // Only a rev-share account has a split to change; the server rejects
-        // one on a salary/AI account anyway.
-        ...(editing.revenueModel === 'revshare' ? { revenueSplitPct: clampPct(editSplit) } : {}),
-      });
-      setEditing(null);
-      toast('Account updated.');
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not update the account.');
-    } finally {
-      setIsEditing(false);
-    }
-  };
-
-  useUnsavedChanges('account-edit', editing !== null);
-
   const query = search.trim().toLowerCase();
-  const visibleAccounts = query
-    ? accounts.filter((c) => `${c.stageName} ${c.handle ?? ''}`.toLowerCase().includes(query))
+  const visible = query
+    ? accounts.filter((a) => `${a.name} ${a.handle ?? ''} ${a.ownerName} ${a.ownerEmail}`.toLowerCase().includes(query))
     : accounts;
-
-  // The terms are the account's deal with the agency. The server omits them for
-  // anyone without workspace scope, so these render nothing rather than
-  // reconstructing the agency's share from a missing number.
-  const modelSummary = (c: Account) => {
-    if (c.revenueModel === undefined) return null;
-    if (c.revenueModel === 'revshare') {
-      return c.revenueSplitPct === undefined
-        ? null
-        : `${c.revenueSplitPct}% account / ${100 - c.revenueSplitPct}% agency`;
-    }
-    if (c.revenueModel === 'salary') return <><Money amount={c.salary ?? 0} /> / month</>;
-    return 'No account payout';
-  };
 
   return (
     <div>
       <PageHeader
-        title="Accounts"
-        subtitle="Accounts operating under this workspace."
-        actions={canManage ? <button className="btn" onClick={() => setCreateOpen(true)}>Add account</button> : null}
+        title={labels.accounts}
+        subtitle={`${labels.accounts} operating under this workspace. Each one has an owner who can sign in.`}
+        actions={canManage ? <button className="btn" onClick={() => setCreateOpen(true)}>Add {labels.account.toLowerCase()}</button> : null}
       />
 
       {accounts.length > 0 && (
         <FilterBar>
-          <input
-            type="search" className="search-input" aria-label="Search accounts"
-            placeholder="Search name or handle" value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          <span className="sub">{visibleAccounts.length} of {accounts.length}</span>
+          <input type="search" className="search-input" aria-label={`Search ${labels.accounts}`}
+            placeholder="Search name, handle or owner" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <span className="sub">{visible.length} of {accounts.length}</span>
         </FilterBar>
       )}
 
-      {isLoading ? <LoadingCard label="Loading accounts…" />
-        : isError ? <ErrorCard message="Couldn't load accounts." />
+      {isLoading ? <LoadingCard label={`Loading ${labels.accounts.toLowerCase()}…`} />
+        : isError ? <ErrorCard message={`Couldn't load ${labels.accounts.toLowerCase()}.`} />
         : accounts.length === 0 ? (
           <div className="card">
-            <EmptyState
-              title="No accounts yet."
-              hint={canManage ? 'Add the first account to start generating links.' : 'Ask an admin to add one.'}
-            />
+            <EmptyState title={`No ${labels.accounts.toLowerCase()} yet.`}
+              hint={canManage ? 'Add the first one to start generating links.' : 'Ask an admin to add one.'} />
           </div>
-        ) : visibleAccounts.length === 0 ? (
-          <div className="card">
-            <EmptyState title="No accounts match that search." hint="Clear the search to see them all." />
-          </div>
+        ) : visible.length === 0 ? (
+          <div className="card"><EmptyState title="Nothing matches that search." hint="Clear the search to see them all." /></div>
         ) : (
           <div className="grid">
-            {visibleAccounts.map((c) => (
-              <div key={c.id} className="card ws">
+            {visible.map((a) => (
+              <div key={a.id} className="card ws">
                 <div className="ws-top">
-                  <div className="ws-mark">{initials(c.stageName)}</div>
+                  <div className="ws-mark">{initials(a.name)}</div>
                   <div className="grow">
-                    <div className="ws-name">{c.stageName}</div>
-                    <div className="ws-meta">{c.handle ?? '—'}</div>
+                    <div className="ws-name">{a.name}</div>
+                    <div className="ws-meta">{a.handle ?? a.ownerEmail}</div>
                   </div>
                   {canManage && (
                     <div className="controls">
-                      {hasTerms(c) && (
-                        <button className="btn ghost small" onClick={() => openEdit(c)}>Edit</button>
-                      )}
-                      <button className="btn ghost small" onClick={() => requestStatusChange(c)}>
-                        {canTakeLinks(c.status) ? 'Pause' : 'Activate'}
+                      <button className="btn ghost small" onClick={() => setEditing(a)}>Edit</button>
+                      <button className="btn ghost small" onClick={() => setAssigning(a)}>{labels.agents}</button>
+                      <button className="btn ghost small" onClick={() => requestStatusChange(a)}>
+                        {a.status === 'active' ? 'Pause' : 'Activate'}
                       </button>
                     </div>
                   )}
                 </div>
                 <div>
-                  <div className="ws-row">
-                    <span>Status</span>
-                    <Pill tone={STATUS_TONE[c.status]}>{ACCOUNT_STATUS_LABELS[c.status]}</Pill>
-                  </div>
-                  {c.revenueModel && (
-                    <div className="ws-row"><span>Model</span><span>{REVENUE_MODEL_LABELS[c.revenueModel]}</span></div>
-                  )}
-                  {modelSummary(c) && (
-                    <div className="ws-row"><span>Terms</span><span>{modelSummary(c)}</span></div>
-                  )}
-                  {/* The split, broken out the way the old separate table showed
-                      it, so the whole deal reads from one card. */}
-                  {canViewSplits && c.revenueModel === 'revshare' && c.revenueSplitPct !== undefined && (
+                  <div className="ws-row"><span>Status</span><Pill tone={STATUS_TONE[a.status]}>{ACCOUNT_STATUS_LABELS[a.status]}</Pill></div>
+                  <div className="ws-row"><span>Owner</span><span>{a.ownerName}</span></div>
+                  {canViewSplits && a.revenueSplitPct !== undefined && (
                     <>
-                      <div className="ws-row"><span>Account share</span><span className="mono">{c.revenueSplitPct}%</span></div>
-                      <div className="ws-row"><span>Agency share</span><span className="mono">{100 - c.revenueSplitPct}%</span></div>
+                      <div className="ws-row"><span>{labels.account} share</span><span className="mono">{a.revenueSplitPct}%</span></div>
+                      <div className="ws-row"><span>Agency share</span><span className="mono">{100 - a.revenueSplitPct}%</span></div>
                     </>
                   )}
-                  {c.agentsAssigned !== undefined && (
-                    <div className="ws-row"><span>Agents assigned</span><span className="mono">{c.agentsAssigned}</span></div>
+                  {a.agentsAssigned !== undefined && (
+                    <div className="ws-row"><span>{labels.agents} assigned</span><span className="mono">{a.agentsAssigned}</span></div>
                   )}
                 </div>
               </div>
@@ -247,147 +128,280 @@ export default function AccountsPage() {
           </div>
         )}
 
-      <Modal
-        open={createOpen}
-        onClose={closeCreate}
-        title="Add account"
-        subtitle="An account operating under this workspace."
-      >
+      {createOpen && (
+        <CreateAccountModal
+          agents={agents}
+          onClose={() => setCreateOpen(false)}
+          onSubmit={async (input, agentIds) => {
+            await createAccount(input, agentIds);
+            setCreateOpen(false);
+            toast(`${labels.account} added.`);
+          }}
+        />
+      )}
+
+      {editing && (
+        <EditAccountModal
+          account={editing}
+          canEditSplits={canEditSplits}
+          onClose={() => setEditing(null)}
+          onSubmit={async (input) => {
+            await updateAccount(editing.id, input);
+            setEditing(null);
+            toast(`${labels.account} updated.`);
+          }}
+        />
+      )}
+
+      {assigning && (
+        <AssignAgentsModal
+          account={assigning}
+          agents={agents}
+          onClose={() => setAssigning(null)}
+          onSubmit={async (agentIds) => {
+            await setAssignedAgents(assigning, agentIds);
+            setAssigning(null);
+            toast('Assignments saved.');
+          }}
+        />
+      )}
+
+      <Modal open={pausing !== null} onClose={() => setPausing(null)} title={pausing ? `Pause ${pausing.name}?` : ''}
+        subtitle="No new payment links can be created. Links already out there keep working, and nothing changes in the ledger.">
+        {pausing && (
+          <div className="modal-actions">
+            <button className="btn ghost" onClick={() => setPausing(null)}>Keep active</button>
+            <button className="btn" disabled={isPausing} onClick={() => applyStatus(pausing, 'paused')}>{isPausing ? 'Pausing…' : 'Pause'}</button>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+interface CreateAccountModalProps {
+  agents: { id: string; name: string }[];
+  onClose: () => void;
+  onSubmit: (input: { email: string; fullName: string; password: string; name: string; handle?: string; revenueSplitPct: number }, agentIds: string[]) => Promise<void>;
+}
+
+/** An account and the login of the person who owns it, in one form. */
+function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalProps) {
+  const { labels } = useCurrentSession();
+  const [name, setName] = useState('');
+  const [handle, setHandle] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [splitText, setSplitText] = useState(String(DEFAULT_SPLIT_PCT));
+  const [assigned, setAssigned] = useState<string[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const split = parsePct(splitText);
+
+  const submit = async () => {
+    if (!name.trim()) { toast('Name is required.'); return; }
+    if (!fullName.trim() || !email.trim()) { toast("The owner's name and email are required."); return; }
+    if (password.length < 8) { toast('Password must be at least 8 characters.'); return; }
+    if (Number.isNaN(split)) { toast('Share must be 0–100.'); return; }
+    const cleanHandle = handle.trim();
+    setIsSaving(true);
+    try {
+      await onSubmit({
+        email: email.trim(), fullName: fullName.trim(), password,
+        name: name.trim(),
+        handle: cleanHandle ? (cleanHandle.startsWith('@') ? cleanHandle : `@${cleanHandle}`) : undefined,
+        revenueSplitPct: split,
+      }, assigned);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : `Could not add the ${labels.account.toLowerCase()}.`);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={`Add ${labels.account.toLowerCase()}`} subtitle="Creates the account and the login of the person who owns it.">
+      <div className="form-row">
         <div className="field">
-          <label htmlFor="account-name">Name</label>
+          <label htmlFor="account-name">{labels.account} name</label>
           <input id="account-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="field">
           <label htmlFor="account-handle">Handle</label>
           <input id="account-handle" type="text" placeholder="@handle" value={handle} onChange={(e) => setHandle(e.target.value)} />
         </div>
+      </div>
+      <div className="sechead">Owner login</div>
+      <div className="form-row">
         <div className="field">
-          <label htmlFor="account-model">Revenue model</label>
-          <select id="account-model" value={model} onChange={(e) => setModel(e.target.value as RevenueModel)}>
-            {(Object.keys(REVENUE_MODEL_LABELS) as RevenueModel[]).map((m) => (
-              <option key={m} value={m}>{REVENUE_MODEL_LABELS[m]}</option>
-            ))}
-          </select>
+          <label htmlFor="owner-name">Full name</label>
+          <input id="owner-name" type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} />
         </div>
-        {model === 'revshare' && (
-          <div className="field">
-            <label htmlFor="account-split">Account share of distributable</label>
-            <div className="pct-input">
-              <input id="account-split" type="number" min={0} max={100} value={splitText} onChange={(e) => setSplitText(e.target.value)} />
-              <span className="sub">%</span>
-            </div>
-          </div>
-        )}
-        {model === 'salary' && (
-          <>
-            <div className="field">
-              <label htmlFor="account-salary">Monthly salary</label>
-              <input id="account-salary" type="number" min={0} step={0.01} value={salaryText} onChange={(e) => setSalaryText(e.target.value)} />
-            </div>
-            <div className="field">
-              <label htmlFor="account-increase">Automatic monthly increase (%)</label>
-              <input id="account-increase" type="number" min={0} placeholder="0" value={salaryIncreaseText} onChange={(e) => setSalaryIncreaseText(e.target.value)} />
-            </div>
-          </>
-        )}
-        {model === 'ai' && <p className="sub">AI accounts have no payout. The agency keeps the distributable amount.</p>}
-        <div className="field" role="group" aria-labelledby="assign-agents-label">
-          <div className="field-label" id="assign-agents-label">Assign agents</div>
-          <div className="check-list">
-            {agents.length === 0 ? (
-              <span className="sub">No agents in this workspace yet.</span>
-            ) : agents.map((ch) => (
-              <label key={ch.membershipId} className="check-row">
-                <input
-                  type="checkbox"
-                  checked={assigned.includes(ch.membershipId)}
-                  onChange={(e) => setAssigned((prev) =>
-                    e.target.checked ? [...prev, ch.membershipId] : prev.filter((id) => id !== ch.membershipId))}
-                />
-                <span>{ch.name}</span>
+        <div className="field">
+          <label htmlFor="owner-email">Email</label>
+          <input id="owner-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </div>
+      </div>
+      <div className="field">
+        <label htmlFor="owner-password">Password</label>
+        <input id="owner-password" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+        <p className="sub">At least 8 characters. Ignored if this email already has a login.</p>
+      </div>
+      <div className="field">
+        <label htmlFor="account-split">{labels.account} share of distributable</label>
+        <div className="pct-input">
+          <input id="account-split" type="number" min={0} max={100} value={splitText} aria-invalid={Number.isNaN(split) || undefined}
+            onChange={(e) => setSplitText(e.target.value)} />
+          <span className="sub">%</span>
+        </div>
+      </div>
+      <div className="field" role="group" aria-labelledby="assign-agents-label">
+        <div className="field-label" id="assign-agents-label">Assign {labels.agents.toLowerCase()}</div>
+        <div className="check-list">
+          {agents.length === 0 ? <span className="sub">No {labels.agents.toLowerCase()} in this workspace yet.</span>
+            : agents.map((ag) => (
+              <label key={ag.id} className="check-row">
+                <input type="checkbox" checked={assigned.includes(ag.id)}
+                  onChange={(e) => setAssigned((prev) => e.target.checked ? [...prev, ag.id] : prev.filter((id) => id !== ag.id))} />
+                <span>{ag.name}</span>
               </label>
             ))}
+        </div>
+      </div>
+      <div className="modal-actions">
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        <button className="btn" onClick={submit} disabled={isSaving}>{isSaving ? 'Adding…' : `Add ${labels.account.toLowerCase()}`}</button>
+      </div>
+    </Modal>
+  );
+}
+
+interface EditAccountModalProps {
+  account: Account;
+  canEditSplits: boolean;
+  onClose: () => void;
+  onSubmit: (input: { name: string; handle: string; revenueSplitPct?: number }) => Promise<void>;
+}
+
+function EditAccountModal({ account, canEditSplits, onClose, onSubmit }: EditAccountModalProps) {
+  const { labels } = useCurrentSession();
+  const [name, setName] = useState(account.name);
+  const [handle, setHandle] = useState(account.handle ?? '');
+  const [splitText, setSplitText] = useState(account.revenueSplitPct === undefined ? '' : String(account.revenueSplitPct));
+  const [isSaving, setIsSaving] = useState(false);
+  const split = parsePct(splitText);
+  const splitInvalid = canEditSplits && Number.isNaN(split);
+
+  const submit = async () => {
+    if (!name.trim()) { toast('Name is required.'); return; }
+    if (splitInvalid) { toast('Share must be 0–100.'); return; }
+    const cleanHandle = handle.trim();
+    setIsSaving(true);
+    try {
+      await onSubmit({
+        name: name.trim(),
+        handle: cleanHandle ? (cleanHandle.startsWith('@') ? cleanHandle : `@${cleanHandle}`) : '',
+        ...(canEditSplits ? { revenueSplitPct: split } : {}),
+      });
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not save.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={`Edit ${account.name}`}
+      subtitle="Changing the share only affects sales posted from now on; the ledger keeps what it already recorded.">
+      <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+        <div className="field">
+          <label htmlFor="edit-account-name">Name</label>
+          <input id="edit-account-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="edit-account-handle">Handle</label>
+          <input id="edit-account-handle" type="text" placeholder="@handle" value={handle} onChange={(e) => setHandle(e.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="edit-account-split">{labels.account} share of distributable</label>
+          <div className="pct-input">
+            <input id="edit-account-split" type="number" min={0} max={100} value={splitText} aria-invalid={splitInvalid || undefined}
+              // Renaming is accounts.manage; changing what it is paid is a revenue decision.
+              disabled={!canEditSplits} onChange={(e) => setSplitText(e.target.value)} />
+            <span className="sub">%</span>
           </div>
+          <p className="sub">
+            {splitInvalid ? <span className="text-neg">0–100 only</span>
+              : !canEditSplits ? 'You can rename this account but not change its share.'
+                : `Agency keeps ${100 - split}%.`}
+          </p>
         </div>
         <div className="modal-actions">
-          <button className="btn ghost" onClick={closeCreate}>Cancel</button>
-          <button className="btn" onClick={submitCreate} disabled={isSaving}>{isSaving ? 'Adding…' : 'Add account'}</button>
+          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn" disabled={isSaving || splitInvalid}>{isSaving ? 'Saving…' : 'Save changes'}</button>
         </div>
-      </Modal>
+      </form>
+    </Modal>
+  );
+}
 
-      <Modal
-        open={pausing !== null}
-        onClose={() => setPausing(null)}
-        title={pausing ? `Pause ${pausing.stageName}?` : ''}
-        subtitle="No new payment links can be created for this account. Links already out there keep working, and nothing changes in the ledger."
-      >
-        {pausing && (
-          <div className="modal-actions">
-            <button className="btn ghost" onClick={() => setPausing(null)}>Keep active</button>
-            <button className="btn" disabled={isPausing} onClick={() => applyStatus(pausing, 'paused')}>
-              {isPausing ? 'Pausing…' : 'Pause account'}
-            </button>
-          </div>
-        )}
-      </Modal>
+interface AssignAgentsModalProps {
+  account: Account;
+  agents: { id: string; name: string }[];
+  onClose: () => void;
+  onSubmit: (agentIds: string[]) => Promise<void>;
+}
 
-      <Modal
-        open={editing !== null}
-        onClose={() => setEditing(null)}
-        title={editing ? `Edit ${editing.stageName}` : ''}
-        subtitle="Changing the share only affects sales posted from now on; the ledger keeps what it already recorded."
-      >
-        {editing && (
-          <form onSubmit={(e) => { e.preventDefault(); void submitEdit(); }}>
-            <div className="field">
-              <label htmlFor="edit-account-name">Name</label>
-              <input id="edit-account-name" type="text" value={editName} onChange={(e) => setEditName(e.target.value)} />
-            </div>
-            <div className="field">
-              <label htmlFor="edit-account-handle">Handle</label>
-              <input
-                id="edit-account-handle" type="text" placeholder="@handle"
-                value={editHandle} onChange={(e) => setEditHandle(e.target.value)}
-              />
-            </div>
-            {editing.revenueModel === 'revshare' ? (
-              <div className="field">
-                <label htmlFor="edit-account-split">Account share of distributable</label>
-                <div className="pct-input">
-                  <input
-                    id="edit-account-split" type="number" min={0} max={100} value={editSplitText}
-                    aria-invalid={editSplitInvalid || undefined}
-                    // Renaming an account is accounts.manage; changing what it
-                    // is paid is a commissions decision.
-                    disabled={!canEditSplits}
-                    onChange={(e) => setEditSplitText(e.target.value)}
-                  />
-                  <span className="sub">%</span>
-                </div>
-                <p className="sub">
-                  {editSplitInvalid
-                    ? <span className="text-neg">0–100 only</span>
-                    : !canEditSplits
-                      ? 'You can rename this account but not change its share.'
-                      : `Agency keeps ${100 - clampPct(editSplit)}%.`}
-                </p>
-              </div>
-            ) : (
-              <p className="sub">
-                {editing.revenueModel === 'salary'
-                  ? <>On a fixed salary of <Money amount={editing.salary ?? 0} /> per month — no per-sale split.</>
-                  : 'The agency keeps the distributable amount for this account.'}
-              </p>
-            )}
-            <div className="modal-actions">
-              <button type="button" className="btn ghost" onClick={() => setEditing(null)}>Cancel</button>
-              <button type="submit" className="btn" disabled={isEditing || editSplitInvalid}>
-                {isEditing ? 'Saving…' : 'Save changes'}
-              </button>
-            </div>
-          </form>
-        )}
-      </Modal>
-    </div>
+/** Which agents work this account. This is what decides what an agent sees. */
+function AssignAgentsModal({ account, agents, onClose, onSubmit }: AssignAgentsModalProps) {
+  const { labels } = useCurrentSession();
+  const detail = useAccountDetail(account.id);
+
+  return (
+    <Modal open onClose={onClose} title={`${labels.agents} for ${account.name}`}
+      subtitle={`An assigned ${labels.agent.toLowerCase()} can create links for this ${labels.account.toLowerCase()} and sees its payments.`}>
+      {detail.isError ? <p className="sub">Couldn't load the current roster.</p>
+        : !detail.data ? <p className="sub">Loading…</p>
+          : <AgentChecklist initial={detail.data.agents?.map((a) => a.agentId) ?? []} agents={agents} onClose={onClose} onSubmit={onSubmit} />}
+    </Modal>
+  );
+}
+
+// Mounted only once the roster is known, so the checklist can seed its state
+// from a prop instead of syncing it in an effect.
+function AgentChecklist({ initial, agents, onClose, onSubmit }: {
+  initial: string[];
+  agents: { id: string; name: string }[];
+  onClose: () => void;
+  onSubmit: (agentIds: string[]) => Promise<void>;
+}) {
+  const { labels } = useCurrentSession();
+  const [assigned, setAssigned] = useState(initial);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const submit = async () => {
+    setIsSaving(true);
+    try { await onSubmit(assigned); }
+    catch (err) { toast(err instanceof Error ? err.message : 'Could not save assignments.'); }
+    finally { setIsSaving(false); }
+  };
+
+  return (
+    <>
+      <div className="check-list">
+        {agents.length === 0 ? <span className="sub">No {labels.agents.toLowerCase()} in this workspace yet.</span>
+          : agents.map((ag) => (
+            <label key={ag.id} className="check-row">
+              <input type="checkbox" checked={assigned.includes(ag.id)}
+                onChange={(e) => setAssigned(e.target.checked ? [...assigned, ag.id] : assigned.filter((id) => id !== ag.id))} />
+              <span>{ag.name}</span>
+            </label>
+          ))}
+      </div>
+      <div className="modal-actions">
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        <button className="btn" onClick={submit} disabled={isSaving}>{isSaving ? 'Saving…' : 'Save'}</button>
+      </div>
+    </>
   );
 }

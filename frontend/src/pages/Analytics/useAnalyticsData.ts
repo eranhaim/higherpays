@@ -9,7 +9,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import { analyticsApi, accountsApi, membershipsApi } from '../../api/endpoints';
+import { analyticsApi, accountsApi, agentsApi } from '../../api/endpoints';
 import { DAY_MS } from '../../lib/format';
 
 export interface AnalyticsFilters {
@@ -37,20 +37,13 @@ export function toLocalDateInput(ts: number): string {
 
 export function defaultFilters(): AnalyticsFilters {
   const now = Date.now();
-  return {
-    from: toLocalDateInput(now - 30 * DAY_MS),
-    to: toLocalDateInput(now),
-    accountId: '',
-    agentId: '',
-  };
+  return { from: toLocalDateInput(now - 30 * DAY_MS), to: toLocalDateInput(now), accountId: '', agentId: '' };
 }
 
 function parseLocalDate(input: string, endOfDay: boolean): number | null {
   const [y, m, d] = input.split('-').map(Number);
   if (!y || !m || !d) return null;
-  const date = endOfDay
-    ? new Date(y, m - 1, d, 23, 59, 59, 999)
-    : new Date(y, m - 1, d);
+  const date = endOfDay ? new Date(y, m - 1, d, 23, 59, 59, 999) : new Date(y, m - 1, d);
   return date.getTime();
 }
 
@@ -75,10 +68,7 @@ export function useAnalyticsData(filters: AnalyticsFilters, canScope: boolean) {
 
   // Same length as the selected range, ending the moment the selected range starts.
   const previousRange = dateWindow
-    ? {
-        from: new Date(dateWindow.fromMs - (dateWindow.toMs - dateWindow.fromMs)).toISOString(),
-        to: new Date(dateWindow.fromMs).toISOString(),
-      }
+    ? { from: new Date(dateWindow.fromMs - (dateWindow.toMs - dateWindow.fromMs)).toISOString(), to: new Date(dateWindow.fromMs).toISOString() }
     : null;
 
   const report = useQuery({
@@ -86,22 +76,19 @@ export function useAnalyticsData(filters: AnalyticsFilters, canScope: boolean) {
     queryFn: () => analyticsApi.report({ ...currentRange!, ...scope }),
     enabled,
   });
-
   const previous = useQuery({
     queryKey: ['analytics', activeWorkspaceId, previousRange, scope],
     queryFn: () => analyticsApi.report({ ...previousRange!, ...scope }),
     enabled,
   });
-
   const accounts = useQuery({
     queryKey: ['accounts', activeWorkspaceId],
     queryFn: () => accountsApi.list(),
     enabled: canScope && Boolean(activeWorkspaceId),
   });
-
   const agents = useQuery({
-    queryKey: ['team-agents', activeWorkspaceId],
-    queryFn: () => membershipsApi.listAgents(),
+    queryKey: ['agents', activeWorkspaceId],
+    queryFn: () => agentsApi.list(),
     enabled: canScope && Boolean(activeWorkspaceId),
   });
 

@@ -1,16 +1,12 @@
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import {
-  customersApi, accountsApi,
-  type Customer, type Account, type CreateCustomerInput,
-} from '../../api/endpoints';
+import { customersApi, type Customer, type CustomerDetail, type CreateCustomerInput, type ListCustomersQuery } from '../../api/endpoints';
 
 /** The most the customers endpoint returns in one call. */
 const PAGE_SIZE = 200;
 
 export interface UseCustomersDataResult {
   customers: Customer[];
-  accounts: Account[];
   isLoading: boolean;
   isError: boolean;
   hasMore: boolean;
@@ -20,23 +16,17 @@ export interface UseCustomersDataResult {
   exportCsv: () => Promise<void>;
 }
 
-export function useCustomersData(): UseCustomersDataResult {
+export function useCustomersData(query: Omit<ListCustomersQuery, 'limit' | 'offset'>): UseCustomersDataResult {
   const { activeWorkspaceId } = useCurrentSession();
   const queryClient = useQueryClient();
   const enabled = Boolean(activeWorkspaceId);
 
   const customers = useInfiniteQuery({
-    queryKey: ['customers', activeWorkspaceId],
-    queryFn: ({ pageParam }) => customersApi.list({ limit: PAGE_SIZE, offset: pageParam }),
+    queryKey: ['customers', activeWorkspaceId, query],
+    queryFn: ({ pageParam }) => customersApi.list({ ...query, limit: PAGE_SIZE, offset: pageParam }),
     initialPageParam: 0,
     // A short page means the end of the list; the endpoint returns no total.
-    getNextPageParam: (last, pages) =>
-      last.length < PAGE_SIZE ? undefined : pages.length * PAGE_SIZE,
-    enabled,
-  });
-  const accounts = useQuery({
-    queryKey: ['accounts', activeWorkspaceId],
-    queryFn: () => accountsApi.list(),
+    getNextPageParam: (last, pages) => (last.length < PAGE_SIZE ? undefined : pages.length * PAGE_SIZE),
     enabled,
   });
 
@@ -47,15 +37,22 @@ export function useCustomersData(): UseCustomersDataResult {
 
   return {
     customers: customers.data?.pages.flat() ?? [],
-    accounts: accounts.data ?? [],
     isLoading: customers.isLoading,
     isError: customers.isError,
     hasMore: customers.hasNextPage,
     isLoadingMore: customers.isFetchingNextPage,
     loadMore: () => { void customers.fetchNextPage(); },
-    createCustomer: async (input) => {
-      await create.mutateAsync(input);
-    },
+    createCustomer: async (input) => { await create.mutateAsync(input); },
     exportCsv: () => customersApi.exportCsv(),
   };
+}
+
+/** One customer with their payment history, for the detail view. */
+export function useCustomerDetail(id: string | null) {
+  const { activeWorkspaceId } = useCurrentSession();
+  return useQuery<CustomerDetail>({
+    queryKey: ['customer', activeWorkspaceId, id],
+    queryFn: () => customersApi.get(id as string),
+    enabled: Boolean(activeWorkspaceId && id),
+  });
 }

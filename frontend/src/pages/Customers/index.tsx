@@ -1,17 +1,17 @@
 import { useMemo, useState } from 'react';
+import { useDebounced } from '../../hooks/useDebounced';
 import { useCan } from '../../hooks/usePermission';
+import { useCurrentSession } from '../../hooks/useCurrentSession';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import {
-  PageHeader, Money, DateCell, DataTable, FilterBar, DetailRow, type Column,
+  PageHeader, Money, DateCell, DataTable, FilterBar, DetailRow, Pill, type Column,
 } from '../../components/ui';
 import {
-  CUSTOMER_SEGMENTS, CUSTOMER_SEGMENT_LABELS,
+  CUSTOMER_SEGMENTS, CUSTOMER_SEGMENT_LABELS, PAYMENT_STATUS_LABELS,
   type Customer, type CustomerSegment,
 } from '../../api/endpoints';
-import { useCustomersData } from './useCustomersData';
-
-type SortKey = 'spend' | 'recent';
+import { useCustomersData, useCustomerDetail } from './useCustomersData';
 
 const SEGMENT_CLASS: Record<CustomerSegment, string> = {
   new: 'seg',
@@ -28,53 +28,35 @@ function SegmentTag({ segment }: { segment: CustomerSegment }) {
 
 export default function CustomersPage() {
   const can = useCan();
-  const {
-    customers, accounts, isLoading, isError, hasMore, isLoadingMore, loadMore, createCustomer, exportCsv,
-  } = useCustomersData();
-  const accountNameById = useMemo(() => new Map(accounts.map((c) => [c.id, c.stageName])), [accounts]);
-
+  const { labels } = useCurrentSession();
   const [segment, setSegment] = useState<'' | CustomerSegment>('');
-  const [accountId, setAccountId] = useState('');
   const [search, setSearch] = useState('');
-  const [sort, setSort] = useState<SortKey>('spend');
-  const [detail, setDetail] = useState<Customer | null>(null);
+  const q = useDebounced(search, 300);
+  const query = useMemo(() => ({ segment: segment || undefined, q: q.trim() || undefined }), [segment, q]);
+
+  const { customers, isLoading, isError, hasMore, isLoadingMore, loadMore, createCustomer, exportCsv } = useCustomersData(query);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const detail = useCustomerDetail(detailId);
 
   const [addOpen, setAddOpen] = useState(false);
-  const [alias, setAlias] = useState('');
+  const [name, setName] = useState('');
+  const [telegramName, setTelegramName] = useState('');
   const [email, setEmail] = useState('');
-  const [newAccountId, setNewAccountId] = useState('');
-  const [newSegment, setNewSegment] = useState<CustomerSegment>('new');
+  const [phone, setPhone] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    const rows = customers.filter((c) => {
-      if (segment && c.segment !== segment) return false;
-      if (accountId && c.accountId !== accountId) return false;
-      if (q && !`${c.alias} ${c.email ?? ''}`.toLowerCase().includes(q)) return false;
-      return true;
-    });
-    const key = (c: Customer) => sort === 'spend' ? c.totalSpend : (c.lastPurchaseAt ? Date.parse(c.lastPurchaseAt) : 0);
-    return rows.sort((a, b) => key(b) - key(a));
-  }, [customers, segment, accountId, search, sort]);
-
-  const clearFilters = () => { setSegment(''); setAccountId(''); setSearch(''); setSort('spend'); };
-
-  const closeAdd = () => {
-    setAddOpen(false);
-    setAlias(''); setEmail(''); setNewAccountId(''); setNewSegment('new');
-  };
+  const closeAdd = () => { setAddOpen(false); setName(''); setTelegramName(''); setEmail(''); setPhone(''); };
 
   const submitAdd = async () => {
-    if (!alias.trim()) { toast('Name is required.'); return; }
+    if (!name.trim()) { toast('Name is required.'); return; }
     setIsSaving(true);
     try {
       await createCustomer({
-        alias: alias.trim(),
+        name: name.trim(),
+        telegramName: telegramName.trim() || undefined,
         email: email.trim() || undefined,
-        accountId: newAccountId || undefined,
-        segment: newSegment,
+        phone: phone.trim() || undefined,
       });
       closeAdd();
       toast('Customer added.');
@@ -102,12 +84,11 @@ export default function CustomersPage() {
       key: 'customer', header: 'Customer',
       render: (c) => (
         <>
-          <div className="cname" title={c.alias}>{c.alias}</div>
-          {c.email && <div className="cemail" title={c.email}>{c.email}</div>}
+          <div className="cname" title={c.name}>{c.name}</div>
+          {(c.telegramName || c.email) && <div className="cemail">{c.telegramName ?? c.email}</div>}
         </>
       ),
     },
-    { key: 'account', header: 'Account', render: (c) => (c.accountId && accountNameById.get(c.accountId)) ?? '—' },
     { key: 'spend', header: 'Total spend', align: 'right', render: (c) => <Money amount={c.totalSpend} direction="in" /> },
     { key: 'last', header: 'Last purchase', render: (c) => <DateCell ts={c.lastPurchaseAt} /> },
     { key: 'segment', header: 'Segment', render: (c) => <SegmentTag segment={c.segment} /> },
@@ -117,13 +98,11 @@ export default function CustomersPage() {
     <div>
       <PageHeader
         title="Customers"
-        subtitle="Everyone who paid, what they spent, and which account they belong to."
+        subtitle="Everyone who paid, and what they spent. A customer meets an account through a payment link, not by assignment."
         actions={
           <>
             {can('customers.export') && (
-              <button className="btn ghost" onClick={runExport} disabled={isExporting}>
-                {isExporting ? 'Exporting…' : 'Export CSV'}
-              </button>
+              <button className="btn ghost" onClick={runExport} disabled={isExporting}>{isExporting ? 'Exporting…' : 'Export CSV'}</button>
             )}
             {can('customers.manage') && <button className="btn" onClick={() => setAddOpen(true)}>Add customer</button>}
           </>
@@ -131,96 +110,96 @@ export default function CustomersPage() {
       />
 
       <FilterBar>
-        <select
-          aria-label="Filter by segment"
-          value={segment}
-          onChange={(e) => setSegment(e.target.value as '' | CustomerSegment)}
-        >
+        <select aria-label="Filter by segment" value={segment} onChange={(e) => setSegment(e.target.value as '' | CustomerSegment)}>
           <option value="">All segments</option>
           {CUSTOMER_SEGMENTS.map((s) => <option key={s} value={s}>{CUSTOMER_SEGMENT_LABELS[s]}</option>)}
         </select>
-        <select aria-label="Filter by account" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-          <option value="">All accounts</option>
-          {accounts.map((c) => <option key={c.id} value={c.id}>{c.stageName}</option>)}
-        </select>
-        <select aria-label="Sort customers" value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
-          <option value="spend">Highest spend first</option>
-          <option value="recent">Most recent first</option>
-        </select>
-        <input
-          type="search" className="search-input" aria-label="Search customers"
-          placeholder="Search name or email" value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <button className="btn ghost" onClick={clearFilters}>Clear</button>
+        <input type="search" className="search-input" aria-label="Search customers"
+          placeholder="Search name, Telegram, email or phone" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <button className="btn ghost" onClick={() => { setSegment(''); setSearch(''); }}>Clear</button>
       </FilterBar>
 
       <DataTable
         columns={columns}
-        rows={filtered}
+        rows={customers}
         rowKey={(c) => c.id}
-        onRowClick={setDetail}
+        onRowClick={(c) => setDetailId(c.id)}
         isLoading={isLoading}
-        emptyTitle={isError ? "Couldn't load customers." : 'No customers match these filters.'}
-        emptyHint={isError ? 'Try again in a moment.' : 'Customers appear here once a link is paid, or add one by hand.'}
+        emptyTitle={isError ? "Couldn't load customers." : 'No customers match.'}
+        emptyHint={isError ? 'Try again in a moment.' : 'Customers appear here once a payment is completed, or add one by hand.'}
         footer={
           <span className="table-foot-row">
-            Showing {filtered.length} of {customers.length} loaded
+            {customers.length} loaded
             {hasMore && (
-              <button className="btn ghost small" onClick={loadMore} disabled={isLoadingMore}>
-                {isLoadingMore ? 'Loading…' : 'Load more'}
-              </button>
+              <button className="btn ghost small" onClick={loadMore} disabled={isLoadingMore}>{isLoadingMore ? 'Loading…' : 'Load more'}</button>
             )}
           </span>
         }
       />
 
-      <Modal
-        open={!!detail}
-        onClose={() => setDetail(null)}
-        title={detail?.alias ?? ''}
-        subtitle={detail?.email ?? 'No email on record'}
-      >
-        {detail && (
+      <Modal open={detailId !== null} onClose={() => setDetailId(null)}
+        title={detail.data?.name ?? 'Customer'} subtitle={detail.data?.telegramName ?? detail.data?.email ?? undefined}>
+        {detail.isLoading && <p className="sub">Loading…</p>}
+        {detail.isError && <p className="sub">Couldn't load this customer.</p>}
+        {detail.data && (
           <>
-            <DetailRow label="Account">{(detail.accountId && accountNameById.get(detail.accountId)) ?? '—'}</DetailRow>
-            <DetailRow label="Segment"><SegmentTag segment={detail.segment} /></DetailRow>
-            <DetailRow label="Total spend"><Money amount={detail.totalSpend} direction="in" emphasis /></DetailRow>
-            <DetailRow label="Last purchase"><DateCell ts={detail.lastPurchaseAt} /></DetailRow>
-            <DetailRow label="Customer since"><DateCell ts={detail.createdAt} /></DetailRow>
+            <DetailRow label="Email">{detail.data.email ?? '—'}</DetailRow>
+            <DetailRow label="Phone">{detail.data.phone ?? '—'}</DetailRow>
+            <DetailRow label="Segment"><SegmentTag segment={detail.data.segment} /></DetailRow>
+            <DetailRow label="Total spend"><Money amount={detail.data.totalSpend} direction="in" emphasis /></DetailRow>
+            <DetailRow label="Customer since"><DateCell ts={detail.data.createdAt} /></DetailRow>
+            <div className="sechead">Payments</div>
+            {detail.data.payments.length === 0 ? <p className="sub">No payments yet.</p> : (
+              <div className="tablewrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th scope="col">Date</th>
+                      <th scope="col">{labels.account}</th>
+                      <th scope="col">{labels.agent}</th>
+                      <th scope="col">Amount</th>
+                      <th scope="col">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detail.data.payments.map((p) => (
+                      <tr key={p.id}>
+                        <td><DateCell ts={p.occurredAt} /></td>
+                        <td>{p.account}</td>
+                        <td>{p.agent ?? '—'}</td>
+                        <td><Money amount={p.amount} currency={p.currency} direction={p.status === 'paid' ? 'in' : undefined} /></td>
+                        <td><Pill tone={p.status === 'paid' ? 'ok' : p.status === 'failed' || p.status === 'refunded' ? 'no' : 'muted'}>{PAYMENT_STATUS_LABELS[p.status]}</Pill></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
             <div className="modal-actions">
-              <button className="btn" onClick={() => setDetail(null)}>Close</button>
+              <button className="btn" onClick={() => setDetailId(null)}>Close</button>
             </div>
           </>
         )}
       </Modal>
 
-      <Modal
-        open={addOpen}
-        onClose={closeAdd}
-        title="Add customer"
-        subtitle="Keep only data you have a lawful basis to hold."
-      >
+      <Modal open={addOpen} onClose={closeAdd} title="Add customer" subtitle="Keep only data you have a lawful basis to hold.">
         <div className="field">
-          <label htmlFor="customer-alias">Name or username</label>
-          <input id="customer-alias" type="text" value={alias} onChange={(e) => setAlias(e.target.value)} />
+          <label htmlFor="customer-name">Name</label>
+          <input id="customer-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="field">
-          <label htmlFor="customer-email">Email</label>
-          <input id="customer-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <label htmlFor="customer-telegram">Telegram name</label>
+          <input id="customer-telegram" type="text" placeholder="@name" value={telegramName} onChange={(e) => setTelegramName(e.target.value)} />
         </div>
-        <div className="field">
-          <label htmlFor="customer-account">Account</label>
-          <select id="customer-account" value={newAccountId} onChange={(e) => setNewAccountId(e.target.value)}>
-            <option value="">Not assigned</option>
-            {accounts.map((c) => <option key={c.id} value={c.id}>{c.stageName}</option>)}
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="customer-segment">Segment</label>
-          <select id="customer-segment" value={newSegment} onChange={(e) => setNewSegment(e.target.value as CustomerSegment)}>
-            {CUSTOMER_SEGMENTS.map((s) => <option key={s} value={s}>{CUSTOMER_SEGMENT_LABELS[s]}</option>)}
-          </select>
+        <div className="form-row">
+          <div className="field">
+            <label htmlFor="customer-email">Email</label>
+            <input id="customer-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </div>
+          <div className="field">
+            <label htmlFor="customer-phone">Phone</label>
+            <input id="customer-phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
+          </div>
         </div>
         <div className="modal-actions">
           <button className="btn ghost" onClick={closeAdd}>Cancel</button>

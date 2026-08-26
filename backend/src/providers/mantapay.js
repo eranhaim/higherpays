@@ -37,7 +37,7 @@ function resolveApiKey(ws) {
 
 /** Merchant number for a workspace (their `merchantID`). */
 function resolveMerchantId(ws) {
-  return (ws && ws.mid) || config.mantapayMerchantId || null;
+  return (ws && ws.merchant_id) || config.mantapayMerchantId || null;
 }
 
 /**

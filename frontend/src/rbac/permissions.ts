@@ -4,61 +4,49 @@
  * the UI shows.
  */
 
+import type { WorkspaceRole } from '../api/types';
+
 export type Permission =
-  | 'payments.view' | 'payments.export'
+  | 'payments.view' | 'payments.complete' | 'payments.export'
   | 'links.view' | 'links.create'
   | 'analytics.view'
-  | 'workspaces.view' | 'workspaces.create'
   | 'accounts.view' | 'accounts.manage'
-  | 'compliance.view' | 'compliance.manage'
+  | 'agents.view' | 'agents.manage'
   | 'customers.view' | 'customers.manage' | 'customers.export'
-  | 'commissions.view' | 'commissions.manage'
+  | 'revenue.view' | 'revenue.manage'
   | 'fees.view'
   | 'team.view' | 'team.manage'
   | 'settings.view' | 'settings.edit'
   | 'data.view_all';
 
-export const PERMISSION_LABELS: Record<Permission, string> = {
-  'payments.view': 'View payments',
-  'payments.export': 'Export payments',
-  'links.view': 'View payment links',
-  'links.create': 'Create payment links',
-  'analytics.view': 'View analytics',
-  'workspaces.view': 'View workspaces',
-  'workspaces.create': 'Create workspaces',
-  'accounts.view': 'View accounts',
-  'accounts.manage': 'Manage accounts',
-  'compliance.view': 'View compliance',
-  'compliance.manage': 'Manage compliance',
-  'customers.view': 'View customers',
-  'customers.manage': 'Manage customers',
-  'customers.export': 'Export customers',
-  'commissions.view': 'View commissions and payouts',
-  'commissions.manage': 'Manage commissions and payouts',
-  'fees.view': 'View fee breakdown and platform margin',
-  'team.view': 'View team',
-  'team.manage': 'Manage team',
-  'settings.view': 'View settings',
-  'settings.edit': 'Edit settings',
-  'data.view_all': 'See all workspace records, not only your own',
-};
-
-export const ALL_PERMISSIONS = Object.keys(PERMISSION_LABELS) as Permission[];
+const ALL: Permission[] = [
+  'payments.view', 'payments.complete', 'payments.export',
+  'links.view', 'links.create',
+  'analytics.view',
+  'accounts.view', 'accounts.manage',
+  'agents.view', 'agents.manage',
+  'customers.view', 'customers.manage', 'customers.export',
+  'revenue.view', 'revenue.manage',
+  'fees.view',
+  'team.view', 'team.manage',
+  'settings.view', 'settings.edit',
+  'data.view_all',
+];
 
 /**
- * Built-in matrix, used only until the workspace's own role definitions have
+ * Built-in matrix, used only until the workspace's `/permissions` answer has
  * loaded. Keep in sync with the backend.
  */
-export const SYSTEM_ROLE_PERMISSIONS: Record<string, Permission[]> = {
-  owner: ALL_PERMISSIONS,
-  // Identical to owner: the boundary is the server refusing to grant `owner`,
-  // plus the last-owner guard — not a permission.
-  admin: ALL_PERMISSIONS,
+export const ROLE_PERMISSIONS: Record<WorkspaceRole, Permission[]> = {
+  workspace_admin: ALL,
   analyst: [
-    'payments.view', 'payments.export', 'links.view', 'analytics.view', 'workspaces.view',
-    'accounts.view', 'compliance.view', 'customers.view', 'commissions.view',
+    'payments.view', 'payments.export', 'links.view', 'analytics.view',
+    'accounts.view', 'agents.view', 'customers.view', 'revenue.view',
     'team.view', 'settings.view', 'data.view_all',
   ],
-  agent: ['analytics.view', 'payments.view', 'links.view', 'links.create', 'accounts.view', 'customers.view'],
-  account: ['analytics.view', 'payments.view', 'links.view'],
+  agent: [
+    'payments.view', 'payments.complete', 'links.view', 'links.create',
+    'analytics.view', 'accounts.view', 'customers.view', 'customers.manage',
+  ],
+  account_owner: ['payments.view', 'links.view', 'analytics.view'],
 };

@@ -2,10 +2,10 @@ import { useSearchParams } from 'react-router-dom';
 import { useCan } from '../../hooks/usePermission';
 import { EmptyState, PageHeader } from '../../components/ui';
 import { GeneralPane } from './GeneralPane';
-import { RolesPane } from './RolesPane';
+import { CategoriesPane } from './CategoriesPane';
 import { NotificationsPane } from './NotificationsPane';
 
-type SettingsTab = 'general' | 'roles' | 'notifications';
+type SettingsTab = 'general' | 'categories' | 'notifications';
 
 export default function SettingsPage() {
   const can = useCan();
@@ -16,10 +16,7 @@ export default function SettingsPage() {
       <div>
         <PageHeader title="Settings" />
         <div className="card">
-          <EmptyState
-            title="You don't have access to settings."
-            hint="Ask an owner or admin if you need it."
-          />
+          <EmptyState title="You don't have access to settings." hint="Ask an admin if you need it." />
         </div>
       </div>
     );
@@ -27,7 +24,7 @@ export default function SettingsPage() {
 
   const tabs: Array<{ id: SettingsTab; label: string }> = [
     { id: 'general', label: 'General' },
-    ...(can('team.view') ? [{ id: 'roles' as const, label: 'Roles' }] : []),
+    { id: 'categories', label: 'Categories' },
     ...(can('payments.view') ? [{ id: 'notifications' as const, label: 'Notifications' }] : []),
   ];
   const requested = searchParams.get('tab');
@@ -67,7 +64,7 @@ export default function SettingsPage() {
 
       <div id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`}>
         {tab === 'general' && <GeneralPane />}
-        {tab === 'roles' && <RolesPane />}
+        {tab === 'categories' && <CategoriesPane />}
         {tab === 'notifications' && <NotificationsPane />}
       </div>
     </div>

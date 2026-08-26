@@ -12,7 +12,8 @@ import { useSessionStore } from '../store/session';
 import { useCurrentSession } from '../hooks/useCurrentSession';
 import { useCan } from '../hooks/usePermission';
 import { authApi } from '../api/endpoints';
-import { NAV, type NavGroup } from '../rbac/nav';
+import { WORKSPACE_ROLE_LABELS } from '../api/types';
+import { NAV, navLabel, type NavGroup } from '../rbac/nav';
 import { hasUnsavedChanges, clearUnsavedChanges } from '../lib/unsavedChanges';
 import Modal from './Modal';
 import NavIcon from './NavIcon';
@@ -25,6 +26,7 @@ interface NavSectionProps {
 
 function NavSection({ group, onNavigate }: NavSectionProps) {
   const can = useCan();
+  const { labels } = useCurrentSession();
   const visible = group.items.filter((i) => can(i.perm));
   if (visible.length === 0) return null;
 
@@ -39,7 +41,7 @@ function NavSection({ group, onNavigate }: NavSectionProps) {
           onClick={(e) => onNavigate(e, item.path)}
         >
           <NavIcon name={item.icon} />
-          {item.label}
+          {navLabel(item, labels)}
         </NavLink>
       ))}
     </div>
@@ -111,6 +113,7 @@ export default function Layout() {
               value={activeWorkspaceId ?? ''}
               onChange={(e) => {
                 setActiveWorkspaceId(e.target.value);
+                // Every cached query is scoped to the old workspace.
                 queryClient.clear();
               }}
             >
@@ -123,6 +126,15 @@ export default function Layout() {
 
         <nav>
           {NAV.map((g) => <NavSection key={g.label} group={g} onNavigate={guardNavigation} />)}
+          {user?.isPlatformAdmin && (
+            <div>
+              <div className="nav-lbl">HigherPays</div>
+              <NavLink to="/platform" className={({ isActive }) => `navitem${isActive ? ' active' : ''}`}>
+                <NavIcon name="settings" />
+                Platform
+              </NavLink>
+            </div>
+          )}
         </nav>
 
         <div className="side-foot">
@@ -130,7 +142,7 @@ export default function Layout() {
             <div className="user-block">
               <div className="user-name">
                 {user.fullName}
-                {role && <span className="rolebadge">{role}</span>}
+                {role && <span className="rolebadge">{WORKSPACE_ROLE_LABELS[role]}</span>}
               </div>
               <div className="user-email">{user.email}</div>
             </div>

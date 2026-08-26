@@ -8,17 +8,15 @@ const { log } = require('./lib/log');
 const EVENTS = ['payment.paid', 'payment.failed', 'payment.refunded', 'payment.chargeback', 'payout.paid'];
 
 // An event is only offered to (and delivered to) users whose role grants this permission.
-// Money-movement events are restricted to roles that can already see commissions.
 const EVENT_PERMISSION = {
   'payment.paid': 'payments.view',
   'payment.failed': 'payments.view',
   'payment.refunded': 'payments.view',
-  'payment.chargeback': 'commissions.view',
-  'payout.paid': 'commissions.view',
+  'payment.chargeback': 'revenue.view',
+  'payout.paid': 'revenue.view',
 };
 function eventsAllowedFor(permissions) {
-  const has = (p) => (permissions instanceof Set ? permissions.has(p) : (permissions || []).includes(p));
-  return EVENTS.filter((e) => has(EVENT_PERMISSION[e]));
+  return EVENTS.filter((e) => permissions.has(EVENT_PERMISSION[e]));
 }
 
 function money(amount, currency) {
@@ -33,7 +31,7 @@ function esc(s) {
 }
 
 function renderTelegram(n) {
-  const icon = { 'payment.paid': '\u2705', 'payment.failed': '\u26a0\ufe0f', 'payment.refunded': '\u21a9\ufe0f', 'payment.chargeback': '\u274c', 'payout.paid': '\ud83d\udcb8' }[n.event] || '\ud83d\udd14';
+  const icon = { 'payment.paid': '✅', 'payment.failed': '⚠️', 'payment.refunded': '↩️', 'payment.chargeback': '❌', 'payout.paid': '💸' }[n.event] || '🔔';
   const lines = [`${icon} *${esc(n.title)}*`];
   if (n.amount != null) lines.push(`Amount: *${esc(money(n.amount, n.currency))}*`);
   if (n.body) lines.push(esc(n.body));
@@ -62,21 +60,18 @@ async function sendTelegram(chatId, text) {
 }
 
 /**
- * Record a notification and deliver it to every active channel subscribed to the event.
- * `c` is an already-scoped workspace client (RLS applies).
+ * Record a notification and deliver it to every active channel subscribed to
+ * the event. accountId / agentId say who it concerns; both null means the
+ * agency as a whole, which only workspace-wide roles see.
  */
 async function notify(c, workspaceId, n) {
   if (!EVENTS.includes(n.event)) throw new Error('unknown_event: ' + n.event);
 
-  // accountId / agentMembershipId say who this concerns. Both null means the
-  // event belongs to the agency as a whole and only workspace-scoped roles see
-  // it. See migration 035 for the full visibility rule.
   const row = (await c.query(
-    `INSERT INTO notifications (workspace_id, event, title, body, amount, currency, entity_type, entity_id,
-                                account_id, agent_membership_id)
+    `INSERT INTO notifications (workspace_id, event, title, body, amount, currency, entity_type, entity_id, account_id, agent_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
     [workspaceId, n.event, n.title, n.body || null, n.amount ?? null, n.currency || null,
-      n.entityType || null, n.entityId || null, n.accountId || null, n.agentMembershipId || null],
+      n.entityType || null, n.entityId || null, n.accountId || null, n.agentId || null],
   )).rows[0];
 
   const channels = (await c.query(
@@ -91,7 +86,6 @@ async function notify(c, workspaceId, n) {
       await sendTelegram(ch.target, text);
       await c.query('UPDATE notification_channels SET last_sent_at=now(), last_error=NULL WHERE id=$1', [ch.id]);
     } catch (e) {
-      // Never fail the caller (a payment must still be recorded).
       const msg = (e.detail || e.message || 'send failed').toString().slice(0, 300);
       log.error({ channelId: ch.id, err: msg }, 'telegram delivery failed');
       await c.query('UPDATE notification_channels SET last_error=$2 WHERE id=$1', [ch.id, msg]).catch(() => {});

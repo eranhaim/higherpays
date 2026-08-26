@@ -1,106 +1,82 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
-import type { Page } from './payouts';
+import type { Page } from '../types';
 
-/** Mirrors the `link_status` enum. `expired` is computed server-side from the link TTL. */
-export type LinkStatus = 'created' | 'opened' | 'paid' | 'failed' | 'expired' | 'refunded';
-export type PricingMode = 'fixed' | 'open';
+/**
+ * single_use dies on the first payment, or 24h after creation if nobody pays.
+ * reusable stays open through any number of payments until someone cancels it.
+ */
+export type LinkType = 'single_use' | 'reusable';
+export const LINK_TYPES: LinkType[] = ['single_use', 'reusable'];
+export const LINK_TYPE_LABELS: Record<LinkType, string> = {
+  single_use: 'Single use',
+  reusable: 'Reusable',
+};
 
-export const LINK_STATUSES: LinkStatus[] = ['created', 'opened', 'paid', 'failed', 'expired', 'refunded'];
-
-/** A link still worth sending to the customer: not yet paid, failed or expired. */
-export function isShareable(status: LinkStatus): boolean {
-  return status === 'created' || status === 'opened';
-}
+/**
+ *   active     payable
+ *   pending    paid, waiting for the agent to complete the payment details
+ *   done       paid and completed
+ *   expired    a single-use link went unpaid past its deadline
+ *   cancelled  closed by hand
+ *   refunded   a paid link was later reversed
+ */
+export type LinkStatus = 'active' | 'pending' | 'done' | 'expired' | 'cancelled' | 'refunded';
+export const LINK_STATUSES: LinkStatus[] = ['active', 'pending', 'done', 'expired', 'cancelled', 'refunded'];
 
 export const LINK_STATUS_LABELS: Record<LinkStatus, string> = {
-  created: 'Created',
-  opened: 'Opened',
-  paid: 'Paid',
-  failed: 'Failed',
+  active: 'Active',
+  pending: 'Paid — details needed',
+  done: 'Done',
   expired: 'Expired',
+  cancelled: 'Cancelled',
   refunded: 'Refunded',
 };
 
+/** A link still worth sending to the customer. */
+export function isShareable(status: LinkStatus): boolean {
+  return status === 'active';
+}
+
 export interface PaymentLink {
   id: string;
-  pricingMode: PricingMode;
+  type: LinkType;
   amount: number | null;
   currency: string;
-  providerLinkId: string;
   status: LinkStatus;
   referenceId: string;
-  createdAt: string;
+  description: string | null;
+  checkoutUrl: string | null;
+  expiresAt: string | null;
   paidAt: string | null;
-  account: string | null;
+  createdAt: string;
+  accountId: string;
+  account: string;
+  customerId: string | null;
   customer: string | null;
+  agentId: string | null;
   agent: string | null;
-  /** Null for links created before the URL was stored. */
-  url: string | null;
-}
-
-interface RawLink {
-  id: string;
-  pricing_mode: PricingMode;
-  amount: number | string | null;
-  currency: string;
-  provider_link_id: string;
-  status: LinkStatus;
-  reference_id: string;
-  created_at: string;
-  paid_at: string | null;
-  account: string | null;
-  customer: string | null;
-  agent: string | null;
-  checkout_url?: string | null;
-}
-
-function toNullableNumber(v: unknown): number | null {
-  if (v == null) return null;
-  const n = typeof v === 'string' ? parseFloat(v) : (v as number);
-  return Number.isFinite(n) ? n : null;
-}
-
-function normalize(l: RawLink): PaymentLink {
-  return {
-    id: l.id,
-    pricingMode: l.pricing_mode,
-    amount: toNullableNumber(l.amount),
-    currency: l.currency,
-    providerLinkId: l.provider_link_id,
-    status: l.status,
-    referenceId: l.reference_id,
-    createdAt: l.created_at,
-    paidAt: l.paid_at,
-    account: l.account,
-    customer: l.customer,
-    agent: l.agent,
-    url: l.checkout_url ?? null,
-  };
 }
 
 export interface CreateLinkInput {
   accountId: string;
   customerId?: string;
-  pricingMode?: PricingMode;
-  amount?: number;
+  type: LinkType;
+  amount: number;
   currency: string;
   description?: string;
-}
-
-export interface CreatedLink extends PaymentLink {
-  url: string;
 }
 
 /** Server-side filters for the link list. Empty fields are simply not sent. */
 export interface ListLinksQuery {
   status?: string;
+  type?: string;
   min?: string;
   max?: string;
   /** YYYY-MM-DD, inclusive. */
   from?: string;
   to?: string;
-  /** Matches reference, customer alias or agent name. */
+  /** Matches reference, customer name or agent name. */
   q?: string;
   accountId?: string;
 }
@@ -117,19 +93,15 @@ export const linksApi = {
       else if (k === 'to') qs.set('to', `${v}T23:59:59.999`);
       else qs.set(k, v);
     }
-    const raw = await api.get<Page<RawLink>>(workspacePath(`/links?${qs.toString()}`));
-    return { items: raw.items.map(normalize), nextCursor: raw.nextCursor };
+    return api.get<Page<PaymentLink>>(workspacePath(`/links?${qs.toString()}`));
   },
 
-  async create(input: CreateLinkInput): Promise<CreatedLink> {
-    const raw = await api.post<RawLink & { url: string }>(workspacePath('/links'), input);
-    return { ...normalize(raw), url: raw.url };
-  },
+  create: (input: CreateLinkInput) => api.post<PaymentLink>(workspacePath('/links'), input),
 
-  async reconcile(graceMinutes?: number) {
+  cancel: (id: string) => api.post<PaymentLink>(workspacePath(`/links/${id}/cancel`), {}),
+
+  reconcile(graceMinutes?: number) {
     return api.post<{ checked: number; updated: unknown[]; skipped: unknown[] }>(
-      workspacePath('/links/reconcile'),
-      graceMinutes != null ? { graceMinutes } : {},
-    );
+      workspacePath('/links/reconcile'), graceMinutes != null ? { graceMinutes } : {});
   },
 };

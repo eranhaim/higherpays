@@ -8,13 +8,8 @@ import { workspacesApi, type PlatformFee } from '../api/endpoints';
 import type { RateCard } from '../business/feeBreakdown';
 import { useCurrentSession } from './useCurrentSession';
 
-const EMPTY_RATE_CARD: RateCard = {
-  blended: 0,
-  psp: null,
-  margin: null,
-  fixed: 0,
-  // Unknown until the request lands — not "zero fee".
-};
+// Unknown until the request lands — not "zero fee".
+const EMPTY_RATE_CARD: RateCard = { blended: 0, fixed: 0 };
 
 // The reversal fees and the reserve reach only callers who see the whole
 // workspace. For an agent the fee preview still works: it needs the blended
@@ -23,8 +18,6 @@ const EMPTY_RATE_CARD: RateCard = {
 function toRateCard(f: PlatformFee): RateCard {
   return {
     blended: f.blendedRatePct,
-    psp: f.pspRatePct ?? null,
-    margin: f.marginRatePct ?? null,
     fixed: f.pspFixedFee,
     refundFee: f.refundFee,
     chargebackFee: f.chargebackFee,

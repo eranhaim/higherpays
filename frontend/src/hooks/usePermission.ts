@@ -1,15 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import { workspacesApi } from '../api/endpoints';
-import { SYSTEM_ROLE_PERMISSIONS, type Permission } from '../rbac/permissions';
+import { ROLE_PERMISSIONS, type Permission } from '../rbac/permissions';
 import { useCurrentSession } from './useCurrentSession';
 
 /**
- * Returns `can(permission)` for the current membership.
+ * Returns `can(permission)` for the current workspace access.
  *
- * Permissions come from the workspace's role definitions (`/permissions`),
- * which is what the backend enforces. While that request is in flight the
- * built-in matrix stands in so the sidebar does not flash empty; if it FAILS we
- * grant nothing, rather than silently running on the built-in matrix forever.
+ * Permissions come from `/permissions`, which is what the backend enforces.
+ * While that request is in flight the built-in matrix stands in so the
+ * sidebar does not flash empty; if it FAILS we grant nothing.
  */
 export function useCan(): (perm: Permission) => boolean {
   const { role, activeWorkspaceId } = useCurrentSession();
@@ -23,7 +22,7 @@ export function useCan(): (perm: Permission) => boolean {
 
   let perms: readonly string[] = [];
   if (query.isSuccess) perms = query.data.permissions;
-  else if (query.isPending && role) perms = SYSTEM_ROLE_PERMISSIONS[role] ?? [];
+  else if (query.isPending && role) perms = ROLE_PERMISSIONS[role] ?? [];
 
   return (perm) => perms.includes(perm);
 }

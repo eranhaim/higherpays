@@ -6,14 +6,13 @@
 //
 //   30 4 * * * cd /home/ubuntu/higherpays && docker compose exec -T backend node src/util/redact.js >> /var/log/higherpays-retention.log 2>&1
 //
-// RETENTION_DAYS (default 90) sets the age. Runs as the app role: the tables
-// are tenant-scoped, so it uses the trusted system context.
-const { withSystem, pool } = require('../db');
+// RETENTION_DAYS (default 90) sets the age.
+const { withTransaction, pool } = require('../db');
 
 const KEEP = ['trans_id', 'trans_order', 'reply_code', 'reply_desc', 'trans_amount', 'trans_currency', 'merchant_id', 'trans_date'];
 
 async function redactOlderThan(days) {
-  return withSystem(async (c) => {
+  return withTransaction(async (c) => {
     const keep = KEEP.map((k) => `'${k}'`).join(', ');
     const tx = await c.query(
       `UPDATE transactions
@@ -25,7 +24,7 @@ async function redactOlderThan(days) {
       `UPDATE webhook_events
           SET payload = (SELECT jsonb_object_agg(key, value) FROM jsonb_each(payload) WHERE key IN (${keep}))
                         || jsonb_build_object('redacted_at', now())
-        WHERE created_at < now() - ($1 || ' days')::interval
+        WHERE received_at < now() - ($1 || ' days')::interval
           AND payload IS NOT NULL AND NOT (payload ? 'redacted_at')`, [String(days)]);
     return { transactions: tx.rowCount, webhookEvents: ev.rowCount };
   });

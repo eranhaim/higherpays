@@ -2,9 +2,8 @@
 # HigherPays backend container entrypoint.
 #
 # 1. Wait for Postgres to accept connections.
-# 2. Run migrations as the DB owner (MIGRATIONS_DATABASE_URL, superuser role).
-#    Migrations create tables + RLS policies; the superuser bypasses RLS for DDL
-#    but the app never runs as this role.
+# 2. Run migrations as the DB owner (MIGRATIONS_DATABASE_URL). DDL needs the
+#    owner; the app never runs as this role.
 # 3. Start the server as the restricted hp_app role (DATABASE_URL).
 set -eu
 

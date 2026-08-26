@@ -1,31 +1,18 @@
 'use strict';
 // Drives a sale through the real webhook path so tests that need ledger
-// entries (payouts, cash position, refunds) get them the same way production does.
+// entries get them the same way production does.
 const request = require('supertest');
-const { withSystem } = require('../../src/db');
+const { pool } = require('../../src/db');
 const sig = require('../../src/providers/mantapay-signature');
-const { createAccount } = require('./tenant');
+const { MERCHANT_ID } = require('./tenant');
 
-const MERCHANT_ID = '7374656';
-
-// `workspaces` is FORCE-RLS, so a bare pool query returns zero rows. Use the
-// same trusted system context the webhook itself uses.
 async function endpointFor(workspaceId) {
-  return withSystem(async (c) => {
-    const { rows } = await c.query(
-      'SELECT webhook_endpoint_id FROM workspaces WHERE id = $1', [workspaceId]);
-    return rows[0].webhook_endpoint_id;
-  });
-}
-
-async function setMerchantId(workspaceId, mid = MERCHANT_ID) {
-  await withSystem((c) => c.query('UPDATE workspaces SET mid = $2 WHERE id = $1', [workspaceId, mid]));
+  const { rows } = await pool.query('SELECT webhook_endpoint_id FROM workspaces WHERE id = $1', [workspaceId]);
+  return rows[0].webhook_endpoint_id;
 }
 
 function encodeForm(params) {
-  return Object.entries(params)
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join('&');
+  return Object.entries(params).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
 }
 
 function buildPaidPayload({ reference, transId, amount, currency = 'EUR', merchantId = MERCHANT_ID, replyCode = '000' }) {
@@ -42,10 +29,8 @@ function buildPaidPayload({ reference, transId, amount, currency = 'EUR', mercha
   };
   // Notifications sign a subset:
   //   trans_id + trans_order + reply_code + trans_amount + trans_currency + hashKey
-  const hashKey = process.env.MANTAPAY_HASH_KEY;
-  const base = fields.trans_id + fields.trans_order + fields.reply_code +
-               fields.trans_amount + fields.trans_currency;
-  fields.signature = sig.digest(base + hashKey);
+  const base = fields.trans_id + fields.trans_order + fields.reply_code + fields.trans_amount + fields.trans_currency;
+  fields.signature = sig.digest(base + process.env.MANTAPAY_HASH_KEY);
   return fields;
 }
 
@@ -56,20 +41,19 @@ function postWebhook(app, endpointId, payload) {
     .send(encodeForm(payload));
 }
 
-/** Creates a link for `account` and pays it. Returns the link and the provider transaction id. */
-async function paySale(app, tenant, account, amount) {
-  await setMerchantId(tenant.workspaceId);
+const newTransId = () => `mp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+
+/** Creates a link for `account` as `headers` (default: the admin) and pays it. */
+async function paySale(app, tenant, account, amount, opts = {}) {
   const link = (await request(app)
     .post(`/workspaces/${tenant.workspaceId}/links`)
-    .set(tenant.authHeaders)
-    .send({ accountId: account.id, pricingMode: 'fixed', amount, currency: 'EUR' })
+    .set(opts.headers || tenant.authHeaders)
+    .send({ accountId: account.id, type: opts.type || 'single_use', amount, currency: 'EUR' })
     .expect(201)).body;
-  const transId = `mp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-  await postWebhook(app, await endpointFor(tenant.workspaceId),
-    buildPaidPayload({ reference: link.reference_id, transId, amount })).expect(200);
-  return { link, transId };
+  const transId = newTransId();
+  const res = await postWebhook(app, await endpointFor(tenant.workspaceId),
+    buildPaidPayload({ reference: link.referenceId, transId, amount })).expect(200);
+  return { link, transId, paymentId: res.body.paymentId };
 }
 
-module.exports = {
-  MERCHANT_ID, endpointFor, setMerchantId, encodeForm, buildPaidPayload, postWebhook, paySale, createAccount,
-};
+module.exports = { MERCHANT_ID, endpointFor, encodeForm, buildPaidPayload, postWebhook, paySale, newTransId };

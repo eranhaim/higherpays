@@ -1,334 +1,260 @@
 'use strict';
+// The HigherPays operator console, above any single workspace. Mounted behind
+// requireAuth + requirePlatformAdmin.
 const config = require('../config');
 const express = require('express');
 const crypto = require('crypto');
-const { withPlatformAdmin } = require('../db');
-const { requirePlatformRole } = require('../middleware');
+const { query, withTransaction } = require('../db');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { isStr, badRequest } = require('../util/validate');
-const { seedRolesForWorkspace } = require('../auth/permissions');
 const { sendEmail } = require('../util/email');
-const hashToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
+const { status: vocab } = require('../schema/entities');
 
-// Mounted at /platform behind requireAuth + requirePlatformAdmin.
-// Every handler runs in a platform-admin DB context (crosses tenants).
-// Reads are open to every platform role; `finance` may reprice an agency;
-// only `super_admin` may onboard or suspend one.
+const hashToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
 const router = express.Router();
 const { uid } = require('../lib/scope');
 const pct = (v) => typeof v === 'number' && v >= 0 && v <= 100;
-const superAdminOnly = requirePlatformRole('super_admin');
-const financeOrSuperAdmin = requirePlatformRole('super_admin', 'finance');
+const n = (v) => Number(v || 0);
+const r2 = (v) => Math.round(v * 100) / 100;
 
-// GET /platform/me — "am I an operator, and which kind". Lets the console ask
-// once instead of probing a data endpoint and reading a 403 as an answer.
-router.get('/me', (req, res) => res.json({ role: req.platformRole }));
+const publicFee = (f) => ({
+  feeModel: f.fee_model, pspRatePct: n(f.psp_rate_pct), mdrPct: f.mdr_pct == null ? null : n(f.mdr_pct),
+  settlementPct: f.settlement_pct == null ? null : n(f.settlement_pct), pspFixedFee: n(f.psp_fixed_fee),
+  marginRatePct: n(f.margin_rate_pct), blendedRatePct: n(f.blended_rate_pct), effectiveFrom: f.effective_from,
+});
+const publicSettlementFee = (s) => ({
+  chargebackFee: n(s.chargeback_fee), refundFee: n(s.refund_fee), declineFee: n(s.decline_fee),
+  settlementFeePct: n(s.settlement_fee_pct), settlementFeeFlat: n(s.settlement_fee_flat),
+  reservePct: n(s.reserve_pct), reserveReleaseDays: n(s.reserve_release_days), effectiveFrom: s.effective_from,
+});
 
-// GET /platform/overview — the real back office summary across all agencies.
+// A platform admin holds a workspace_users row in every workspace; creating a
+// workspace grants every platform admin, and promoting a user grants them
+// everywhere. Both go through here.
+async function grantPlatformAdminsAccess(c, workspaceId) {
+  await c.query(
+    `INSERT INTO workspace_users (workspace_id, user_id, role)
+     SELECT $1, id, 'workspace_admin' FROM users WHERE is_platform_admin
+     ON CONFLICT (workspace_id, user_id) DO NOTHING`, [workspaceId]);
+}
+
+router.get('/me', (req, res) => res.json({ isPlatformAdmin: true }));
+
+// GET /platform/overview
 router.get('/overview', asyncHandler(async (req, res) => {
-  const data = await withPlatformAdmin(uid(req), async (c) => {
-    const counts = (await c.query(`
-      SELECT
-        (SELECT count(*) FROM organizations)               AS agencies,
-        (SELECT count(*) FROM organizations WHERE status='active') AS agencies_active,
-        (SELECT count(*) FROM workspaces)                  AS workspaces,
-        (SELECT count(*) FROM accounts)                     AS accounts,
-        (SELECT count(*) FROM users)                       AS users`)).rows[0];
-    const money = (await c.query(`
-      SELECT
-        COALESCE(SUM(gross),0)           AS gross,
-        COALESCE(SUM(fee),0)             AS psp_fees,
-        COALESCE(SUM(platform_fee),0)    AS platform_fees,
-        COALESCE(SUM(platform_margin),0) AS higherpays_margin,
-        COUNT(*)                         AS transactions
-      FROM transactions WHERE status='approved'`)).rows[0];
-    return { counts, money };
+  const counts = (await query(`
+    SELECT (SELECT count(*) FROM workspaces) AS workspaces,
+           (SELECT count(*) FROM workspaces WHERE status='active') AS workspaces_active,
+           (SELECT count(*) FROM accounts) AS accounts,
+           (SELECT count(*) FROM agents) AS agents,
+           (SELECT count(*) FROM users) AS users`)).rows[0];
+  const money = (await query(`
+    SELECT COALESCE(SUM(re.gross) FILTER (WHERE re.entry_type='sale'),0) AS gross,
+           COALESCE(SUM(re.psp_fee),0) AS psp_fees,
+           COALESCE(SUM(re.platform_fee),0) AS platform_fees,
+           COALESCE(SUM(re.platform_margin),0) AS higherpays_margin,
+           COUNT(*) FILTER (WHERE re.entry_type='sale') AS sales
+      FROM revenue_entries re`)).rows[0];
+  res.json({ counts, money });
+}));
+
+// GET /platform/workspaces — every agency with its rate and live counters.
+router.get('/workspaces', asyncHandler(async (req, res) => {
+  const rows = (await query(`
+    SELECT w.id, w.name, w.currency, w.status, w.merchant_id, w.created_at,
+           (SELECT count(*) FROM accounts a WHERE a.workspace_id = w.id) AS accounts,
+           (SELECT count(*) FROM agents ag WHERE ag.workspace_id = w.id) AS agents,
+           (SELECT count(*) FROM workspace_users wu WHERE wu.workspace_id = w.id AND wu.status='active') AS members,
+           (SELECT count(*) FROM payments p WHERE p.workspace_id = w.id AND p.status='paid') AS paid_payments,
+           (SELECT COALESCE(SUM(amount),0) FROM payments p WHERE p.workspace_id = w.id AND p.status='paid') AS gross_volume,
+           (SELECT max(created_at) FROM audit_log a WHERE a.workspace_id = w.id) AS last_activity,
+           f.blended_rate_pct
+      FROM workspaces w
+      LEFT JOIN LATERAL effective_platform_fee(w.id, now()) f ON true
+     ORDER BY w.name`)).rows;
+  res.json({
+    workspaces: rows.map((w) => ({
+      id: w.id, name: w.name, currency: w.currency, status: w.status, merchantId: w.merchant_id, createdAt: w.created_at,
+      accounts: n(w.accounts), agents: n(w.agents), members: n(w.members),
+      paidPayments: n(w.paid_payments), grossVolume: n(w.gross_volume), lastActivity: w.last_activity,
+      blendedRatePct: n(w.blended_rate_pct),
+    })),
   });
-  res.json(data);
 }));
 
-// GET /platform/organizations — every agency with its current blended fee.
-router.get('/organizations', asyncHandler(async (req, res) => {
-  const rows = await withPlatformAdmin(uid(req), async (c) => (await c.query(`
-    SELECT o.id, o.name, o.slug, o.status, o.created_at,
-           (SELECT count(*) FROM workspaces w WHERE w.organization_id = o.id) AS workspaces,
-           pf.psp_rate_pct, pf.margin_rate_pct, pf.blended_rate_pct
-    FROM organizations o
-    LEFT JOIN LATERAL (
-      SELECT psp_rate_pct, margin_rate_pct, blended_rate_pct
-      FROM platform_fee_rates p WHERE p.organization_id = o.id
-      ORDER BY effective_from DESC LIMIT 1
-    ) pf ON true
-    ORDER BY o.created_at DESC`)).rows);
-  res.json({ organizations: rows });
-}));
-
-// GET /platform/organizations/:orgId — detail + workspaces + fee history.
-router.get('/organizations/:orgId', asyncHandler(async (req, res) => {
-  const data = await withPlatformAdmin(uid(req), async (c) => {
-    const org = (await c.query('SELECT id, name, slug, status, created_at FROM organizations WHERE id=$1', [req.params.orgId])).rows[0];
-    if (!org) return null;
-    const workspaces = (await c.query('SELECT id, name, mid, currency, status FROM workspaces WHERE organization_id=$1', [org.id])).rows;
-    const feeHistory = (await c.query(
-      'SELECT psp_rate_pct, margin_rate_pct, blended_rate_pct, effective_from FROM platform_fee_rates WHERE organization_id=$1 ORDER BY effective_from DESC', [org.id])).rows;
-    return { ...org, workspaces, feeHistory };
+// GET /platform/workspaces/:id — detail + fee history
+router.get('/workspaces/:id', asyncHandler(async (req, res) => {
+  const w = (await query('SELECT id, name, currency, status, merchant_id, webhook_endpoint_id, created_at FROM workspaces WHERE id=$1', [req.params.id])).rows[0];
+  if (!w) return res.status(404).json({ error: 'not_found' });
+  const feeHistory = (await query('SELECT * FROM platform_fee_rates WHERE workspace_id=$1 ORDER BY effective_from DESC', [w.id])).rows;
+  const settlement = (await query('SELECT * FROM effective_settlement_fees($1, now())', [w.id])).rows[0];
+  res.json({
+    id: w.id, name: w.name, currency: w.currency, status: w.status, merchantId: w.merchant_id,
+    webhookEndpointId: w.webhook_endpoint_id, createdAt: w.created_at,
+    feeHistory: feeHistory.map(publicFee),
+    settlementFee: settlement && settlement.id ? publicSettlementFee(settlement) : null,
   });
-  if (!data) return res.status(404).json({ error: 'not_found' });
-  res.json(data);
 }));
 
-// PUT /platform/organizations/:orgId/platform-fee  { pspRatePct, marginRatePct }
-// The operator sets an agency's PSP rate and HigherPays margin (versioned).
-router.put('/organizations/:orgId/platform-fee', financeOrSuperAdmin, asyncHandler(async (req, res) => {
-  const { pspRatePct, marginRatePct } = req.body || {};
-  const pspFixedFee = Number((req.body || {}).pspFixedFee || 0);
-  if (!pct(pspRatePct)) return badRequest(res, 'pspRatePct must be 0..100', ['pspRatePct']);
-  if (!pct(marginRatePct)) return badRequest(res, 'marginRatePct must be 0..100', ['marginRatePct']);
+// PUT /platform/workspaces/:id/platform-fee — a new versioned rate row.
+router.put('/workspaces/:id/platform-fee', asyncHandler(async (req, res) => {
+  const b = req.body || {};
+  const feeModel = b.feeModel || 'flat';
+  const pspFixedFee = Number(b.pspFixedFee || 0);
+  if (!vocab.FEE_MODEL.includes(feeModel)) return badRequest(res, 'invalid feeModel', ['feeModel']);
+  if (!pct(b.pspRatePct) || !pct(b.marginRatePct)) return badRequest(res, 'pspRatePct/marginRatePct must be 0..100', ['pspRatePct', 'marginRatePct']);
+  if (b.mdrPct != null && !pct(b.mdrPct)) return badRequest(res, 'mdrPct must be 0..100', ['mdrPct']);
+  if (b.settlementPct != null && !pct(b.settlementPct)) return badRequest(res, 'settlementPct must be 0..100', ['settlementPct']);
   if (!(pspFixedFee >= 0)) return badRequest(res, 'pspFixedFee must be >= 0', ['pspFixedFee']);
 
-  const row = await withPlatformAdmin(uid(req), async (c) => {
-    const org = (await c.query('SELECT 1 FROM organizations WHERE id=$1', [req.params.orgId])).rows[0];
-    if (!org) return { err: 'not_found' };
-    return {
-      fee: (await c.query(
-        `INSERT INTO platform_fee_rates (organization_id, psp_rate_pct, margin_rate_pct, psp_fixed_fee, created_by)
-         VALUES ($1,$2,$3,$4,$5)
-         RETURNING psp_rate_pct, margin_rate_pct, blended_rate_pct, psp_fixed_fee, effective_from`,
-        [req.params.orgId, pspRatePct, marginRatePct, pspFixedFee, uid(req)])).rows[0],
-    };
-  });
-  if (row.err) return res.status(404).json({ error: row.err });
-  await audit({ actorUserId: uid(req), action: 'platform.fee.update', entityType: 'organization', entityId: req.params.orgId, metadata: { pspRatePct, marginRatePct, pspFixedFee, platformRole: req.platformRole } });
-  res.status(201).json(row.fee);
+  const ws = (await query('SELECT 1 FROM workspaces WHERE id=$1', [req.params.id])).rows[0];
+  if (!ws) return res.status(404).json({ error: 'not_found' });
+  const fee = (await query(
+    `INSERT INTO platform_fee_rates (workspace_id, fee_model, psp_rate_pct, mdr_pct, settlement_pct, psp_fixed_fee, margin_rate_pct, created_by_user_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+    [req.params.id, feeModel, b.pspRatePct, b.mdrPct ?? null, b.settlementPct ?? null, pspFixedFee, b.marginRatePct, uid(req)])).rows[0];
+  await audit({ workspaceId: req.params.id, actorUserId: uid(req), action: 'platform.fee.update', entityType: 'workspace', entityId: req.params.id, metadata: b });
+  res.status(201).json(publicFee(fee));
 }));
 
-// PATCH /platform/organizations/:orgId/status  { status: 'active' | 'suspended' }
-router.patch('/organizations/:orgId/status', superAdminOnly, asyncHandler(async (req, res) => {
+// PUT /platform/workspaces/:id/settlement-fee
+router.put('/workspaces/:id/settlement-fee', asyncHandler(async (req, res) => {
+  const b = req.body || {};
+  const nn = (v) => typeof v === 'number' && v >= 0;
+  const vals = {
+    chargebackFee: Number(b.chargebackFee || 0), refundFee: Number(b.refundFee || 0), declineFee: Number(b.declineFee || 0),
+    settlementFeePct: Number(b.settlementFeePct || 0), settlementFeeFlat: Number(b.settlementFeeFlat || 0),
+    reservePct: Number(b.reservePct || 0), reserveReleaseDays: Number(b.reserveReleaseDays || 0),
+  };
+  if (!Object.values(vals).every(nn)) return badRequest(res, 'all fees must be numbers >= 0');
+  if (!pct(vals.reservePct) || !pct(vals.settlementFeePct)) return badRequest(res, 'percentages must be 0..100', ['reservePct', 'settlementFeePct']);
+
+  const ws = (await query('SELECT 1 FROM workspaces WHERE id=$1', [req.params.id])).rows[0];
+  if (!ws) return res.status(404).json({ error: 'not_found' });
+  const row = (await query(
+    `INSERT INTO settlement_fee_config (workspace_id, chargeback_fee, refund_fee, decline_fee, settlement_fee_pct, settlement_fee_flat, reserve_pct, reserve_release_days, created_by_user_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+    [req.params.id, vals.chargebackFee, vals.refundFee, vals.declineFee, vals.settlementFeePct, vals.settlementFeeFlat, vals.reservePct, vals.reserveReleaseDays, uid(req)])).rows[0];
+  await audit({ workspaceId: req.params.id, actorUserId: uid(req), action: 'platform.settlement_fee.update', entityType: 'workspace', entityId: req.params.id, metadata: vals });
+  res.status(201).json(publicSettlementFee(row));
+}));
+
+// PATCH /platform/workspaces/:id/status  { status }
+router.patch('/workspaces/:id/status', asyncHandler(async (req, res) => {
   const { status } = req.body || {};
-  if (!['active', 'suspended', 'archived'].includes(status)) return badRequest(res, 'invalid status', ['status']);
-  const org = await withPlatformAdmin(uid(req), async (c) => (await c.query(
-    'UPDATE organizations SET status=$2 WHERE id=$1 RETURNING id, name, status', [req.params.orgId, status])).rows[0]);
-  if (!org) return res.status(404).json({ error: 'not_found' });
-  await audit({ actorUserId: uid(req), action: 'platform.org.status', entityType: 'organization', entityId: org.id, metadata: { status, platformRole: req.platformRole } });
-  res.json(org);
+  if (!vocab.WORKSPACE_STATUS.includes(status)) return badRequest(res, 'invalid status', ['status']);
+  const w = (await query('UPDATE workspaces SET status=$2 WHERE id=$1 RETURNING id, name, status', [req.params.id, status])).rows[0];
+  if (!w) return res.status(404).json({ error: 'not_found' });
+  await audit({ workspaceId: w.id, actorUserId: uid(req), action: 'platform.workspace.status', entityType: 'workspace', entityId: w.id, metadata: { status } });
+  res.json(w);
 }));
 
-// POST /platform/agencies — super-admin onboards a NEW agency in one step:
-// organization + workspace + roles + platform fee + settlement fee + commission
-// splits + an owner invite (the new owner sets their own password via the link).
-router.post('/agencies', superAdminOnly, asyncHandler(async (req, res) => {
+// POST /platform/agencies — onboard a new agency in one step: workspace,
+// rate card, settlement fees, default split, and an invite for its first
+// admin (who sets their own password via the link).
+router.post('/agencies', asyncHandler(async (req, res) => {
   const b = req.body || {};
   const currency = (b.currency || 'EUR').toUpperCase();
   const accountSplitPct = b.accountSplitPct == null ? 70 : Number(b.accountSplitPct);
   const agentPct = b.agentPct == null ? 0 : Number(b.agentPct);
-  const chargebackFee = b.chargebackFee == null ? 0 : Number(b.chargebackFee);
-  if (!isStr(b.agencyName, 120)) return badRequest(res, 'agencyName is required', ['agencyName']);
-  if (!isStr(b.ownerEmail, 120) || !b.ownerEmail.includes('@')) return badRequest(res, 'a valid ownerEmail is required', ['ownerEmail']);
-  if (!/^[A-Z]{3}$/.test(currency)) return badRequest(res, 'currency must be 3 letters', ['currency']);
-  if (!config.supportedCurrencies.includes(currency)) {
-    return badRequest(res, `currency ${currency} is not enabled (supported: ${config.supportedCurrencies.join(', ')})`, ['currency']);
-  }
+  if (!isStr(b.name, 120)) return badRequest(res, 'name is required', ['name']);
+  if (!isStr(b.adminEmail, 120) || !b.adminEmail.includes('@')) return badRequest(res, 'a valid adminEmail is required', ['adminEmail']);
+  if (!config.supportedCurrencies.includes(currency)) return badRequest(res, `currency ${currency} is not enabled`, ['currency']);
   if (!pct(b.pspRatePct) || !pct(b.marginRatePct)) return badRequest(res, 'pspRatePct/marginRatePct must be 0..100', ['pspRatePct', 'marginRatePct']);
-  if (!pct(accountSplitPct) || !pct(agentPct)) return badRequest(res, 'splits must be 0..100', ['accountSplitPct', 'agentPct']);
-  if (!(chargebackFee >= 0)) return badRequest(res, 'chargebackFee must be >= 0', ['chargebackFee']);
+  if (!pct(accountSplitPct) || !pct(agentPct) || accountSplitPct + agentPct > 100) return badRequest(res, 'splits must be 0..100 and fit together', ['accountSplitPct', 'agentPct']);
 
   const token = crypto.randomBytes(32).toString('base64url');
-  const out = await withPlatformAdmin(uid(req), async (c) => {
-    const slug = b.agencyName.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 40) + '-' + Math.random().toString(36).slice(2, 7);
-    const org = (await c.query('INSERT INTO organizations (name, slug) VALUES ($1,$2) RETURNING id', [b.agencyName, slug])).rows[0];
+  const out = await withTransaction(async (c) => {
     const ws = (await c.query(
-      "INSERT INTO workspaces (organization_id, name, currency, mid, provider_name) VALUES ($1,$2,$3,$4,'mantapay') RETURNING id, webhook_endpoint_id",
-      [org.id, b.agencyName, currency, b.mid || null])).rows[0];
-    await seedRolesForWorkspace(c, ws.id);
-    // Initial rates are effective from the beginning of time so any historical
-    // transactions an agency backfills are still priced correctly. Later rate
-    // *changes* (set-fee / set-settlement) take effect from their own date.
-    await c.query("INSERT INTO platform_fee_rates (organization_id, psp_rate_pct, margin_rate_pct, psp_fixed_fee, effective_from) VALUES ($1,$2,$3,$4,'-infinity')", [org.id, b.pspRatePct, b.marginRatePct, Number(b.pspFixedFee || 0)]);
-    await c.query("INSERT INTO settlement_fee_config (organization_id, chargeback_fee, refund_fee, decline_fee, effective_from) VALUES ($1,$2,$3,$4,'-infinity')", [org.id, chargebackFee, Number(b.refundFee || 0), Number(b.declineFee || 0)]);
-    await c.query("INSERT INTO commission_rules (workspace_id, account_id, account_split_pct, agency_split_pct, agent_pct, effective_from) VALUES ($1,NULL,$2,$3,$4,'-infinity')",
-      [ws.id, accountSplitPct, 100 - accountSplitPct, agentPct]);
-    const expires = new Date(Date.now() + 7 * 86400 * 1000);
-    await c.query('INSERT INTO invites (workspace_id, email, role, token_hash, invited_by, expires_at) VALUES ($1,$2,$3,$4,$5,$6)',
-      [ws.id, b.ownerEmail, 'owner', hashToken(token), uid(req), expires]);
-    return { orgId: org.id, wsId: ws.id, webhook: ws.webhook_endpoint_id };
+      'INSERT INTO workspaces (name, currency, merchant_id) VALUES ($1,$2,$3) RETURNING id, webhook_endpoint_id',
+      [b.name.trim(), currency, b.merchantId || null])).rows[0];
+    // Effective from the beginning of time so any backfilled history is priced.
+    await c.query(
+      `INSERT INTO platform_fee_rates (workspace_id, fee_model, psp_rate_pct, mdr_pct, settlement_pct, psp_fixed_fee, margin_rate_pct, effective_from, created_by_user_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'-infinity',$8)`,
+      [ws.id, vocab.FEE_MODEL.includes(b.feeModel) ? b.feeModel : 'flat', b.pspRatePct, b.mdrPct ?? null, b.settlementPct ?? null, Number(b.pspFixedFee || 0), b.marginRatePct, uid(req)]);
+    await c.query(
+      `INSERT INTO settlement_fee_config (workspace_id, chargeback_fee, refund_fee, decline_fee, effective_from, created_by_user_id)
+       VALUES ($1,$2,$3,$4,'-infinity',$5)`,
+      [ws.id, Number(b.chargebackFee || 0), Number(b.refundFee || 0), Number(b.declineFee || 0), uid(req)]);
+    await c.query(
+      `INSERT INTO revenue_rules (workspace_id, account_split_pct, agency_split_pct, agent_pct, effective_from, created_by_user_id)
+       VALUES ($1,$2,$3,$4,'-infinity',$5)`, [ws.id, accountSplitPct, 100 - accountSplitPct, agentPct, uid(req)]);
+    await grantPlatformAdminsAccess(c, ws.id);
+    await c.query(
+      'INSERT INTO invites (workspace_id, email, role, token_hash, invited_by_user_id, expires_at) VALUES ($1,$2,$3,$4,$5,$6)',
+      [ws.id, b.adminEmail, 'workspace_admin', hashToken(token), uid(req), new Date(Date.now() + 7 * 86400 * 1000)]);
+    return ws;
   });
 
   const link = `https://app.higherpays.com/accept-invite?token=${token}`;
-  await sendEmail({ to: b.ownerEmail, subject: `You're invited to run ${b.agencyName} on HigherPays`, body: `Set up your owner login: ${link}` });
-  await audit({ actorUserId: uid(req), action: 'platform.agency.onboard', entityType: 'workspace', entityId: out.wsId, metadata: { agencyName: b.agencyName, ownerEmail: b.ownerEmail, platformRole: req.platformRole } });
-  res.status(201).json({
-    workspaceId: out.wsId, organizationId: out.orgId, name: b.agencyName,
-    blendedRatePct: b.pspRatePct + b.marginRatePct,
-    webhookEndpointId: out.webhook,
-    // The owner's invite token is a bearer credential for the new workspace and
-    // only ever reaches their address. Tests read it from the email stub.
+  await sendEmail({ to: b.adminEmail, subject: `You're invited to run ${b.name} on HigherPays`, body: `Set up your login: ${link}` });
+  await audit({ workspaceId: out.id, actorUserId: uid(req), action: 'platform.agency.onboard', entityType: 'workspace', entityId: out.id, metadata: { name: b.name, adminEmail: b.adminEmail } });
+  res.status(201).json({ workspaceId: out.id, name: b.name, webhookEndpointId: out.webhook_endpoint_id, blendedRatePct: b.pspRatePct + b.marginRatePct });
+}));
+
+// PATCH /platform/users/:id/platform-admin  { isPlatformAdmin }
+router.patch('/users/:id/platform-admin', asyncHandler(async (req, res) => {
+  const on = !!(req.body || {}).isPlatformAdmin;
+  if (req.params.id === uid(req) && !on) return res.status(403).json({ error: 'cannot_demote_self' });
+  const user = await withTransaction(async (c) => {
+    const u = (await c.query('UPDATE users SET is_platform_admin=$2 WHERE id=$1 RETURNING id, email, is_platform_admin', [req.params.id, on])).rows[0];
+    if (!u) return null;
+    if (on) {
+      await c.query(
+        `INSERT INTO workspace_users (workspace_id, user_id, role) SELECT id, $1, 'workspace_admin' FROM workspaces
+         ON CONFLICT (workspace_id, user_id) DO NOTHING`, [u.id]);
+    }
+    return u;
   });
+  if (!user) return res.status(404).json({ error: 'not_found' });
+  await audit({ actorUserId: uid(req), action: 'platform.admin.grant', entityType: 'user', entityId: user.id, metadata: { isPlatformAdmin: on } });
+  res.json({ id: user.id, email: user.email, isPlatformAdmin: user.is_platform_admin });
 }));
 
-// PUT /platform/organizations/:orgId/settlement-fee
-// Super-admin sets the chargeback fee + settlement fees (mock now, editable).
-router.put('/organizations/:orgId/settlement-fee', financeOrSuperAdmin, asyncHandler(async (req, res) => {
-  const b = req.body || {};
-  const { chargebackFee, settlementFeePct, settlementFeeFlat } = b;
-  const refundFee = Number(b.refundFee || 0), declineFee = Number(b.declineFee || 0);
-  const reservePct = Number(b.reservePct || 0), reserveReleaseDays = Number(b.reserveReleaseDays || 0);
-  const nn = (v) => typeof v === 'number' && v >= 0;
-  if (!nn(chargebackFee) || !nn(settlementFeePct) || !nn(settlementFeeFlat)) {
-    return badRequest(res, 'all fees must be numbers >= 0', ['chargebackFee', 'settlementFeePct', 'settlementFeeFlat']);
-  }
-  if (!(refundFee >= 0) || !(declineFee >= 0)) return badRequest(res, 'refundFee and declineFee must be >= 0', ['refundFee', 'declineFee']);
-  if (!(reservePct >= 0 && reservePct <= 100)) return badRequest(res, 'reservePct must be 0..100', ['reservePct']);
-  if (!(reserveReleaseDays >= 0)) return badRequest(res, 'reserveReleaseDays must be >= 0', ['reserveReleaseDays']);
-  const row = await withPlatformAdmin(uid(req), async (c) => {
-    const org = (await c.query('SELECT 1 FROM organizations WHERE id=$1', [req.params.orgId])).rows[0];
-    if (!org) return { err: 'not_found' };
-    return { fee: (await c.query(
-      `INSERT INTO settlement_fee_config (organization_id, chargeback_fee, settlement_fee_pct, settlement_fee_flat, refund_fee, decline_fee, reserve_pct, reserve_release_days, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       RETURNING chargeback_fee, settlement_fee_pct, settlement_fee_flat, refund_fee, decline_fee, reserve_pct, reserve_release_days, effective_from`,
-      [req.params.orgId, chargebackFee, settlementFeePct, settlementFeeFlat, refundFee, declineFee, reservePct, reserveReleaseDays, uid(req)])).rows[0] };
-  });
-  if (row.err) return res.status(404).json({ error: row.err });
-  await audit({ actorUserId: uid(req), action: 'platform.settlement_fee.update', entityType: 'organization', entityId: req.params.orgId, metadata: { chargebackFee, settlementFeePct, settlementFeeFlat, refundFee, declineFee, platformRole: req.platformRole } });
-  res.status(201).json(row.fee);
-}));
-
-// GET /platform/organizations/:orgId/settlement-fee
-router.get('/organizations/:orgId/settlement-fee', asyncHandler(async (req, res) => {
-  const fee = await withPlatformAdmin(uid(req), async (c) => (await c.query(
-    `SELECT chargeback_fee, settlement_fee_pct, settlement_fee_flat, refund_fee, decline_fee, reserve_pct, reserve_release_days
-       FROM settlement_fee_config WHERE organization_id=$1 AND effective_from <= now()
-       ORDER BY effective_from DESC LIMIT 1`, [req.params.orgId])).rows[0] || null);
-  res.json(fee || { chargeback_fee: 0, settlement_fee_pct: 0, settlement_fee_flat: 0, refund_fee: 0, decline_fee: 0, reserve_pct: 0, reserve_release_days: 0 });
-}));
-
-// GET /platform/activity — recent actions across ALL agencies (the operator feed).
+// GET /platform/activity — recent actions across all agencies
 router.get('/activity', asyncHandler(async (req, res) => {
-  const rows = await withPlatformAdmin(uid(req), async (c) => (await c.query(
-    `SELECT a.action, a.entity_type, a.created_at,
-            w.name AS workspace, u.email AS actor, u.full_name AS actor_name
-     FROM audit_log a
-     LEFT JOIN workspaces w ON w.id = a.workspace_id
-     LEFT JOIN users u ON u.id = a.actor_user_id
-     ORDER BY a.created_at DESC LIMIT 100`)).rows);
+  const rows = (await query(
+    `SELECT a.action, a.entity_type, a.created_at, w.name AS workspace, u.email AS actor, u.full_name AS actor_name
+       FROM audit_log a LEFT JOIN workspaces w ON w.id = a.workspace_id LEFT JOIN users u ON u.id = a.actor_user_id
+      ORDER BY a.created_at DESC LIMIT 100`)).rows;
   res.json({ activity: rows });
 }));
 
-// GET /platform/workspaces — every workspace with live activity counters.
-router.get('/workspaces', asyncHandler(async (req, res) => {
-  const rows = await withPlatformAdmin(uid(req), async (c) => (await c.query(
-    `SELECT w.id, w.name, w.currency, w.status, o.name AS organization, o.id AS organization_id,
-            (SELECT count(*) FROM accounts a WHERE a.workspace_id = w.id)                                     AS accounts,
-            (SELECT count(*) FROM memberships m WHERE m.workspace_id = w.id AND m.status='active')            AS members,
-            (SELECT count(*) FROM transactions t WHERE t.workspace_id = w.id AND t.status='approved')         AS approved_txns,
-            (SELECT COALESCE(SUM(gross),0) FROM transactions t WHERE t.workspace_id = w.id AND t.status='approved') AS gross_volume,
-            (SELECT max(created_at) FROM audit_log a WHERE a.workspace_id = w.id)                              AS last_activity
-     FROM workspaces w JOIN organizations o ON o.id = w.organization_id
-     ORDER BY o.name`)).rows);
-  res.json({ workspaces: rows });
-}));
-
-// GET /platform/analytics?from&to — cross-agency analytics for the operator.
-router.get('/analytics', asyncHandler(async (req, res) => {
-  const to = req.query.to ? new Date(req.query.to) : new Date();
-  const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 86400000);
-  const F = from.toISOString(), T = to.toISOString();
-  const data = await withPlatformAdmin(uid(req), async (c) => {
-    const tot = (await c.query(`
-      SELECT COALESCE(SUM(ce.gross) FILTER (WHERE ce.entry_type='sale'),0) AS gross,
-             COALESCE(SUM(ce.platform_margin),0) AS hp_margin,
-             COALESCE(SUM(ce.distributable),0) AS net,
-             COUNT(*) FILTER (WHERE ce.entry_type='sale') AS sales,
-             COUNT(*) FILTER (WHERE ce.entry_type='chargeback') AS cbs
-      FROM commission_entries ce JOIN transactions t ON t.id=ce.transaction_id
-      WHERE t.occurred_at >= $1 AND t.occurred_at <= $2`, [F, T])).rows[0];
-    const per = (await c.query(`
-      SELECT w.name AS agency, o.name AS organization,
-             COALESCE(SUM(ce.gross) FILTER (WHERE ce.entry_type='sale'),0) AS volume,
-             COALESCE(SUM(ce.platform_margin),0) AS hp_margin,
-             COUNT(*) FILTER (WHERE ce.entry_type='sale') AS sales,
-             COUNT(*) FILTER (WHERE ce.entry_type='chargeback') AS cbs,
-             (SELECT blended_rate_pct FROM platform_fee_rates pf WHERE pf.organization_id=o.id ORDER BY effective_from DESC LIMIT 1) AS blended
-      FROM commission_entries ce
-      JOIN transactions t ON t.id=ce.transaction_id
-      JOIN workspaces w ON w.id=ce.workspace_id
-      JOIN organizations o ON o.id=w.organization_id
-      WHERE t.occurred_at >= $1 AND t.occurred_at <= $2
-      GROUP BY w.name, o.name, o.id ORDER BY volume DESC`, [F, T])).rows;
-    const ts = (await c.query(`
-      SELECT to_char(date_trunc('day',t.occurred_at),'YYYY-MM-DD') AS d, COALESCE(SUM(ce.gross),0) AS gross
-      FROM commission_entries ce JOIN transactions t ON t.id=ce.transaction_id
-      WHERE t.occurred_at >= $1 AND t.occurred_at <= $2 GROUP BY 1 ORDER BY 1`, [F, T])).rows;
-    return { tot, per, ts };
-  });
-  const per = data.per.map((r) => ({ agency: r.agency, organization: r.organization, volume: Number(r.volume), hpMargin: Number(r.hp_margin), sales: Number(r.sales), blended: Number(r.blended || 0), cbRatePct: Number(r.sales) ? +(Number(r.cbs) / Number(r.sales) * 100).toFixed(2) : 0 }));
-  const t = data.tot;
-  res.json({
-    range: { from: F, to: T },
-    totalVolume: Number(t.gross), hpMargin: Number(t.hp_margin), netToAgencies: Number(t.net),
-    activeAgencies: per.filter((a) => a.volume > 0).length,
-    avgBlended: per.length ? +(per.reduce((s, a) => s + a.blended, 0) / per.length).toFixed(1) : 0,
-    cbRatePct: Number(t.sales) ? +(Number(t.cbs) / Number(t.sales) * 100).toFixed(2) : 0,
-    timeseries: data.ts.map((r) => ({ d: r.d, gross: Number(r.gross) })),
-    agencies: per,
-  });
-}));
-
-
-// GET /platform/fees?from&to — itemised fees for EVERY agency, side by side.
-// This is the operator view: what each customer costs, and what we make on them.
+// GET /platform/fees?from&to — itemised fees for every agency, side by side.
 router.get('/fees', asyncHandler(async (req, res) => {
   const to = req.query.to ? new Date(req.query.to) : new Date();
   const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 86400000);
-  const n = (v) => Number(v || 0);
-  const r2 = (v) => Math.round(v * 100) / 100;
-
-  const rows = await withPlatformAdmin(uid(req), async (c) => (await c.query(
-    `SELECT o.id AS org_id, o.name AS agency,
-            COUNT(*) FILTER (WHERE ce.entry_type='sale')                            AS sales,
-            COALESCE(SUM(ce.gross) FILTER (WHERE ce.entry_type='sale'),0)           AS gross,
-            COALESCE(SUM(ce.fee_mdr),0)         AS mdr,
-            COALESCE(SUM(ce.fee_fixed),0)       AS fixed,
-            COALESCE(SUM(ce.fee_settlement),0)  AS settlement,
-            COALESCE(SUM(ce.fee_surcharge),0)   AS surcharge,
-            COALESCE(SUM(ce.platform_margin),0) AS hp_margin,
-            COALESCE(SUM(ce.chargeback_fee),0)  AS reversal_fees,
-            COALESCE(SUM(ce.platform_fee),0)    AS total_deducted,
+  const rows = (await query(
+    `SELECT w.id AS workspace_id, w.name AS agency,
+            COUNT(re.id) FILTER (WHERE re.entry_type='sale')                    AS sales,
+            COALESCE(SUM(re.gross) FILTER (WHERE re.entry_type='sale'),0)       AS gross,
+            COALESCE(SUM(re.fee_mdr),0) AS mdr, COALESCE(SUM(re.fee_fixed),0) AS fixed,
+            COALESCE(SUM(re.fee_settlement),0) AS settlement, COALESCE(SUM(re.fee_surcharge),0) AS surcharge,
+            COALESCE(SUM(re.platform_margin),0) AS hp_margin, COALESCE(SUM(re.chargeback_fee),0) AS reversal_fees,
+            COALESCE(SUM(re.platform_fee),0) AS total_deducted,
             p.fee_model, p.mdr_pct, p.settlement_pct, p.psp_fixed_fee, p.margin_rate_pct, p.psp_rate_pct
-       FROM organizations o
-       JOIN workspaces w ON w.organization_id = o.id
-       LEFT JOIN commission_entries ce ON ce.workspace_id = w.id
-       LEFT JOIN transactions t ON t.id = ce.transaction_id
-        AND t.occurred_at >= $1 AND t.occurred_at <= $2
-       LEFT JOIN LATERAL (
-         SELECT * FROM platform_fee_rates pr
-          WHERE pr.organization_id = o.id AND pr.effective_from <= now()
-          ORDER BY pr.effective_from DESC LIMIT 1
-       ) p ON true
-      WHERE t.id IS NOT NULL OR ce.id IS NULL
-      GROUP BY o.id, o.name, p.fee_model, p.mdr_pct, p.settlement_pct, p.psp_fixed_fee, p.margin_rate_pct, p.psp_rate_pct
-      ORDER BY gross DESC`, [from.toISOString(), to.toISOString()])).rows);
+       FROM workspaces w
+       LEFT JOIN revenue_entries re ON re.workspace_id = w.id
+       LEFT JOIN transactions t ON t.id = re.transaction_id AND t.occurred_at >= $1 AND t.occurred_at <= $2
+       LEFT JOIN LATERAL effective_platform_fee(w.id, now()) p ON true
+      WHERE t.id IS NOT NULL OR re.id IS NULL
+      GROUP BY w.id, w.name, p.fee_model, p.mdr_pct, p.settlement_pct, p.psp_fixed_fee, p.margin_rate_pct, p.psp_rate_pct
+      ORDER BY gross DESC`, [from.toISOString(), to.toISOString()])).rows;
 
   const agencies = rows.map((x) => {
     const gross = n(x.gross);
     const providerTotal = n(x.mdr) + n(x.fixed) + n(x.settlement);
     const ourRevenue = n(x.hp_margin) + n(x.surcharge);
     return {
-      organizationId: x.org_id, agency: x.agency, sales: n(x.sales), gross: r2(gross),
-      providerFees: { mdr: r2(x.mdr), fixed: r2(x.fixed), settlement: r2(x.settlement),
-                      reversalFees: r2(x.reversal_fees), total: r2(providerTotal),
-                      percentOfGross: gross ? r2(providerTotal / gross * 100) : 0 },
-      higherPays: { margin: r2(x.hp_margin), surcharge: r2(x.surcharge), total: r2(ourRevenue),
-                    percentOfGross: gross ? r2(ourRevenue / gross * 100) : 0 },
+      workspaceId: x.workspace_id, agency: x.agency, sales: n(x.sales), gross: r2(gross),
+      providerFees: { mdr: r2(x.mdr), fixed: r2(x.fixed), settlement: r2(x.settlement), reversalFees: r2(x.reversal_fees), total: r2(providerTotal), percentOfGross: gross ? r2(providerTotal / gross * 100) : 0 },
+      higherPays: { margin: r2(x.hp_margin), surcharge: r2(x.surcharge), total: r2(ourRevenue), percentOfGross: gross ? r2(ourRevenue / gross * 100) : 0 },
       totalDeducted: r2(x.total_deducted),
-      rateCard: { feeModel: x.fee_model || 'flat',
-                  mdrPct: x.mdr_pct == null ? n(x.psp_rate_pct) : n(x.mdr_pct),
-                  settlementPct: n(x.settlement_pct), fixedFee: n(x.psp_fixed_fee),
-                  marginPct: n(x.margin_rate_pct) },
+      rateCard: { feeModel: x.fee_model || 'flat', mdrPct: x.mdr_pct == null ? n(x.psp_rate_pct) : n(x.mdr_pct), settlementPct: n(x.settlement_pct), fixedFee: n(x.psp_fixed_fee), marginPct: n(x.margin_rate_pct) },
     };
   });
-
   res.json({
     range: { from: from.toISOString(), to: to.toISOString() },
     agencies,

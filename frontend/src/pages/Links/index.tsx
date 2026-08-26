@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useDebounced } from '../../hooks/useDebounced';
 import { useCan } from '../../hooks/usePermission';
+import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useRateCard } from '../../hooks/useRateCard';
 import { feeBreakdown } from '../../business/feeBreakdown';
 import { formatMoney, sum } from '../../lib/format';
@@ -11,62 +12,65 @@ import {
   DataTable, FilterBar, DateRangePicker, type Column, type DateRange,
 } from '../../components/ui';
 import {
-  LINK_STATUSES, LINK_STATUS_LABELS, canTakeLinks, isShareable,
-  type PaymentLink, type LinkStatus,
+  LINK_TYPES, LINK_TYPE_LABELS, LINK_STATUSES, LINK_STATUS_LABELS, isShareable,
+  type PaymentLink, type LinkStatus, type LinkType,
 } from '../../api/endpoints';
 import { useLinksData } from './useLinksData';
 import { DEFAULT_FILTERS, hasActiveFilters, rangeIsInverted, type LinksFilters } from './filters';
 
-const STATUS_TONE: Record<LinkStatus, 'ok' | 'no' | 'muted'> = {
-  created: 'muted',
-  opened: 'muted',
-  paid: 'ok',
-  failed: 'no',
+const STATUS_TONE: Record<LinkStatus, 'ok' | 'no' | 'warn' | 'muted'> = {
+  active: 'muted',
+  pending: 'warn',
+  done: 'ok',
   expired: 'muted',
+  cancelled: 'muted',
   refunded: 'no',
 };
 
 export default function LinksPage() {
   const can = useCan();
+  const { labels } = useCurrentSession();
   const { rateCard } = useRateCard();
   const [filters, setFilters] = useState<LinksFilters>(DEFAULT_FILTERS);
 
-  // Sent to the server, not applied to the loaded page: the list is paginated,
-  // so filtering in the browser would only ever search the rows already
-  // fetched. Debounced for the free-text box so typing doesn't refetch per key.
+  // Sent to the server, not applied to the loaded page: the list is paginated.
+  // Debounced for the free-text box so typing doesn't refetch per key.
   const search = useDebounced(filters.search, 300);
   const query = useMemo(() => ({
     status: filters.status || undefined,
+    type: filters.type || undefined,
     min: filters.min || undefined,
     max: filters.max || undefined,
     from: filters.from || undefined,
     to: filters.to || undefined,
     q: search.trim() || undefined,
     accountId: filters.accountId || undefined,
-  }), [filters.status, filters.min, filters.max, filters.from, filters.to, filters.accountId, search]);
+  }), [filters.status, filters.type, filters.min, filters.max, filters.from, filters.to, filters.accountId, search]);
 
   const {
-    links, accounts, customers, linkLimits, isLoading, isError, hasMore, isLoadingMore, loadMore, createLink, reconcile,
+    links, accounts, customers, linkLimits, isLoading, isError, hasMore, isLoadingMore, loadMore,
+    createLink, cancelLink, reconcile,
   } = useLinksData(query);
   const [createOpen, setCreateOpen] = useState(false);
   const [accountId, setAccountId] = useState('');
   const [customerId, setCustomerId] = useState('');
+  const [type, setType] = useState<LinkType>('single_use');
   const [amountText, setAmountText] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState<PaymentLink | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [isReconciling, setIsReconciling] = useState(false);
 
-  // The server already applied the filters, so these describe what is loaded.
-  const paid = links.filter((l) => l.status === 'paid');
+  const paid = links.filter((l) => l.status === 'pending' || l.status === 'done');
   const conversion = links.length ? Math.round((paid.length / links.length) * 100) : 0;
   const revenue = sum(paid.map((l) => l.amount ?? 0));
-  // Nothing loaded means every total below is 0, which reads as a real figure.
   const statsUnknown = isLoading || isError;
 
   const range: DateRange = { from: filters.from, to: filters.to };
   const setRange = (r: DateRange) => setFilters((f) => ({ ...f, ...r }));
 
-  const activeAccounts = accounts.filter((c) => canTakeLinks(c.status));
+  const activeAccounts = accounts.filter((a) => a.status === 'active');
   const inverted = rangeIsInverted(filters);
 
   const minAmount = linkLimits?.minLinkAmount ?? linkLimits?.providerMinimum ?? 0;
@@ -79,23 +83,37 @@ export default function LinksPage() {
   const openCreate = () => {
     setAccountId(activeAccounts[0]?.id ?? '');
     setCustomerId('');
+    setType('single_use');
     setAmountText('');
     setCreateOpen(true);
   };
 
   const submitCreate = async () => {
-    if (!accountId) { toast('Pick a account.'); return; }
+    if (!accountId) { toast(`Pick a ${labels.account.toLowerCase()}.`); return; }
     if (!(amount >= minAmount)) { toast(`Minimum link amount is ${formatMoney(minAmount)}.`); return; }
     if (aboveMax) { toast(`Maximum link amount is ${formatMoney(maxAmount ?? 0)}.`); return; }
     setIsCreating(true);
     try {
-      const created = await createLink({ accountId, customerId: customerId || undefined, amount });
+      const created = await createLink({ accountId, customerId: customerId || undefined, type, amount });
       setCreateOpen(false);
-      setCreatedUrl(created.url);
+      setCreatedUrl(created.checkoutUrl);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not create the link.');
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const confirmCancel = async (l: PaymentLink) => {
+    setIsCancelling(true);
+    try {
+      await cancelLink(l.id);
+      setCancelling(null);
+      toast('Link cancelled.');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not cancel the link.');
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -113,23 +131,22 @@ export default function LinksPage() {
 
   const columns: Column<PaymentLink>[] = [
     { key: 'ref', header: 'Ref', render: (l) => <span className="ref" title={l.referenceId}>{l.referenceId}</span> },
-    { key: 'account', header: 'Account', render: (l) => l.account ?? '—' },
-    { key: 'agent', header: 'Agent', render: (l) => l.agent ?? '—' },
-    {
-      key: 'customer', header: 'Customer',
-      render: (l) => <span className="cname" title={l.customer ?? undefined}>{l.customer ?? '—'}</span>,
-    },
+    { key: 'type', header: 'Type', render: (l) => <Pill>{LINK_TYPE_LABELS[l.type]}</Pill> },
+    { key: 'account', header: labels.account, render: (l) => l.account },
+    { key: 'agent', header: labels.agent, render: (l) => l.agent ?? '—' },
+    { key: 'customer', header: 'Customer', render: (l) => <span className="cname" title={l.customer ?? undefined}>{l.customer ?? '—'}</span> },
     { key: 'amount', header: 'Amount', align: 'right', render: (l) => l.amount == null ? '—' : <Money amount={l.amount} currency={l.currency} /> },
     { key: 'status', header: 'Status', render: (l) => <Pill tone={STATUS_TONE[l.status]}>{LINK_STATUS_LABELS[l.status]}</Pill> },
     { key: 'created', header: 'Created', render: (l) => <DateCell ts={l.createdAt} /> },
-    { key: 'paid', header: 'Paid', render: (l) => <DateCell ts={l.paidAt} /> },
+    { key: 'expires', header: 'Expires', render: (l) => l.expiresAt ? <DateCell ts={l.expiresAt} /> : <span className="sub">never</span> },
     {
-      key: 'url', header: 'Checkout link', hideHeader: true, align: 'right',
-      // Only an unpaid link is still worth sharing; older rows predate the
-      // stored URL and have nothing to copy.
-      render: (l) => l.url && isShareable(l.status)
-        ? <CopyButton value={l.url} label="Copy" />
-        : null,
+      key: 'actions', header: 'Actions', hideHeader: true, align: 'right',
+      render: (l) => isShareable(l.status) ? (
+        <div className="cell-actions">
+          {l.checkoutUrl && <CopyButton value={l.checkoutUrl} label="Copy" />}
+          {can('links.create') && <button className="btn ghost small" onClick={() => setCancelling(l)}>Cancel</button>}
+        </div>
+      ) : null,
     },
   ];
 
@@ -140,14 +157,12 @@ export default function LinksPage() {
         subtitle="Hosted checkout links. The customer pays on MantaPay's page; card details never touch this system."
         actions={
           <>
-            {can('commissions.manage') && (
+            {can('revenue.manage') && (
               <button className="btn ghost" onClick={runReconcile} disabled={isReconciling}>
                 {isReconciling ? 'Reconciling…' : 'Reconcile'}
               </button>
             )}
-            {can('links.create') && (
-              <button className="btn" onClick={openCreate}>New link</button>
-            )}
+            {can('links.create') && <button className="btn" onClick={openCreate}>New link</button>}
           </>
         }
       />
@@ -157,7 +172,6 @@ export default function LinksPage() {
           Couldn't load payment links. The figures below are incomplete — reload to try again.
         </div>
       )}
-
       {inverted && (
         <div className="warnbar" role="alert">
           The maximum amount is below the minimum, so nothing can match. Swap them or clear one.
@@ -166,44 +180,31 @@ export default function LinksPage() {
 
       <StatGrid>
         <StatCard isUnknown={statsUnknown} label="Links" value={links.length} sub={hasMore ? 'Loaded so far' : 'Matching'} />
-        <StatCard isUnknown={statsUnknown} label="Paid" value={paid.length} sub="Conversions" />
+        <StatCard isUnknown={statsUnknown} label="Paid" value={paid.length} sub="Single-use links paid" />
         <StatCard isUnknown={statsUnknown} label="Conversion" value={`${conversion}%`} sub="Paid ÷ links" />
         <StatCard isUnknown={statsUnknown} label="Revenue" value={<Money amount={revenue} direction="in" emphasis />} sub="From paid links" />
       </StatGrid>
 
       <FilterBar>
-        <select
-          aria-label="Filter by account"
-          value={filters.accountId}
-          onChange={(e) => setFilters((f) => ({ ...f, accountId: e.target.value }))}
-        >
-          <option value="">All accounts</option>
-          {accounts.map((a) => <option key={a.id} value={a.id}>{a.stageName}</option>)}
+        <select aria-label={`Filter by ${labels.account}`} value={filters.accountId} onChange={(e) => setFilters((f) => ({ ...f, accountId: e.target.value }))}>
+          <option value="">All {labels.accounts.toLowerCase()}</option>
+          {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
-        <select
-          aria-label="Filter by status"
-          value={filters.status}
-          onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value as LinksFilters['status'] }))}
-        >
+        <select aria-label="Filter by type" value={filters.type} onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value as LinksFilters['type'] }))}>
+          <option value="">All types</option>
+          {LINK_TYPES.map((t) => <option key={t} value={t}>{LINK_TYPE_LABELS[t]}</option>)}
+        </select>
+        <select aria-label="Filter by status" value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value as LinksFilters['status'] }))}>
           <option value="">All statuses</option>
           {LINK_STATUSES.map((s) => <option key={s} value={s}>{LINK_STATUS_LABELS[s]}</option>)}
         </select>
-        <input
-          type="number" className="amount-input" aria-label="Minimum amount" placeholder="Min" value={filters.min}
-          aria-invalid={inverted || undefined}
-          onChange={(e) => setFilters((f) => ({ ...f, min: e.target.value }))}
-        />
-        <input
-          type="number" className="amount-input" aria-label="Maximum amount" placeholder="Max" value={filters.max}
-          aria-invalid={inverted || undefined}
-          onChange={(e) => setFilters((f) => ({ ...f, max: e.target.value }))}
-        />
+        <input type="number" className="amount-input" aria-label="Minimum amount" placeholder="Min" value={filters.min}
+          aria-invalid={inverted || undefined} onChange={(e) => setFilters((f) => ({ ...f, min: e.target.value }))} />
+        <input type="number" className="amount-input" aria-label="Maximum amount" placeholder="Max" value={filters.max}
+          aria-invalid={inverted || undefined} onChange={(e) => setFilters((f) => ({ ...f, max: e.target.value }))} />
         <DateRangePicker value={range} onChange={setRange} />
-        <input
-          type="search" className="search-input" aria-label="Search links" placeholder="Search ref, customer, agent"
-          value={filters.search}
-          onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
-        />
+        <input type="search" className="search-input" aria-label="Search links" placeholder="Search ref, customer, agent"
+          value={filters.search} onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))} />
         <button className="btn ghost" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear</button>
       </FilterBar>
 
@@ -213,7 +214,7 @@ export default function LinksPage() {
         rowKey={(l) => l.id}
         isLoading={isLoading}
         emptyTitle={isError ? "Couldn't load payment links." : 'No links match these filters.'}
-        emptyHint={isError ? 'Try again in a moment.' : can('links.create') ? 'Create one from the header.' : 'Ask a agent to create one.'}
+        emptyHint={isError ? 'Try again in a moment.' : can('links.create') ? 'Create one from the header.' : `Ask a ${labels.agent.toLowerCase()} to create one.`}
         footer={
           <span className="table-foot-row">
             {hasActiveFilters(filters) ? 'Matching links' : 'All links'}: {links.length} loaded
@@ -226,45 +227,41 @@ export default function LinksPage() {
         }
       />
 
-      <Modal
-        open={createOpen}
-        onClose={() => setCreateOpen(false)}
-        title="New payment link"
-        subtitle="The customer pays on MantaPay's hosted page. The amount is fixed in the link."
-      >
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New payment link"
+        subtitle="The customer pays on MantaPay's hosted page. The amount is fixed in the link.">
         <div className="field">
-          <label htmlFor="link-account">Account</label>
+          <label htmlFor="link-account">{labels.account}</label>
           <select id="link-account" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-            {activeAccounts.length === 0 && <option value="">No active accounts</option>}
-            {activeAccounts.map((c) => <option key={c.id} value={c.id}>{c.stageName}</option>)}
+            {activeAccounts.length === 0 && <option value="">No active {labels.accounts.toLowerCase()}</option>}
+            {activeAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
+        </div>
+        <div className="field">
+          <label htmlFor="link-type">Type</label>
+          <select id="link-type" value={type} onChange={(e) => setType(e.target.value as LinkType)}>
+            {LINK_TYPES.map((t) => <option key={t} value={t}>{LINK_TYPE_LABELS[t]}</option>)}
+          </select>
+          <p className="sub">
+            {type === 'single_use'
+              ? 'Closes on the first payment, or after 24 hours if nobody pays.'
+              : 'Stays open through any number of payments until you cancel it.'}
+          </p>
         </div>
         <div className="field">
           <label htmlFor="link-customer">Customer</label>
           <select id="link-customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-            <option value="">Not recorded</option>
-            {customers.map((c) => <option key={c.id} value={c.id}>{c.alias}</option>)}
+            <option value="">Not known yet</option>
+            {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
         <div className="field">
           <label htmlFor="link-amount">Amount</label>
-          <input
-            id="link-amount"
-            type="number"
-            min={minAmount}
-            max={maxAmount ?? undefined}
-            step={0.01}
-            placeholder="0.00"
-            value={amountText}
-            onChange={(e) => setAmountText(e.target.value)}
-          />
+          <input id="link-amount" type="number" min={minAmount} max={maxAmount ?? undefined} step={0.01} placeholder="0.00"
+            value={amountText} onChange={(e) => setAmountText(e.target.value)} />
           <p className="sub">
             {belowMin ? <span className="text-neg">Below the {formatMoney(minAmount)} minimum.</span>
               : aboveMax ? <span className="text-neg">Above the {formatMoney(maxAmount ?? 0)} maximum.</span>
-                : [
-                    `Minimum ${formatMoney(minAmount)}`,
-                    maxAmount != null ? `Maximum ${formatMoney(maxAmount)}` : null,
-                  ].filter(Boolean).join(' · ')}
+                : [`Minimum ${formatMoney(minAmount)}`, maxAmount != null ? `Maximum ${formatMoney(maxAmount)}` : null].filter(Boolean).join(' · ')}
           </p>
         </div>
 
@@ -281,18 +278,6 @@ export default function LinksPage() {
             <span>Fixed per transaction</span>
             <b className="fee-val">{fees ? formatMoney(fees.fixed) : '—'}</b>
           </div>
-          {fees?.pspFee != null && fees.marginFee != null && (
-            <>
-              <div className="fee-line fee-line-sub">
-                <span>PSP cost ({fees.pspPct}%)</span>
-                <b className="fee-val">{formatMoney(fees.pspFee)}</b>
-              </div>
-              <div className="fee-line fee-line-sub">
-                <span>HigherPays margin ({fees.marginPct}%)</span>
-                <b className="fee-val">{formatMoney(fees.marginFee)}</b>
-              </div>
-            </>
-          )}
           <div className="fee-tot">
             <span>Total fees</span>
             <span className="fee-val">{fees ? formatMoney(fees.total) : '—'}</span>
@@ -311,12 +296,8 @@ export default function LinksPage() {
         </div>
       </Modal>
 
-      <Modal
-        open={createdUrl !== null}
-        onClose={() => setCreatedUrl(null)}
-        title="Link ready"
-        subtitle="Share this URL with the customer. It expires if it is not paid in time."
-      >
+      <Modal open={createdUrl !== null} onClose={() => setCreatedUrl(null)} title="Link ready"
+        subtitle="Copy this URL and send it to the customer through whichever channel you use.">
         {createdUrl && (
           <>
             <div className="field">
@@ -328,6 +309,19 @@ export default function LinksPage() {
               <CopyButton value={createdUrl} label="Copy link" />
             </div>
           </>
+        )}
+      </Modal>
+
+      <Modal open={cancelling !== null} onClose={() => setCancelling(null)}
+        title={cancelling ? `Cancel link ${cancelling.referenceId}?` : ''}
+        subtitle="The checkout URL stops working immediately. Nothing changes in the ledger.">
+        {cancelling && (
+          <div className="modal-actions">
+            <button className="btn ghost" onClick={() => setCancelling(null)}>Keep it</button>
+            <button className="btn danger" disabled={isCancelling} onClick={() => confirmCancel(cancelling)}>
+              {isCancelling ? 'Cancelling…' : 'Cancel link'}
+            </button>
+          </div>
         )}
       </Modal>
     </div>

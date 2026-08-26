@@ -1,5 +1,6 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
+import type { PaymentStatus } from './payments';
 
 export type CustomerSegment = 'new' | 'regular' | 'high_value' | 'vip' | 'inactive' | 'at_risk';
 
@@ -14,58 +15,47 @@ export const CUSTOMER_SEGMENT_LABELS: Record<CustomerSegment, string> = {
   at_risk: 'At risk',
 };
 
+/** A customer belongs to the workspace; they meet an account only through a payment. */
 export interface Customer {
   id: string;
-  alias: string;
+  name: string;
+  telegramName: string | null;
   email: string | null;
-  accountId: string | null;
+  phone: string | null;
+  country: string | null;
   segment: CustomerSegment;
   totalSpend: number;
   lastPurchaseAt: string | null;
   createdAt: string;
 }
 
-interface RawCustomer {
+export interface CustomerPayment {
   id: string;
-  alias: string;
-  email: string | null;
-  account_id: string | null;
-  segment: CustomerSegment;
-  total_spend: number | string | null;
-  last_purchase_at: string | null;
-  created_at: string;
+  amount: number;
+  currency: string;
+  status: PaymentStatus;
+  occurredAt: string;
+  account: string;
+  agent: string | null;
 }
 
-function toNumber(v: unknown): number {
-  const n = typeof v === 'string' ? parseFloat(v) : (v as number);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function normalize(c: RawCustomer): Customer {
-  return {
-    id: c.id,
-    alias: c.alias,
-    email: c.email,
-    accountId: c.account_id,
-    segment: c.segment,
-    totalSpend: toNumber(c.total_spend),
-    lastPurchaseAt: c.last_purchase_at,
-    createdAt: c.created_at,
-  };
+export interface CustomerDetail extends Customer {
+  payments: CustomerPayment[];
 }
 
 export interface ListCustomersQuery {
   segment?: CustomerSegment;
+  /** Matches name, email, phone or Telegram name. */
   q?: string;
-  accountId?: string;
   limit?: number;
   offset?: number;
 }
 
 export interface CreateCustomerInput {
-  alias: string;
+  name: string;
+  telegramName?: string;
   email?: string;
-  accountId?: string;
+  phone?: string;
   segment?: CustomerSegment;
 }
 
@@ -74,18 +64,16 @@ export const customersApi = {
     const qs = new URLSearchParams();
     if (query.segment) qs.set('segment', query.segment);
     if (query.q) qs.set('q', query.q);
-    if (query.accountId) qs.set('accountId', query.accountId);
     if (query.limit != null) qs.set('limit', String(query.limit));
     if (query.offset != null) qs.set('offset', String(query.offset));
     const suffix = qs.toString() ? `/customers?${qs.toString()}` : '/customers';
-    const raw = await api.get<{ customers: RawCustomer[] }>(workspacePath(suffix));
-    return raw.customers.map(normalize);
+    const raw = await api.get<{ customers: Customer[] }>(workspacePath(suffix));
+    return raw.customers;
   },
 
-  async create(input: CreateCustomerInput): Promise<Customer> {
-    const raw = await api.post<RawCustomer>(workspacePath('/customers'), input);
-    return normalize(raw);
-  },
+  get: (id: string) => api.get<CustomerDetail>(workspacePath(`/customers/${id}`)),
+
+  create: (input: CreateCustomerInput) => api.post<Customer>(workspacePath('/customers'), input),
 
   exportCsv() {
     return api.download(workspacePath('/customers/export'), 'customers.csv');

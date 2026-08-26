@@ -1,11 +1,10 @@
 # HigherPays — Backend
 
-Multi-tenant creator-agency operating system. Node.js + Express + PostgreSQL.
+Creator-agency operating system. Node.js + Express + PostgreSQL.
 
 HigherPays is the **platform**: it sells this system to creator agencies. It is not
-itself an agency. Each customer agency is an organization with one or more
-workspaces; the platform charges each agency a margin on top of the payment
-provider's cost.
+itself an agency. Each customer agency is one workspace; the platform charges
+each agency a margin on top of the payment provider's cost.
 
 Card data never touches this system — payers complete payment on the provider's
 hosted page, so the application is out of PCI scope.
@@ -32,31 +31,27 @@ Open `http://localhost:3000` — the console is served from `public/index.html`.
 Run **migrations as the owner**, run **the app as a restricted role**:
 
 ```sql
-CREATE ROLE hp_app LOGIN PASSWORD '...' NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE hp_app LOGIN PASSWORD '...' NOSUPERUSER;
 GRANT USAGE ON SCHEMA public TO hp_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO hp_app;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO hp_app;
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO hp_app;
 ```
 
-A superuser or `BYPASSRLS` role **ignores every Row-Level Security policy**, so
-tenant isolation would be silently off. The server refuses to boot in production
-in that configuration, and warns loudly in development.
+The app role owns nothing and cannot run DDL, so a bug in a route cannot
+alter the schema. Migrations need the owner.
 
 ---
 
 ## Tests
 
 ```bash
-npm test          # 34 unit tests, no database needed
-npm run test:db   # 12 fee-engine tests, needs TEST_DATABASE_URL
+npm test                  # unit tests, no database needed
+npm run test:integration  # every HTTP flow against a live Postgres (DATABASE_URL, as hp_app)
 ```
 
-```bash
-createdb higherpays_test
-DATABASE_URL=postgres://.../higherpays_test npm run migrate
-TEST_DATABASE_URL=postgres://.../higherpays_test npm run test:db
-```
+The integration tests onboard their own agencies through `/platform/agencies`,
+so they run on any database built from the migrations and never need a wipe.
 
 **Treat a failing signature test as a release blocker.** Those vectors were
 verified against MantaPay's own Signature Generator and Signature Validator; if
@@ -68,41 +63,40 @@ they break, payment links are rejected in production with reply `500`.
 
 ```
 src/
-  server.js              route mounting, startup RLS assertion
+  schema/entities.js     THE data model; scripts/generate-schema.js emits migrations/001_init.sql
+  server.js              route mounting
   config.js              all env config + production guards
-  db.js                  withWorkspace / withPlatformAdmin / withSystem
-  middleware/            auth, workspace resolution, permissions
+  db.js                  query / withTransaction
+  middleware/            auth, workspace access, permissions
+  auth/permissions.js    the role -> permission matrix
+  auth/dataScope.js      which rows a role sees
+  services/              payment outcomes, people (login + profile), split guards
   providers/             MantaPay integration (see below)
   routes/                HTTP layer
   notify.js              in-app + Telegram notifications
   settlement/parse.js    settlement report (XLSX) parser
-migrations/              001-027, run in order
-test/                    unit + engine tests
+migrations/              001 generated, 002 the revenue engine by hand
+test/                    unit + integration tests
 ```
 
-### Database access — pick the right helper
+### Database access
 
-| Helper | Use for | RLS |
-|---|---|---|
-| `withWorkspace(wsId, userId, fn)` | Anything on behalf of a signed-in user | Scoped to that workspace |
-| `withPlatformAdmin(userId, fn)` | Operator / cross-agency reads | Controlled bypass |
-| `withSystem(fn)` | Trusted server ops with no user — e.g. resolving a workspace from an inbound webhook | Controlled bypass |
-| `query(...)` | Only where RLS genuinely does not apply | **None** — a bare query against an RLS table returns zero rows |
-
-That last row caused a production-breaking bug once: the webhook used a bare
-query to find the workspace, which returned nothing under RLS, so **every
-payment 404'd**. See `PRODUCTION-READINESS.md`.
+`query(text, params)` for one statement, `withTransaction(fn)` for anything
+that writes more than one row. There is no row-level security: every workspace
+query filters on `req.access.workspaceId` itself, and `requireWorkspace` has
+already checked the caller holds an active role there.
 
 ### Money
 
 All financial math is exact `NUMERIC` in PostgreSQL — never JavaScript floats.
 
-`fn_post_sale(transaction_id)` writes one `commission_entries` row per sale with
-every fee itemised. Chargebacks and refunds are posted as **negative entries**
+`fn_post_sale(transaction_id)` writes one `revenue_entries` row per sale with
+every fee itemised, split by the account's `revenue_split_pct` and the agent's
+`commission_pct`. Chargebacks and refunds are posted as **negative entries**
 (`fn_post_chargeback`, `fn_post_refund`), so summing the ledger gives the net
 position and nothing is ever deleted.
 
-Fee model is per-organization and effective-dated:
+Fee model is per-workspace and effective-dated:
 
 | Model | On EUR 100 at 7% + 0.50 + 1% |
 |---|---|
@@ -204,5 +198,4 @@ rather than pretending zero.
 | Document | Contents |
 |---|---|
 | `OPEN-QUESTIONS-MANTAPAY.md` | 23 unanswered questions; 2 block go-live |
-| `PRODUCTION-READINESS.md` | Production audit, bugs found, go-live requirements |
 | `PROVIDER-CONSTRAINTS.md` | Provider limitations and how each is mitigated |

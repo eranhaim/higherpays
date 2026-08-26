@@ -1,7 +1,7 @@
 'use strict';
 const { verifyAccessToken } = require('../auth/tokens');
-const { hasPermission, PERMISSIONS } = require('../auth/permissions');
-const { query, withUser } = require('../db');
+const { ROLE_PERMISSIONS, hasPermission } = require('../auth/permissions');
+const { query } = require('../db');
 const { asyncHandler } = require('../lib/http');
 const { log } = require('../lib/log');
 const {
@@ -15,8 +15,6 @@ const requireAuth = (req, _res, next) => {
   if (scheme !== 'Bearer' || !token) return next(new UnauthorizedError('missing_token'));
   try {
     const payload = verifyAccessToken(token);
-    // sessionId is absent on tokens issued before sessions were tracked; it
-    // only ever marks "this device", never grants anything.
     req.user = { id: payload.sub, email: payload.email, name: payload.name, sessionId: payload.sid || null };
     next();
   } catch {
@@ -24,70 +22,43 @@ const requireAuth = (req, _res, next) => {
   }
 };
 
-// 2) requireWorkspace — resolves the active workspace from the X-Workspace-Id
-// header (or the URL slug), confirms the caller has an ACTIVE membership, and
-// attaches req.membership = { id, workspaceId, role, permissions }.
-// Platform super-admins get synthetic full-permission membership on any
-// workspace; RLS still scopes reads/writes to that workspace via withWorkspace.
+// 2) requireWorkspace — resolves the workspace from the X-Workspace-Id header
+// (or the URL), confirms the caller has ACTIVE access to it, and attaches
+// req.access = { workspaceId, role, permissions }. Every workspace query after
+// this filters on req.access.workspaceId.
 const requireWorkspace = asyncHandler(async (req, _res, next) => {
-  const workspaceId = req.headers['x-workspace-id'] || req.params.workspaceId;
+  const fromHeader = req.headers['x-workspace-id'];
+  const fromPath = req.params.workspaceId;
+  if (fromHeader && fromPath && fromHeader !== fromPath) throw new BadRequestError('workspace_mismatch');
+  const workspaceId = fromHeader || fromPath;
   if (!workspaceId) throw new BadRequestError('missing_workspace');
 
-  const rows = await withUser(req.user.id, (c) => c.query(
-    `SELECT m.id, m.role, r.permissions
-     FROM memberships m
-     LEFT JOIN roles r ON r.workspace_id = m.workspace_id AND r.name = m.role
-     WHERE m.workspace_id = $1 AND m.user_id = $2 AND m.status = 'active'`,
-    [workspaceId, req.user.id]).then((r) => r.rows));
+  const row = (await query(
+    `SELECT role FROM workspace_users
+      WHERE workspace_id = $1 AND user_id = $2 AND status = 'active'`,
+    [workspaceId, req.user.id])).rows[0];
+  if (!row) throw new ForbiddenError('not_a_member');
 
-  if (rows.length === 0) {
-    const pa = (await query('SELECT role FROM platform_admins WHERE user_id = $1', [req.user.id])).rows[0];
-    if (pa && pa.role === 'super_admin') {
-      req.membership = {
-        id: null, workspaceId, role: 'super_admin',
-        permissions: new Set(PERMISSIONS), isPlatformOperator: true,
-      };
-      return next();
-    }
-    throw new ForbiddenError('not_a_member');
-  }
-  req.membership = {
-    id: rows[0].id,
-    workspaceId,
-    role: rows[0].role,
-    permissions: rows[0].permissions ? new Set(rows[0].permissions) : null,
-  };
+  req.access = { workspaceId, role: row.role, permissions: ROLE_PERMISSIONS[row.role] };
   next();
 });
 
-// 3) requirePermission — gate a handler on a specific permission string. Prefers
-// the workspace's editable role definition; falls back to the built-in matrix.
-// This answers "may you call this endpoint" only; which ROWS come back is
-// resolveDataScope's job (auth/dataScope.js). The two are orthogonal.
+// 3) requirePermission — gate a handler on one permission string. This answers
+// "may you call this endpoint"; which ROWS come back is resolveDataScope's job.
 const requirePermission = (permission) => (req, _res, next) => {
-  if (!req.membership) return next(new HttpError(500, 'workspace_context_missing'));
-  if (!hasPermission(req.membership, permission)) {
+  if (!req.access) return next(new HttpError(500, 'workspace_context_missing'));
+  if (!hasPermission(req.access, permission)) {
     return next(new ForbiddenError('forbidden', 'permission required', { needed: permission }));
   }
   next();
 };
 
-// 4) requirePlatformAdmin — HigherPays operator gate, above any single tenant.
+// 4) requirePlatformAdmin — HigherPays operator gate, above any single workspace.
 const requirePlatformAdmin = asyncHandler(async (req, _res, next) => {
-  const { rows } = await query('SELECT role FROM platform_admins WHERE user_id = $1', [req.user.id]);
-  if (rows.length === 0) throw new ForbiddenError('not_platform_admin');
-  req.platformRole = rows[0].role;
+  const { rows } = await query('SELECT is_platform_admin FROM users WHERE id = $1', [req.user.id]);
+  if (!rows[0] || !rows[0].is_platform_admin) throw new ForbiddenError('not_platform_admin');
   next();
 });
-
-// 4b) requirePlatformRole — narrows a platform route to specific platform
-// roles. Mount after requirePlatformAdmin, which sets req.platformRole.
-const requirePlatformRole = (...roles) => (req, _res, next) => {
-  if (!roles.includes(req.platformRole)) {
-    return next(new ForbiddenError('insufficient_platform_role', 'platform role required', { needed: roles }));
-  }
-  next();
-};
 
 // 5) errorHandler — last middleware. Formats HttpError instances into the
 // canonical response envelope; unknown errors are logged and returned as 500.
@@ -100,8 +71,7 @@ function errorHandler(err, req, res, next) {
     return res.status(err.status).json(err.toJSON());
   }
 
-  // Legacy shape: some throws still set .status/.code themselves (e.g. provider
-  // adapters). Honour them, but don't pretend they're safe error surfaces.
+  // Provider adapters throw plain errors with .status/.code set.
   const status = err.status || err.statusCode || 500;
   const code = err.code || 'server_error';
   const logger = req.log || log;
@@ -116,7 +86,4 @@ function errorHandler(err, req, res, next) {
     : { error: code, message: err.message });
 }
 
-module.exports = {
-  requireAuth, requireWorkspace, requirePermission, requirePlatformAdmin, requirePlatformRole,
-  errorHandler,
-};
+module.exports = { requireAuth, requireWorkspace, requirePermission, requirePlatformAdmin, errorHandler };

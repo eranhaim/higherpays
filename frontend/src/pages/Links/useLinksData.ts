@@ -2,14 +2,15 @@ import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tansta
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
   linksApi, accountsApi, customersApi, workspacesApi,
-  type ListLinksQuery,
-  type PaymentLink, type Account, type Customer, type LinkLimits, type CreatedLink,
+  type ListLinksQuery, type PaymentLink, type Account, type Customer, type LinkLimits, type LinkType,
 } from '../../api/endpoints';
 
 export interface CreateLinkFormInput {
   accountId: string;
   customerId?: string;
+  type: LinkType;
   amount: number;
+  description?: string;
 }
 
 export interface ReconcileSummary {
@@ -27,7 +28,8 @@ export interface UseLinksDataResult {
   hasMore: boolean;
   isLoadingMore: boolean;
   loadMore: () => void;
-  createLink: (input: CreateLinkFormInput) => Promise<CreatedLink>;
+  createLink: (input: CreateLinkFormInput) => Promise<PaymentLink>;
+  cancelLink: (id: string) => Promise<void>;
   reconcile: () => Promise<ReconcileSummary>;
 }
 
@@ -45,13 +47,9 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     getNextPageParam: (last) => last.nextCursor,
     enabled,
   });
-  const accounts = useQuery({
-    queryKey: ['accounts', activeWorkspaceId],
-    queryFn: () => accountsApi.list(),
-    enabled,
-  });
+  const accounts = useQuery({ queryKey: ['accounts', activeWorkspaceId], queryFn: () => accountsApi.list(), enabled });
   const customers = useQuery({
-    queryKey: ['customers', activeWorkspaceId],
+    queryKey: ['customers', activeWorkspaceId, 'picker'],
     queryFn: () => customersApi.list({ limit: 200 }),
     enabled,
   });
@@ -62,25 +60,20 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     staleTime: 5 * 60_000,
   });
 
-  const create = useMutation({
-    mutationFn: (input: CreateLinkFormInput) =>
-      linksApi.create({
-        accountId: input.accountId,
-        customerId: input.customerId,
-        pricingMode: 'fixed',
-        amount: input.amount,
-        currency,
-      }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['links', activeWorkspaceId] }),
-  });
+  const invalidateLinks = () => queryClient.invalidateQueries({ queryKey: ['links', activeWorkspaceId] });
 
+  const create = useMutation({
+    mutationFn: (input: CreateLinkFormInput) => linksApi.create({ ...input, currency }),
+    onSuccess: invalidateLinks,
+  });
+  const cancel = useMutation({ mutationFn: (id: string) => linksApi.cancel(id), onSuccess: invalidateLinks });
   const reconcile = useMutation({
-    // Grace 0: a manual click should check every unresolved link, including one
-    // paid seconds ago. The backend's default grace suits unattended callers.
+    // Grace 0: a manual click should check every unresolved link, including
+    // one paid seconds ago. The backend's default grace suits unattended callers.
     mutationFn: () => linksApi.reconcile(0),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['links', activeWorkspaceId] });
-      queryClient.invalidateQueries({ queryKey: ['transactions', activeWorkspaceId] });
+      invalidateLinks();
+      queryClient.invalidateQueries({ queryKey: ['payments', activeWorkspaceId] });
     },
   });
 
@@ -95,6 +88,7 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     isLoadingMore: links.isFetchingNextPage,
     loadMore: () => { void links.fetchNextPage(); },
     createLink: (input) => create.mutateAsync(input),
+    cancelLink: async (id) => { await cancel.mutateAsync(id); },
     reconcile: async () => {
       const result = await reconcile.mutateAsync();
       return { checked: result.checked, updated: result.updated.length };

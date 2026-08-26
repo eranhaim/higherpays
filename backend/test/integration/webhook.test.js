@@ -1,160 +1,105 @@
 'use strict';
-// Webhook end-to-end: build a MantaPay-shaped payload, sign it with the
-// workspace's hash key, POST it, and confirm the transaction posted + the
-// link flipped to `paid` + a notification landed. This is the most important
-// happy-path test in the suite — the whole product breaks if this doesn't work.
+// Webhook end-to-end: a MantaPay-shaped payload, signed with the workspace's
+// hash key, becomes a payment, a transaction, a ledger entry and a
+// notification. The whole product breaks if this doesn't work.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const request = require('supertest');
-const { app } = require('../helpers/setup');
-const { withSystem } = require('../../src/db');
+const { app, pool } = require('../helpers/setup');
 const { createTenant, createAccount } = require('../helpers/tenant');
-const { endpointFor, setMerchantId, encodeForm, buildPaidPayload } = require('../helpers/webhook');
+const { endpointFor, buildPaidPayload, postWebhook, newTransId, paySale } = require('../helpers/webhook');
 const paymentsService = require('../../src/services/payments.service');
 
-test('webhook: valid signature -> transaction posted, link paid, notification recorded', async () => {
+test('valid signature -> payment paid, transaction approved, link pending, ledger posted, notification recorded', async () => {
   const t = await createTenant(app);
   const account = await createAccount(app, t);
+  const { link, transId, paymentId } = await paySale(app, t, account, 25);
 
-  // Set the workspace's MID to match what we'll send in the payload.
-  const MID = '7374656';
-  await setMerchantId(t.workspaceId, MID);
+  const payment = (await pool.query('SELECT status, account_id, amount FROM payments WHERE id = $1', [paymentId])).rows[0];
+  assert.equal(payment.status, 'paid');
+  assert.equal(payment.account_id, account.id);
+  assert.equal(Number(payment.amount), 25);
 
-  // Create a payment link so the webhook has something to attribute against.
-  const linkRes = await request(app)
-    .post(`/workspaces/${t.workspaceId}/links`)
-    .set(t.authHeaders)
-    .send({ accountId: account.id, pricingMode: 'fixed', amount: 25, currency: 'EUR' })
-    .expect(201);
+  const linkAfter = (await pool.query('SELECT status, paid_at FROM payment_links WHERE id = $1', [link.id])).rows[0];
+  assert.equal(linkAfter.status, 'pending');
+  assert.ok(linkAfter.paid_at);
 
-  const endpointId = await endpointFor(t.workspaceId);
-  const payload = buildPaidPayload({
-    reference: linkRes.body.reference_id,
-    transId: `mp_${Date.now()}`,
-    amount: 25,
-    merchantId: MID,
-  });
+  const entry = (await pool.query(
+    `SELECT re.entry_type FROM revenue_entries re JOIN transactions tx ON tx.id = re.transaction_id
+      WHERE tx.provider_transaction_id = $1`, [transId])).rows[0];
+  assert.equal(entry.entry_type, 'sale');
 
-  const res = await request(app)
-    .post(`/webhooks/payment/${endpointId}`)
-    .set('Content-Type', 'application/x-www-form-urlencoded')
-    .send(encodeForm(payload))
-    .expect(200);
-  assert.equal(res.body.ok, true);
-  assert.equal(res.body.status, 'approved');
-
-  // Link flipped to paid.
-  const linkAfter = await withSystem((c) => c.query(
-    'SELECT status FROM payment_links WHERE id = $1', [linkRes.body.id]));
-  assert.equal(linkAfter.rows[0].status, 'paid');
-
-  // A commission_entries sale row exists for this transaction.
-  const entry = await withSystem((c) => c.query(
-    `SELECT ce.entry_type
-     FROM commission_entries ce
-     JOIN transactions tx ON tx.id = ce.transaction_id
-     WHERE tx.provider_transaction_id = $1`, [payload.trans_id]));
-  assert.equal(entry.rows[0].entry_type, 'sale');
+  const feed = (await request(app).get(`/workspaces/${t.workspaceId}/notifications`).set(t.authHeaders).expect(200)).body;
+  assert.ok(feed.notifications.some((n) => n.event === 'payment.paid' && n.entityId === paymentId));
 });
 
-test('webhook: bad signature is rejected with 401 (event is recorded for audit)', async () => {
-  const t = await createTenant(app);
-  await setMerchantId(t.workspaceId, '7374656');
-  const endpointId = await endpointFor(t.workspaceId);
-
-  const payload = buildPaidPayload({
-    reference: 'ord_no_match',
-    transId: `mp_bad_${Date.now()}`,
-    amount: 25,
-    merchantId: '7374656',
-  });
-  payload.signature = 'obviously-wrong-signature-value';
-
-  await request(app)
-    .post(`/webhooks/payment/${endpointId}`)
-    .set('Content-Type', 'application/x-www-form-urlencoded')
-    .send(encodeForm(payload))
-    .expect(401);
-
-  const rec = await withSystem((c) => c.query(
-    'SELECT signature_valid FROM webhook_events WHERE provider_event_id = $1',
-    [payload.trans_id]));
-  assert.equal(rec.rows[0].signature_valid, false);
-});
-
-test('webhook: unknown endpoint id returns 404', async () => {
-  await request(app)
-    .post('/webhooks/payment/does-not-exist')
-    .set('Content-Type', 'application/x-www-form-urlencoded')
-    .send('trans_id=x')
-    .expect(404);
-});
-
-test('webhook: duplicate provider_event_id is acknowledged, not re-processed', async () => {
+test('a reusable link stays active after a payment and takes a second one', async () => {
   const t = await createTenant(app);
   const account = await createAccount(app, t);
-  await setMerchantId(t.workspaceId, '7374656');
-  const endpointId = await endpointFor(t.workspaceId);
-
-  const linkRes = await request(app)
-    .post(`/workspaces/${t.workspaceId}/links`)
-    .set(t.authHeaders)
-    .send({ accountId: account.id, pricingMode: 'fixed', amount: 30, currency: 'EUR' })
-    .expect(201);
-
-  const payload = buildPaidPayload({
-    reference: linkRes.body.reference_id,
-    transId: `mp_dup_${Date.now()}`,
-    amount: 30,
-    merchantId: '7374656',
-  });
-
-  await request(app).post(`/webhooks/payment/${endpointId}`)
-    .set('Content-Type', 'application/x-www-form-urlencoded').send(encodeForm(payload)).expect(200);
-
-  const res = await request(app).post(`/webhooks/payment/${endpointId}`)
-    .set('Content-Type', 'application/x-www-form-urlencoded').send(encodeForm(payload)).expect(200);
-  assert.equal(res.body.duplicate, true);
+  const { link } = await paySale(app, t, account, 25, { type: 'reusable' });
+  const after = (await pool.query('SELECT status FROM payment_links WHERE id = $1', [link.id])).rows[0];
+  assert.equal(after.status, 'active');
+  await postWebhook(app, await endpointFor(t.workspaceId),
+    buildPaidPayload({ reference: link.referenceId, transId: newTransId(), amount: 25 })).expect(200);
+  const count = (await pool.query('SELECT count(*)::int AS c FROM payments WHERE payment_link_id = $1', [link.id])).rows[0].c;
+  assert.equal(count, 2);
 });
 
-test('webhook: a delivery that failed mid-processing is processed on the provider retry', async () => {
+test('bad signature is rejected with 401 and the event is recorded for audit', async () => {
   const t = await createTenant(app);
   const account = await createAccount(app, t);
-  await setMerchantId(t.workspaceId, '7374656');
-  const endpointId = await endpointFor(t.workspaceId);
+  const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+    .send({ accountId: account.id, type: 'single_use', amount: 25, currency: 'EUR' }).expect(201)).body;
+  const payload = buildPaidPayload({ reference: link.referenceId, transId: newTransId(), amount: 25 });
+  payload.signature = 'deadbeef';
+  await postWebhook(app, await endpointFor(t.workspaceId), payload).expect(401);
+  const ev = (await pool.query('SELECT signature_valid, processed FROM webhook_events WHERE provider_event_id = $1', [payload.trans_id])).rows[0];
+  assert.equal(ev.signature_valid, false);
+  assert.equal(ev.processed, true);
+  const paid = (await pool.query('SELECT count(*)::int AS c FROM payments WHERE payment_link_id = $1', [link.id])).rows[0].c;
+  assert.equal(paid, 0);
+});
 
-  const linkRes = await request(app)
-    .post(`/workspaces/${t.workspaceId}/links`)
-    .set(t.authHeaders)
-    .send({ accountId: account.id, pricingMode: 'fixed', amount: 40, currency: 'EUR' })
-    .expect(201);
-  const payload = buildPaidPayload({
-    reference: linkRes.body.reference_id,
-    transId: `mp_retry_${Date.now()}`,
-    amount: 40,
-    merchantId: '7374656',
-  });
+test('unknown endpoint id returns 404', async () => {
+  await postWebhook(app, 'does-not-exist', buildPaidPayload({ reference: 'x', transId: newTransId(), amount: 1 })).expect(404);
+});
 
-  // First delivery: the outcome handler blows up after the event row exists.
-  const real = paymentsService.recordPaymentOutcome;
-  paymentsService.recordPaymentOutcome = async () => { throw new Error('simulated db blip'); };
+test('a duplicate delivery is acknowledged, not re-processed', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+    .send({ accountId: account.id, type: 'single_use', amount: 25, currency: 'EUR' }).expect(201)).body;
+  const payload = buildPaidPayload({ reference: link.referenceId, transId: newTransId(), amount: 25 });
+  const endpoint = await endpointFor(t.workspaceId);
+  await postWebhook(app, endpoint, payload).expect(200);
+  const dup = await postWebhook(app, endpoint, payload).expect(200);
+  assert.equal(dup.body.duplicate, true);
+  const entries = (await pool.query(
+    `SELECT count(*)::int AS c FROM revenue_entries re JOIN transactions tx ON tx.id = re.transaction_id WHERE tx.provider_transaction_id = $1`,
+    [payload.trans_id])).rows[0].c;
+  assert.equal(entries, 1);
+});
+
+test('a delivery that failed mid-processing is processed on the provider retry', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+    .send({ accountId: account.id, type: 'single_use', amount: 25, currency: 'EUR' }).expect(201)).body;
+  const payload = buildPaidPayload({ reference: link.referenceId, transId: newTransId(), amount: 25 });
+  const endpoint = await endpointFor(t.workspaceId);
+
+  const original = paymentsService.recordPaymentOutcome;
+  paymentsService.recordPaymentOutcome = async () => { throw new Error('simulated crash'); };
   try {
-    await request(app).post(`/webhooks/payment/${endpointId}`)
-      .set('Content-Type', 'application/x-www-form-urlencoded').send(encodeForm(payload)).expect(500);
+    await postWebhook(app, endpoint, payload).expect(500);
   } finally {
-    paymentsService.recordPaymentOutcome = real;
+    paymentsService.recordPaymentOutcome = original;
   }
+  const before = (await pool.query('SELECT processed FROM webhook_events WHERE provider_event_id = $1', [payload.trans_id])).rows[0];
+  assert.equal(before.processed, false);
 
-  // Provider retry: must process, not be waved through as a duplicate.
-  const retry = await request(app).post(`/webhooks/payment/${endpointId}`)
-    .set('Content-Type', 'application/x-www-form-urlencoded').send(encodeForm(payload)).expect(200);
+  const retry = await postWebhook(app, endpoint, payload).expect(200);
   assert.equal(retry.body.duplicate, undefined);
-  assert.equal(retry.body.status, 'approved');
-
-  const linkAfter = await withSystem((c) => c.query(
-    'SELECT status FROM payment_links WHERE id = $1', [linkRes.body.id]));
-  assert.equal(linkAfter.rows[0].status, 'paid');
-  const event = await withSystem((c) => c.query(
-    'SELECT processed FROM webhook_events WHERE provider_event_id = $1', [payload.trans_id]));
-  assert.equal(event.rows[0].processed, true);
+  const after = (await pool.query('SELECT status FROM payments WHERE provider_payment_id = $1', [payload.trans_id])).rows[0];
+  assert.equal(after.status, 'paid');
 });

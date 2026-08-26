@@ -24,6 +24,13 @@ const SHAPES: Record<NavIconName, ReactNode> = {
     </>
   ),
   accounts: <><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7" /></>,
+  agents: (
+    <>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 21c0-4 3.6-7 8-7s8 3 8 7" />
+      <path d="M17 4l1.5 1.5L21 3" />
+    </>
+  ),
   customers: <><circle cx="12" cy="7" r="4" /><path d="M5 21v-1a7 7 0 0 1 14 0v1" /></>,
   team: (
     <>
@@ -31,14 +38,6 @@ const SHAPES: Record<NavIconName, ReactNode> = {
       <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" />
       <circle cx="17" cy="8" r="2.4" />
       <path d="M17 14c2.5 0 4 2 4 4.5" />
-    </>
-  ),
-  workspaces: (
-    <>
-      <rect x="3" y="3" width="7" height="7" rx="1" />
-      <rect x="14" y="3" width="7" height="7" rx="1" />
-      <rect x="3" y="14" width="7" height="7" rx="1" />
-      <rect x="14" y="14" width="7" height="7" rx="1" />
     </>
   ),
   settings: (

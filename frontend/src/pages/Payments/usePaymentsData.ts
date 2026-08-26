@@ -1,47 +1,90 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import { payoutsApi, type Transaction } from '../../api/endpoints';
+import {
+  paymentsApi, categoriesApi, customersApi, accountsApi, agentsApi,
+  type Payment, type ListPaymentsQuery, type CompletePaymentInput, type Category, type Customer, type Account, type Agent,
+} from '../../api/endpoints';
 
 export interface UsePaymentsDataResult {
-  transactions: Transaction[];
+  payments: Payment[];
+  categories: Category[];
+  customers: Customer[];
+  accounts: Account[];
+  agents: Agent[];
   isLoading: boolean;
   isError: boolean;
   hasMore: boolean;
   isLoadingMore: boolean;
   loadMore: () => void;
-  /** Records a refund that was already issued in the provider dashboard. */
-  recordRefund: (transactionId: string) => Promise<void>;
+  complete: (id: string, input: CompletePaymentInput) => Promise<Payment>;
+  /** Records a refund already issued in the provider dashboard. */
+  recordRefund: (id: string) => Promise<void>;
 }
 
-export function usePaymentsData(): UsePaymentsDataResult {
+export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): UsePaymentsDataResult {
   const { activeWorkspaceId } = useCurrentSession();
   const queryClient = useQueryClient();
+  const enabled = Boolean(activeWorkspaceId);
 
-  const query = useInfiniteQuery({
-    queryKey: ['transactions', activeWorkspaceId],
-    queryFn: ({ pageParam }) => payoutsApi.listTransactions(pageParam),
+  // Filters are part of the key: changing one starts a fresh paginated result
+  // from the server rather than re-filtering whatever happens to be loaded.
+  const payments = useInfiniteQuery({
+    queryKey: ['payments', activeWorkspaceId, filters],
+    queryFn: ({ pageParam }) => paymentsApi.list(pageParam, filters),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
-    enabled: Boolean(activeWorkspaceId),
+    enabled,
+  });
+  const categories = useQuery({
+    queryKey: ['categories', activeWorkspaceId],
+    queryFn: () => categoriesApi.list(),
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+  const customers = useQuery({
+    queryKey: ['customers', activeWorkspaceId, 'picker'],
+    queryFn: () => customersApi.list({ limit: 200 }),
+    enabled,
+  });
+  const accounts = useQuery({
+    queryKey: ['accounts', activeWorkspaceId],
+    queryFn: () => accountsApi.list(),
+    enabled: enabled && canScope,
+  });
+  const agents = useQuery({
+    queryKey: ['agents', activeWorkspaceId],
+    queryFn: () => agentsApi.list(),
+    enabled: enabled && canScope,
   });
 
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['payments', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['links', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['customers', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['payouts-breakdown', activeWorkspaceId] });
+  };
+
+  const complete = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: CompletePaymentInput }) => paymentsApi.complete(id, input),
+    onSuccess: invalidate,
+  });
   const refund = useMutation({
-    mutationFn: (transactionId: string) => payoutsApi.refund(transactionId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['transactions', activeWorkspaceId] });
-      queryClient.invalidateQueries({ queryKey: ['payouts-breakdown', activeWorkspaceId] });
-    },
+    mutationFn: (id: string) => paymentsApi.refund(id),
+    onSuccess: invalidate,
   });
 
   return {
-    transactions: query.data?.pages.flatMap((p) => p.items) ?? [],
-    isLoading: query.isLoading,
-    isError: query.isError,
-    hasMore: query.hasNextPage,
-    isLoadingMore: query.isFetchingNextPage,
-    loadMore: () => { void query.fetchNextPage(); },
-    recordRefund: async (transactionId) => {
-      await refund.mutateAsync(transactionId);
-    },
+    payments: payments.data?.pages.flatMap((p) => p.items) ?? [],
+    categories: categories.data ?? [],
+    customers: customers.data ?? [],
+    accounts: accounts.data ?? [],
+    agents: agents.data ?? [],
+    isLoading: payments.isLoading,
+    isError: payments.isError,
+    hasMore: payments.hasNextPage,
+    isLoadingMore: payments.isFetchingNextPage,
+    loadMore: () => { void payments.fetchNextPage(); },
+    complete: (id, input) => complete.mutateAsync({ id, input }),
+    recordRefund: async (id) => { await refund.mutateAsync(id); },
   };
 }

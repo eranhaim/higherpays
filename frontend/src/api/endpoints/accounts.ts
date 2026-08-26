@@ -1,122 +1,74 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
 
-/** Mirrors the `account_status` enum. New accounts start as `onboarding`. */
-export type AccountStatus = 'onboarding' | 'active' | 'paused' | 'archived';
-export type RevenueModel = 'revshare' | 'salary' | 'ai';
+/** Mirrors ACCOUNT_STATUS in the schema. */
+export type AccountStatus = 'active' | 'paused' | 'archived';
 
 export const ACCOUNT_STATUS_LABELS: Record<AccountStatus, string> = {
-  onboarding: 'Onboarding',
   active: 'Active',
   paused: 'Paused',
   archived: 'Archived',
 };
 
-/** Accounts that can still take new payment links. */
-export function canTakeLinks(status: AccountStatus): boolean {
-  return status === 'active' || status === 'onboarding';
+export interface AccountAgent {
+  agentId: string;
+  name: string;
+  email: string;
 }
-
-export const REVENUE_MODEL_LABELS: Record<RevenueModel, string> = {
-  revshare: 'Rev-share',
-  salary: 'Salary',
-  ai: 'AI',
-};
 
 export interface Account {
   id: string;
-  stageName: string;
+  name: string;
   handle: string | null;
   country: string | null;
   status: AccountStatus;
+  userId: string;
+  ownerName: string;
+  ownerEmail: string;
   createdAt: string;
-  // The pay deal and the assignment count are only sent to callers who see the
-  // whole workspace; an agent gets the account without its terms.
+  // The share and the roster are only sent to callers who see the whole
+  // workspace (the owner also gets their own share); an agent gets the
+  // account without its terms.
   revenueSplitPct?: number;
-  revenueModel?: RevenueModel;
-  salary?: number | null;
-  salaryIncreasePct?: number | null;
   agentsAssigned?: number;
+  agents?: AccountAgent[];
 }
 
-interface RawAccount {
-  id: string;
-  stage_name: string;
-  handle: string | null;
-  country: string | null;
-  status: AccountStatus;
-  revenue_split_pct: number | string;
-  revenue_model: RevenueModel;
-  salary: number | string | null;
-  salary_increase_pct: number | string | null;
-  created_at: string;
-  agents_assigned?: number | string;
-}
-
-function toNumber(v: unknown): number {
-  const n = typeof v === 'string' ? parseFloat(v) : (v as number);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function toNullableNumber(v: unknown): number | null {
-  if (v == null) return null;
-  const n = typeof v === 'string' ? parseFloat(v) : (v as number);
-  return Number.isFinite(n) ? n : null;
-}
-
-// A withheld field must stay undefined, not become 0. The server omits the pay
-// deal and the assignment count for scoped callers; coercing those to a number
-// would show an agent a confident "Agents assigned 0" and a 0% split.
-function normalize(a: RawAccount): Account {
-  return {
-    id: a.id,
-    stageName: a.stage_name,
-    handle: a.handle,
-    country: a.country,
-    status: a.status,
-    createdAt: a.created_at,
-    ...(a.revenue_split_pct !== undefined ? { revenueSplitPct: toNumber(a.revenue_split_pct) } : {}),
-    ...(a.revenue_model !== undefined ? { revenueModel: a.revenue_model } : {}),
-    ...(a.salary !== undefined ? { salary: toNullableNumber(a.salary) } : {}),
-    ...(a.salary_increase_pct !== undefined ? { salaryIncreasePct: toNullableNumber(a.salary_increase_pct) } : {}),
-    ...(a.agents_assigned !== undefined ? { agentsAssigned: toNumber(a.agents_assigned) } : {}),
-  };
-}
-
+/** Creating an account creates its owner's login as well. */
 export interface CreateAccountInput {
-  stageName: string;
+  email: string;
+  fullName: string;
+  /** Required for a new login; ignored when the email already has one. */
+  password?: string;
+  name: string;
   handle?: string;
   country?: string;
   revenueSplitPct?: number;
-  revenueModel?: RevenueModel;
-  salary?: number;
-  salaryIncreasePct?: number;
 }
 
 export interface UpdateAccountInput {
-  stageName?: string;
+  name?: string;
   handle?: string;
+  country?: string;
   status?: AccountStatus;
   revenueSplitPct?: number;
 }
 
 export const accountsApi = {
   async list(): Promise<Account[]> {
-    const raw = await api.get<{ accounts: RawAccount[] }>(workspacePath('/accounts'));
-    return raw.accounts.map(normalize);
+    const raw = await api.get<{ accounts: Account[] }>(workspacePath('/accounts'));
+    return raw.accounts;
   },
 
-  async create(input: CreateAccountInput): Promise<Account> {
-    const raw = await api.post<RawAccount>(workspacePath('/accounts'), input);
-    return normalize(raw);
-  },
+  get: (id: string) => api.get<Account>(workspacePath(`/accounts/${id}`)),
 
-  async update(id: string, input: UpdateAccountInput): Promise<Account> {
-    const raw = await api.patch<RawAccount>(workspacePath(`/accounts/${id}`), input);
-    return normalize(raw);
-  },
+  create: (input: CreateAccountInput) => api.post<Account>(workspacePath('/accounts'), input),
 
-  assignAgent(accountId: string, membershipId: string) {
-    return api.post<{ ok: true }>(workspacePath(`/accounts/${accountId}/assignments`), { membershipId });
-  },
+  update: (id: string, input: UpdateAccountInput) => api.patch<Account>(workspacePath(`/accounts/${id}`), input),
+
+  assignAgent: (accountId: string, agentId: string) =>
+    api.post<{ ok: true }>(workspacePath(`/accounts/${accountId}/agents`), { agentId }),
+
+  unassignAgent: (accountId: string, agentId: string) =>
+    api.del<void>(workspacePath(`/accounts/${accountId}/agents/${agentId}`)),
 };

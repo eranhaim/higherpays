@@ -29,7 +29,7 @@ function requestLogger(req, res, next) {
       path: req.originalUrl.split('?')[0],
       status: res.statusCode,
       durationMs: Math.round(durationMs * 10) / 10,
-      workspaceId: req.membership ? req.membership.workspaceId : undefined,
+      workspaceId: req.access ? req.access.workspaceId : undefined,
       userId: req.user ? req.user.id : undefined,
       ip: req.ip,
     }, 'request');

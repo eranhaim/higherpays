@@ -27,7 +27,7 @@ export default function PermissionGuard() {
       <div className="card">
         <EmptyState
           title="You don't have access to this page."
-          hint="Ask a workspace owner or admin if you need it."
+          hint="Ask a workspace admin if you need it."
         />
       </div>
     );

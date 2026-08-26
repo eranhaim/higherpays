@@ -1,17 +1,16 @@
 'use strict';
 // "What am I owed?" — self-scoped earnings for the signed-in person.
 //
-// Deliberately narrow: an agent sees ONLY their own commission, an account sees
-// ONLY their own share. Neither sees the other's cut, the agency's margin, or
-// the itemised fee breakdown. Gated on analytics.view (which agents have),
-// NOT commissions.view (which they don't) — because this is their own data.
+// An agent sees ONLY their own commission, an account owner ONLY their own
+// share. Neither sees the other's cut, the agency's margin, or the itemised
+// fee breakdown.
 const express = require('express');
-const { withWorkspace } = require('../db');
+const { withTransaction } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
+const { resolveDataScope } = require('../auth/dataScope');
 
 const router = express.Router({ mergeParams: true });
-const { wid, uid } = require('../lib/scope');
 const n = (v) => Number(v || 0);
 const r2 = (v) => Math.round(v * 100) / 100;
 
@@ -20,68 +19,55 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
   const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 86400000);
   const F = from.toISOString(), T = to.toISOString();
 
-  const data = await withWorkspace(wid(req), uid(req), async (c) => {
-    // Which party is the signed-in user? A membership makes them an agent;
-    // a linked account record makes them an account.
-    const me = (await c.query(
-      `SELECT m.id AS membership_id, m.role, m.commission_pct,
-              (SELECT id FROM accounts WHERE workspace_id = $1 AND user_id = $2 LIMIT 1) AS account_id,
-              (SELECT revenue_split_pct FROM accounts WHERE workspace_id = $1 AND user_id = $2 LIMIT 1) AS split_pct,
-              (SELECT revenue_model FROM accounts WHERE workspace_id = $1 AND user_id = $2 LIMIT 1) AS revenue_model
-         FROM memberships m
-        WHERE m.workspace_id = $1 AND m.user_id = $2 LIMIT 1`, [wid(req), uid(req)])).rows[0];
-    if (!me) return null;
+  const data = await withTransaction(async (c) => {
+    const scope = await resolveDataScope(c, req);
+    if (scope.kind !== 'agent' && scope.kind !== 'account') return null;
 
-    const isAccount = !!me.account_id;
-    const amountCol = isAccount ? 'ce.account_amount' : 'ce.agent_amount';
-    const paidCol = isAccount ? 'ce.account_payout_id' : 'ce.agent_payout_id';
-    const scopeCol = isAccount ? 'ce.account_id' : 'ce.agent_membership_id';
-    const scopeVal = isAccount ? me.account_id : me.membership_id;
+    const isAccount = scope.kind === 'account';
+    const amountCol = isAccount ? 're.account_amount' : 're.agent_amount';
+    const paidCol = isAccount ? 're.account_payout_id' : 're.agent_payout_id';
+    const scopeCol = isAccount ? 're.account_id' : 're.agent_id';
+    const scopeVal = isAccount ? scope.accountId : scope.agentId;
+
+    const rate = isAccount
+      ? (await c.query('SELECT revenue_split_pct AS pct FROM accounts WHERE id = $1', [scopeVal])).rows[0]
+      : (await c.query('SELECT commission_pct AS pct FROM agents WHERE id = $1', [scopeVal])).rows[0];
 
     const period = (await c.query(
-      `SELECT COUNT(*) FILTER (WHERE ce.entry_type='sale')                          AS sales,
-              COALESCE(SUM(ce.gross)         FILTER (WHERE ce.entry_type='sale'),0) AS gross,
-              COALESCE(SUM(ce.platform_fee)  FILTER (WHERE ce.entry_type='sale'),0) AS deductions,
-              COALESCE(SUM(ce.distributable) FILTER (WHERE ce.entry_type='sale'),0) AS distributable,
+      `SELECT COUNT(*) FILTER (WHERE re.entry_type='sale')                          AS sales,
+              COALESCE(SUM(re.gross)         FILTER (WHERE re.entry_type='sale'),0) AS gross,
+              COALESCE(SUM(re.platform_fee)  FILTER (WHERE re.entry_type='sale'),0) AS deductions,
+              COALESCE(SUM(re.distributable) FILTER (WHERE re.entry_type='sale'),0) AS distributable,
               COALESCE(SUM(${amountCol}),0)                                         AS earned
-         FROM commission_entries ce
-         JOIN transactions t ON t.id = ce.transaction_id
+         FROM revenue_entries re
+         JOIN transactions t ON t.id = re.transaction_id
         WHERE ${scopeCol} = $1 AND t.occurred_at >= $2 AND t.occurred_at <= $3`,
       [scopeVal, F, T])).rows[0];
 
-    // Balances are all-time, not period-scoped: what you are owed is what has
-    // never been settled, regardless of when it was earned.
+    // Balances are all-time: what you are owed is what was never settled.
     const balance = (await c.query(
       `SELECT COALESCE(SUM(${amountCol}) FILTER (WHERE ${paidCol} IS NULL),0)     AS unpaid,
               COALESCE(SUM(${amountCol}) FILTER (WHERE ${paidCol} IS NOT NULL),0) AS paid
-         FROM commission_entries ce WHERE ${scopeCol} = $1`, [scopeVal])).rows[0];
+         FROM revenue_entries re WHERE ${scopeCol} = $1`, [scopeVal])).rows[0];
 
-    return { me, isAccount, period, balance };
+    return { isAccount, rate: n(rate && rate.pct), period, balance };
   });
 
-  if (!data) return res.status(404).json({ error: 'no_membership' });
+  if (!data) return res.status(404).json({ error: 'no_profile' });
 
-  const { me, isAccount, period, balance } = data;
-  const gross = n(period.gross);
-  const rate = isAccount ? n(me.split_pct) : n(me.commission_pct);
-
+  const { isAccount, rate, period, balance } = data;
   res.json({
     range: { from: F, to: T },
-    role: isAccount ? 'account' : 'agent',
-    // The chain that explains the number, WITHOUT itemising whose fee is whose.
+    role: isAccount ? 'account_owner' : 'agent',
     period: {
       sales: n(period.sales),
-      gross: r2(gross),
+      gross: r2(n(period.gross)),
       deductions: r2(period.deductions),      // processing + platform, aggregated
       afterFees: r2(period.distributable),    // the base the rate is applied to
       yourRatePct: rate,
       earned: r2(period.earned),
     },
-    balance: {
-      owed: r2(balance.unpaid),               // not yet paid out to you
-      paidToDate: r2(balance.paid),
-    },
-    revenueModel: isAccount ? me.revenue_model : null,
+    balance: { owed: r2(balance.unpaid), paidToDate: r2(balance.paid) },
   });
 }));
 

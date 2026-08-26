@@ -1,20 +1,15 @@
 'use strict';
 // Test bootstrap. Pins env vars BEFORE anything requires the app or config.js.
 // The tests run against the local docker Postgres exposed on host:5432 (via
-// docker-compose.override.yml). They create their own tenants under unique
+// docker-compose.override.yml). They create their own agencies under unique
 // tags, so multiple runs coexist without a wipe.
 
 process.env.NODE_ENV = 'test';
-process.env.USE_RLS = 'true';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-only-secret-fixed-value-for-deterministic-tokens';
 process.env.PORT = process.env.PORT || '0'; // never actually listened on
 process.env.DATABASE_URL =
   process.env.DATABASE_URL ||
   `postgres://${process.env.HP_APP_USER || 'hp_app'}:${process.env.HP_APP_PASSWORD || 'hp_app_dev'}@${process.env.PGHOST || 'localhost'}:${process.env.PGPORT || '5432'}/${process.env.PGDATABASE || 'higherpays'}`;
-// Migrations run once at container boot; the test DB uses the same schema.
-process.env.MIGRATIONS_DATABASE_URL =
-  process.env.MIGRATIONS_DATABASE_URL ||
-  `postgres://postgres:${process.env.POSTGRES_PASSWORD || 'devpass'}@${process.env.PGHOST || 'localhost'}:${process.env.PGPORT || '5432'}/${process.env.PGDATABASE || 'higherpays'}`;
 
 // A stable seed for the MantaPay checkout signature test — the tests never call
 // the real provider, only the local signing code path.

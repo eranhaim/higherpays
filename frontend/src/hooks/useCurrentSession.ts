@@ -7,17 +7,21 @@
 
 import { useAuthStore } from '../store/auth';
 import { useSessionStore } from '../store/session';
-import type { AuthUser, AuthWorkspace } from '../api/types';
+import type { AuthUser, AuthWorkspace, WorkspaceLabels, WorkspaceRole } from '../api/types';
+
+const DEFAULT_LABELS: WorkspaceLabels = { account: 'Account', accounts: 'Accounts', agent: 'Agent', agents: 'Agents' };
 
 export interface CurrentSession {
   isAuthenticated: boolean;
   user: AuthUser | null;
   /** null when no workspace is resolved yet — grants nothing until it is. */
-  role: string | null;
+  role: WorkspaceRole | null;
   activeWorkspaceId: string | null;
   activeWorkspace: AuthWorkspace | null;
   workspaces: AuthWorkspace[];
   currency: string;
+  /** What this agency calls its accounts and agents. */
+  labels: WorkspaceLabels;
 }
 
 export function useCurrentSession(): CurrentSession {
@@ -38,5 +42,6 @@ export function useCurrentSession(): CurrentSession {
     activeWorkspace,
     workspaces,
     currency: activeWorkspace?.currency ?? 'EUR',
+    labels: activeWorkspace?.labels ?? DEFAULT_LABELS,
   };
 }

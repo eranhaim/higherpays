@@ -1,20 +1,17 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
 
-/** Response from `GET /workspaces/:wid/analytics`. Money is chargeback-adjusted. */
+/** Response from `GET /workspaces/:wid/analytics`. Money is reversal-adjusted. */
 export interface AnalyticsReport {
   range: { from: string; to: string; days: number };
   scope: 'agency' | 'agent' | 'account';
   timeseries: Array<{ d: string; gross: number; net: number }>;
   // The agency-side figures below are omitted for a scoped caller (an agent or
-  // an account): how the agency's cut is divided is not theirs to see. Guard on
-  // `scope === 'agency'` or on `can('data.view_all')` before rendering them.
+  // an account owner): how the agency's cut is divided is not theirs to see.
   headline: {
     gross: number;
     net: number;
     platformFee?: number;
-    /** Only present for platform operators. */
-    hpMargin?: number;
     accountPayout?: number;
     agentPayout?: number;
     agencyKeep?: number;
@@ -23,7 +20,7 @@ export interface AnalyticsReport {
     paidCount: number;
     uniqueBuyers: number;
   };
-  chargebacks: {
+  reversals: {
     count: number;
     valueReversed: number;
     feeCost: number;
@@ -36,9 +33,8 @@ export interface AnalyticsReport {
     paid: number;
     failed: number;
     expired: number;
+    cancelled: number;
     conversionPct: number;
-    declinePct: number;
-    expiryPct: number;
     revenuePerLink: number;
   };
   agents: Array<{
@@ -51,19 +47,15 @@ export interface AnalyticsReport {
   }>;
   accounts: Array<{
     name: string;
-    model: 'revshare' | 'salary' | 'ai';
-    salary: number;
     revenue: number;
     accountPayout: number;
     agencyProfit: number;
   }>;
   customers: {
-    avgLtv: number;
-    arpu: number;
     repeatRatePct: number;
     freq: number;
     concentration: { top1: number; top5: number; top10: number };
-    segments: Array<{ segment: string; revenue: number }>;
+    categories: Array<{ category: string; revenue: number }>;
     newVsReturning: { newRev: number; retRev: number };
   };
   /** 7 rows (Sunday first) × 24 hours of gross revenue. */
@@ -74,7 +66,7 @@ export interface AnalyticsQuery {
   /** ISO timestamps. */
   from: string;
   to: string;
-  /** Agency roles may scope the report to one agent membership or one account. */
+  /** Agency roles may scope the report to one agent or one account. */
   agentId?: string;
   accountId?: string;
 }

@@ -11,17 +11,15 @@ import PaymentsPage from './pages/Payments';
 import LinksPage from './pages/Links';
 import PayoutsPage from './pages/Payouts';
 import AccountsPage from './pages/Accounts';
+import AgentsPage from './pages/Agents';
 import CustomersPage from './pages/Customers';
 import TeamPage from './pages/Team';
 import AnalyticsPage from './pages/Analytics';
-import WorkspacesPage from './pages/Workspaces';
 import SettingsPage from './pages/Settings';
 import PlatformPage from './pages/Platform';
 
 /**
- * Where "/" and any unknown path land. Payments is right for most roles, but a
- * role that cannot see it would be bounced to a refusal card, so send everyone
- * to the first page they can actually open.
+ * Where "/" and any unknown path land: the first page the caller can open.
  */
 function HomeRedirect() {
   const can = useCan();
@@ -47,10 +45,10 @@ export default function App() {
                 <Route path="/links" element={<LinksPage />} />
                 <Route path="/payouts" element={<PayoutsPage />} />
                 <Route path="/accounts" element={<AccountsPage />} />
+                <Route path="/agents" element={<AgentsPage />} />
                 <Route path="/customers" element={<CustomersPage />} />
                 <Route path="/team" element={<TeamPage />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />
-                <Route path="/workspaces" element={<WorkspacesPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
               </Route>
               <Route path="*" element={<HomeRedirect />} />

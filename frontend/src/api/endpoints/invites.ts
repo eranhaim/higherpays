@@ -1,10 +1,14 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
 
+/** Agents and account owners are created directly, login included. */
+export type InvitableRole = 'workspace_admin' | 'analyst';
+export const INVITABLE_ROLES: InvitableRole[] = ['workspace_admin', 'analyst'];
+
 export interface Invite {
   id: string;
   email: string;
-  role: string;
+  role: InvitableRole;
   expiresAt: string;
   acceptedAt: string | null;
 }
@@ -12,7 +16,7 @@ export interface Invite {
 interface RawInvite {
   id: string;
   email: string;
-  role: string;
+  role: InvitableRole;
   expires_at: string;
   accepted_at: string | null;
 }
@@ -27,7 +31,7 @@ export const invitesApi = {
     return raw.invites.map(normalize);
   },
 
-  async create(input: { email: string; role: string; accountId?: string }): Promise<Invite> {
+  async create(input: { email: string; role: InvitableRole }): Promise<Invite> {
     const raw = await api.post<RawInvite>(workspacePath('/invites'), input);
     return normalize(raw);
   },
