@@ -7,7 +7,7 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useRateCard } from '../../hooks/useRateCard';
 import { toast } from '../../lib/toast';
 import { CopyButton, ErrorCard, LoadingCard, Money } from '../../components/ui';
-import { useGeneralSettings } from './useSettingsData';
+import { useGeneralSettings, usePlatformFees, type FeeAmounts } from './useSettingsData';
 
 export function WorkspacePane() {
   const can = useCan();
@@ -15,6 +15,7 @@ export function WorkspacePane() {
   const { activeWorkspaceId } = useCurrentSession();
   const { rateCard, isLoading: rateCardLoading, isError: rateCardError } = useRateCard();
   const { workspace, linkLimits, revenue, update, saveLinkLimits, saveRevenue } = useGeneralSettings();
+  const platformFees = usePlatformFees();
 
   if (rateCardLoading || linkLimits.isLoading || workspace.isLoading) return <LoadingCard />;
   if (rateCardError || linkLimits.isError || workspace.isError || !linkLimits.data || !workspace.data) return <ErrorCard />;
@@ -29,7 +30,9 @@ export function WorkspacePane() {
         <RevenueDefaultsCard key={`rev-${activeWorkspaceId}`} editable={can('revenue.manage')} rule={revenue.data.rule}
           onSave={(input) => saveRevenue.mutateAsync(input)} />
       )}
-      <FeesCard rateCard={rateCard} />
+      <FeesCard key={`fees-${activeWorkspaceId}`} rateCard={rateCard}
+        editable={platformFees.canEdit && platformFees.detail.isSuccess}
+        onSave={(input) => platformFees.save.mutateAsync(input)} />
       <LinkLimitsCard key={`lim-${activeWorkspaceId}`} editable={editable} limits={linkLimits.data} rateCard={rateCard}
         onSave={(input) => saveLinkLimits.mutateAsync(input)} />
       <MantaPayCard key={`mp-${activeWorkspaceId}`} editable={editable} workspace={workspace.data}
@@ -235,7 +238,29 @@ function RevenueDefaultsCard({ editable, rule, onSave }: {
   );
 }
 
-function FeesCard({ rateCard }: { rateCard: RateCard }) {
+function FeesCard({ rateCard, editable, onSave }: {
+  rateCard: RateCard;
+  /** Only a HigherPays platform admin may change what an agency is charged. */
+  editable: boolean;
+  onSave: (input: FeeAmounts) => Promise<unknown>;
+}) {
+  const saved = {
+    fixed: String(rateCard.fixed),
+    refund: String(rateCard.refundFee ?? 0),
+    chargeback: String(rateCard.chargebackFee ?? 0),
+    decline: String(rateCard.declineFee ?? 0),
+  };
+  const [fixed, setFixed] = useState(saved.fixed);
+  const [refund, setRefund] = useState(saved.refund);
+  const [chargeback, setChargeback] = useState(saved.chargeback);
+  const [decline, setDecline] = useState(saved.decline);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const amounts = [fixed, refund, chargeback, decline].map(Number);
+  const valid = amounts.every((v) => Number.isFinite(v) && v >= 0);
+  const dirty = fixed !== saved.fixed || refund !== saved.refund || chargeback !== saved.chargeback || decline !== saved.decline;
+  useUnsavedChanges('platform-fees', editable && dirty);
+
   // The reversal fees and the reserve are the agency's treasury: the server
   // sends them only to callers who see the whole workspace. Rendering a
   // withheld value as 0 would claim there is no chargeback fee, so the row is
@@ -243,40 +268,59 @@ function FeesCard({ rateCard }: { rateCard: RateCard }) {
   const reserve = rateCard.reservePct === undefined ? null
     : rateCard.reservePct > 0 ? `${rateCard.reservePct}% · released after ${rateCard.reserveReleaseDays ?? 0} days` : 'none';
 
+  const save = async () => {
+    if (!valid) { toast('Every fee must be an amount of 0 or more.'); return; }
+    setIsSaving(true);
+    try {
+      await onSave({ fixedFee: Number(fixed), refundFee: Number(refund), chargebackFee: Number(chargeback), declineFee: Number(decline) });
+      toast('Fees saved.');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not save the fees.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const feeRow = (id: string, label: string, hint: string, value: string, set: (v: string) => void, amount: number) => (
+    <div className="setrow">
+      <div>
+        <div className="k">{editable ? <label htmlFor={id}>{label}</label> : label}</div>
+        <div className="d">{hint}</div>
+      </div>
+      {editable
+        ? <div className="controls"><input id={id} type="number" min={0} step={0.01} value={value} onChange={(e) => set(e.target.value)} /></div>
+        : <Money amount={amount} />}
+    </div>
+  );
+
   return (
     <div className="card">
       <div className="sechead">Fees</div>
-      <p className="sub">Set by HigherPays. Contact support to change them.</p>
+      <p className="sub">
+        {editable
+          ? 'What HigherPays charges this agency. A change applies to sales from now on; the history is kept.'
+          : 'Set by HigherPays. Contact support to change them.'}
+      </p>
       <div className="setrow">
         <div><div className="k">Blended rate</div><div className="d">Percentage taken from every successful payment.</div></div>
         <span className="mono-val">{rateCard.blended}%</span>
       </div>
-      <div className="setrow">
-        <div><div className="k">Fixed fee</div><div className="d">Charged on every transaction, on top of the blended rate.</div></div>
-        <Money amount={rateCard.fixed} />
-      </div>
-      {rateCard.refundFee !== undefined && (
-        <div className="setrow">
-          <div><div className="k">Refund fee</div><div className="d">Charged when a payment is refunded.</div></div>
-          <Money amount={rateCard.refundFee} />
-        </div>
-      )}
-      {rateCard.chargebackFee !== undefined && (
-        <div className="setrow">
-          <div><div className="k">Chargeback fee</div><div className="d">Charged when a customer disputes a payment.</div></div>
-          <Money amount={rateCard.chargebackFee} />
-        </div>
-      )}
-      {rateCard.declineFee !== undefined && (
-        <div className="setrow">
-          <div><div className="k">Decline fee</div><div className="d">Charged on declined attempts.</div></div>
-          <Money amount={rateCard.declineFee} />
-        </div>
-      )}
+      {feeRow('fee-fixed', 'Fixed fee', 'Charged on every transaction, on top of the blended rate.', fixed, setFixed, rateCard.fixed)}
+      {(editable || rateCard.refundFee !== undefined) &&
+        feeRow('fee-refund', 'Refund fee', 'Charged when a payment is refunded.', refund, setRefund, rateCard.refundFee ?? 0)}
+      {(editable || rateCard.chargebackFee !== undefined) &&
+        feeRow('fee-chargeback', 'Chargeback fee', 'Charged when a customer disputes a payment.', chargeback, setChargeback, rateCard.chargebackFee ?? 0)}
+      {(editable || rateCard.declineFee !== undefined) &&
+        feeRow('fee-decline', 'Decline fee', 'Charged on declined attempts.', decline, setDecline, rateCard.declineFee ?? 0)}
       {reserve !== null && (
         <div className="setrow">
           <div><div className="k">Rolling reserve</div><div className="d">Share of each payment held back and released later.</div></div>
           <span className="mono-val">{reserve}</span>
+        </div>
+      )}
+      {editable && (
+        <div className="actions-right">
+          <button className="btn" onClick={save} disabled={isSaving || !dirty || !valid}>{isSaving ? 'Saving…' : 'Save fees'}</button>
         </div>
       )}
     </div>

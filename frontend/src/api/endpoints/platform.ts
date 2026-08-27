@@ -43,10 +43,30 @@ export interface OnboardAgencyInput {
   agentPct: number;
 }
 
-export interface PlatformFeeInput {
+/** One versioned rate row: what the agency pays on every sale. */
+export interface PlatformFeeRate {
   pspRatePct: number;
   marginRatePct: number;
   pspFixedFee: number;
+}
+
+/** The reversal fees and the rolling reserve, also versioned. */
+export interface SettlementFee {
+  chargebackFee: number;
+  refundFee: number;
+  declineFee: number;
+  settlementFeePct: number;
+  settlementFeeFlat: number;
+  reservePct: number;
+  reserveReleaseDays: number;
+}
+
+export interface PlatformWorkspaceDetail {
+  id: string;
+  name: string;
+  /** Newest first; the first row is what the agency pays today. */
+  feeHistory: PlatformFeeRate[];
+  settlementFee: SettlementFee | null;
 }
 
 const opts = { skipWorkspace: true };
@@ -73,7 +93,12 @@ export const platformApi = {
   setStatus: (id: string, status: 'active' | 'suspended') =>
     api.patch<{ id: string; name: string; status: string }>(`/platform/workspaces/${id}/status`, { status }, opts),
 
+  getWorkspace: (id: string) => api.get<PlatformWorkspaceDetail>(`/platform/workspaces/${id}`, opts),
+
   /** A new versioned rate row; the history is kept server-side. */
-  setPlatformFee: (id: string, input: PlatformFeeInput) =>
+  setPlatformFee: (id: string, input: PlatformFeeRate) =>
     api.put<{ blendedRatePct: number }>(`/platform/workspaces/${id}/platform-fee`, { ...input, feeModel: 'flat' }, opts),
+
+  setSettlementFee: (id: string, input: SettlementFee) =>
+    api.put<SettlementFee>(`/platform/workspaces/${id}/settlement-fee`, input, opts),
 };

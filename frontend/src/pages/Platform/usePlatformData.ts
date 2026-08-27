@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { platformApi, type PlatformWorkspace, type PlatformOverview, type OnboardAgencyInput, type PlatformFeeInput } from '../../api/endpoints';
+import { platformApi, type PlatformWorkspace, type PlatformOverview, type OnboardAgencyInput, type PlatformFeeRate } from '../../api/endpoints';
 
 export interface UsePlatformDataResult {
   /** True while we still don't know whether the caller is a platform admin. */
@@ -11,7 +11,7 @@ export interface UsePlatformDataResult {
   isError: boolean;
   onboardAgency: (input: OnboardAgencyInput) => Promise<{ workspaceId: string; webhookEndpointId: string }>;
   setStatus: (id: string, status: 'active' | 'suspended') => Promise<unknown>;
-  setPlatformFee: (id: string, input: PlatformFeeInput) => Promise<unknown>;
+  setPlatformFee: (id: string, input: PlatformFeeRate) => Promise<unknown>;
 }
 
 export function usePlatformData(): UsePlatformDataResult {
@@ -34,7 +34,7 @@ export function usePlatformData(): UsePlatformDataResult {
     onSuccess: invalidate,
   });
   const fee = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: PlatformFeeInput }) => platformApi.setPlatformFee(id, input),
+    mutationFn: ({ id, input }: { id: string; input: PlatformFeeRate }) => platformApi.setPlatformFee(id, input),
     onSuccess: invalidate,
   });
 

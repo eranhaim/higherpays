@@ -4,7 +4,7 @@ import {
   PageHeader, Pill, DataTable, Money, DateCell, EmptyState, LoadingCard, ErrorCard, StatCard, StatGrid,
   Select, type Column,
 } from '../../components/ui';
-import type { PlatformWorkspace, OnboardAgencyInput, PlatformFeeInput } from '../../api/endpoints';
+import type { PlatformWorkspace, OnboardAgencyInput, PlatformFeeRate } from '../../api/endpoints';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import { usePlatformData } from './usePlatformData';
@@ -261,7 +261,7 @@ function OnboardAgencyModal({ onClose, onSubmit }: {
 function RatesModal({ workspace, onClose, onSubmit }: {
   workspace: PlatformWorkspace;
   onClose: () => void;
-  onSubmit: (input: PlatformFeeInput) => Promise<void>;
+  onSubmit: (input: PlatformFeeRate) => Promise<void>;
 }) {
   const [pspRate, setPspRate] = useState('');
   const [margin, setMargin] = useState('');

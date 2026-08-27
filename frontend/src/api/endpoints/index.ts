@@ -1,6 +1,10 @@
 export { authApi, type TwoFactorSetup, type Session } from './auth';
 export { workspacesApi, type PlatformFee, type LinkLimits, type WorkspacePermissions, type WorkspaceSettings, type UpdateWorkspaceInput, type AuditEntry } from './workspaces';
-export { platformApi, type PlatformWorkspace, type PlatformOverview, type OnboardAgencyInput, type PlatformFeeInput } from './platform';
+export {
+  platformApi,
+  type PlatformWorkspace, type PlatformOverview, type OnboardAgencyInput,
+  type PlatformFeeRate, type SettlementFee, type PlatformWorkspaceDetail,
+} from './platform';
 export { revenueApi, type RevenueRule } from './revenue';
 export {
   accountsApi, ACCOUNT_STATUS_LABELS,

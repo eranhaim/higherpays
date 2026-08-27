@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  authApi, notificationsApi, workspacesApi, categoriesApi, revenueApi,
+  authApi, notificationsApi, workspacesApi, categoriesApi, revenueApi, platformApi,
   type NotificationEvent, type UpdateWorkspaceInput,
 } from '../../api/endpoints';
 import { useAuthStore } from '../../store/auth';
@@ -48,6 +48,64 @@ export function useGeneralSettings() {
   });
 
   return { workspace, linkLimits, revenue, update, saveLinkLimits, saveRevenue };
+}
+
+export interface FeeAmounts {
+  fixedFee: number;
+  refundFee: number;
+  chargebackFee: number;
+  declineFee: number;
+}
+
+/**
+ * The fees HigherPays charges this agency. Only a platform admin may change
+ * them, and both writes are versioned rows, so each one carries the values it
+ * does not touch — sending zeros would silently drop the margin or the reserve.
+ */
+export function usePlatformFees() {
+  const { user, activeWorkspaceId } = useCurrentSession();
+  const qc = useQueryClient();
+  const canEdit = Boolean(user?.isPlatformAdmin && activeWorkspaceId);
+
+  const detail = useQuery({
+    queryKey: ['platform-workspace', activeWorkspaceId],
+    queryFn: () => platformApi.getWorkspace(activeWorkspaceId as string),
+    enabled: canEdit,
+  });
+
+  const save = useMutation({
+    mutationFn: async (input: FeeAmounts) => {
+      const id = activeWorkspaceId as string;
+      const rate = detail.data?.feeHistory[0];
+      if (!rate) throw new Error('This agency has no rate card yet.');
+      const settlement = detail.data?.settlementFee;
+
+      if (input.fixedFee !== rate.pspFixedFee) {
+        await platformApi.setPlatformFee(id, {
+          pspRatePct: rate.pspRatePct, marginRatePct: rate.marginRatePct, pspFixedFee: input.fixedFee,
+        });
+      }
+      const reversalsChanged = !settlement
+        || input.refundFee !== settlement.refundFee
+        || input.chargebackFee !== settlement.chargebackFee
+        || input.declineFee !== settlement.declineFee;
+      if (reversalsChanged) {
+        await platformApi.setSettlementFee(id, {
+          settlementFeePct: settlement?.settlementFeePct ?? 0,
+          settlementFeeFlat: settlement?.settlementFeeFlat ?? 0,
+          reservePct: settlement?.reservePct ?? 0,
+          reserveReleaseDays: settlement?.reserveReleaseDays ?? 0,
+          refundFee: input.refundFee, chargebackFee: input.chargebackFee, declineFee: input.declineFee,
+        });
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['platform-workspace', activeWorkspaceId] });
+      qc.invalidateQueries({ queryKey: ['platform-fee', activeWorkspaceId] });
+    },
+  });
+
+  return { canEdit, detail, save };
 }
 
 export function useTwoFactor() {
