@@ -18,10 +18,28 @@ export interface RunPayoutInput {
   to?: string;
 }
 
+/** One payout that was run: who, how much, for which period. */
+export interface PayoutRecord {
+  id: string;
+  payeeType: 'account' | 'agent';
+  payee: string | null;
+  periodStart: string;
+  periodEnd: string;
+  amount: number;
+  currency: string;
+  status: 'pending' | 'approved' | 'paid' | 'on_hold';
+  createdAt: string;
+}
+
 export const payoutsApi = {
   getBreakdown(from: string, to: string): Promise<PayoutBreakdown> {
     const qs = new URLSearchParams({ from, to });
     return api.get<PayoutBreakdown>(workspacePath(`/payouts/breakdown?${qs.toString()}`));
+  },
+
+  async list(): Promise<PayoutRecord[]> {
+    const raw = await api.get<{ payouts: PayoutRecord[] }>(workspacePath('/payouts?limit=200'));
+    return raw.payouts;
   },
 
   run(input: RunPayoutInput) {

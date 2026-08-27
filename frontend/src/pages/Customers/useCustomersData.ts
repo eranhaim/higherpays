@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
-import { customersApi, type Customer, type CustomerDetail, type CreateCustomerInput, type ListCustomersQuery } from '../../api/endpoints';
+import { customersApi, type Customer, type CustomerDetail, type CreateCustomerInput, type UpdateCustomerInput, type ListCustomersQuery } from '../../api/endpoints';
 
 /** The most the customers endpoint returns in one call. */
 const PAGE_SIZE = 200;
@@ -13,6 +13,9 @@ export interface UseCustomersDataResult {
   isLoadingMore: boolean;
   loadMore: () => void;
   createCustomer: (input: CreateCustomerInput) => Promise<void>;
+  updateCustomer: (id: string, input: UpdateCustomerInput) => Promise<void>;
+  /** Wipes name and contact details; payments stay, anonymised. */
+  eraseCustomer: (id: string) => Promise<void>;
   exportCsv: () => Promise<void>;
 }
 
@@ -30,10 +33,16 @@ export function useCustomersData(query: Omit<ListCustomersQuery, 'limit' | 'offs
     enabled,
   });
 
-  const create = useMutation({
-    mutationFn: (input: CreateCustomerInput) => customersApi.create(input),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['customers', activeWorkspaceId] }),
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['customers', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['customer', activeWorkspaceId] });
+  };
+  const create = useMutation({ mutationFn: (input: CreateCustomerInput) => customersApi.create(input), onSuccess: invalidate });
+  const update = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: UpdateCustomerInput }) => customersApi.update(id, input),
+    onSuccess: invalidate,
   });
+  const erase = useMutation({ mutationFn: (id: string) => customersApi.erase(id), onSuccess: invalidate });
 
   return {
     customers: customers.data?.pages.flat() ?? [],
@@ -43,6 +52,8 @@ export function useCustomersData(query: Omit<ListCustomersQuery, 'limit' | 'offs
     isLoadingMore: customers.isFetchingNextPage,
     loadMore: () => { void customers.fetchNextPage(); },
     createCustomer: async (input) => { await create.mutateAsync(input); },
+    updateCustomer: async (id, input) => { await update.mutateAsync({ id, input }); },
+    eraseCustomer: async (id) => { await erase.mutateAsync(id); },
     exportCsv: () => customersApi.exportCsv(),
   };
 }

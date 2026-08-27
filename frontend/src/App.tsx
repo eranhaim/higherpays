@@ -7,9 +7,11 @@ import { useCan, usePermissionsPending } from './hooks/usePermission';
 import { NAV_ITEMS } from './rbac/nav';
 import ToastContainer from './components/Toast';
 import LoginPage from './pages/Login';
+import AcceptInvitePage from './pages/AcceptInvite';
 import PaymentsPage from './pages/Payments';
 import LinksPage from './pages/Links';
 import PayoutsPage from './pages/Payouts';
+import SettlementsPage from './pages/Settlements';
 import AccountsPage from './pages/Accounts';
 import AgentsPage from './pages/Agents';
 import CustomersPage from './pages/Customers';
@@ -35,6 +37,8 @@ export default function App() {
       <BrowserRouter useTransitions={false}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
+          {/* Public: the emailed invite link lands here before there is a login. */}
+          <Route path="/accept-invite" element={<AcceptInvitePage />} />
           <Route element={<AuthGuard />}>
             {/* The operator console is a tier above workspaces, so it sits
                 outside the workspace shell and gates on its own check. */}
@@ -44,6 +48,7 @@ export default function App() {
                 <Route path="/payments" element={<PaymentsPage />} />
                 <Route path="/links" element={<LinksPage />} />
                 <Route path="/payouts" element={<PayoutsPage />} />
+                <Route path="/settlements" element={<SettlementsPage />} />
                 <Route path="/accounts" element={<AccountsPage />} />
                 <Route path="/agents" element={<AgentsPage />} />
                 <Route path="/customers" element={<CustomersPage />} />

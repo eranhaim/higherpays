@@ -28,6 +28,7 @@ function NavSection({ group, onNavigate }: NavSectionProps) {
   const can = useCan();
   const { labels } = useCurrentSession();
   const visible = group.items.filter((i) => can(i.perm));
+  const seesWholeWorkspace = can('data.view_all');
   if (visible.length === 0) return null;
 
   return (
@@ -41,7 +42,7 @@ function NavSection({ group, onNavigate }: NavSectionProps) {
           onClick={(e) => onNavigate(e, item.path)}
         >
           <NavIcon name={item.icon} />
-          {navLabel(item, labels)}
+          {navLabel(item, labels, seesWholeWorkspace)}
         </NavLink>
       ))}
     </div>

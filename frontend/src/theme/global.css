@@ -195,6 +195,8 @@ input.amount-input { width: 110px; }
   background: var(--brand); color: var(--bg); border: 1px solid transparent;
   font-weight: 700; font-size: var(--text-base); padding: 9px 15px;
   border-radius: var(--radius); cursor: pointer; font-family: var(--sans);
+  /* Links styled as buttons must not keep the anchor underline. */
+  text-decoration: none; display: inline-block; text-align: center;
 }
 .btn:hover:not(:disabled) { filter: brightness(1.06); }
 .btn:active:not(:disabled) { transform: translateY(1px); }
@@ -294,6 +296,12 @@ input.amount-input { width: 110px; }
   background: var(--surface); border: 1px solid var(--rule);
   border-radius: 11px; padding: 12px; z-index: var(--z-popover);
   box-shadow: var(--shadow-pop); min-width: 236px;
+}
+/* Anchored to the right edge when opening left-aligned would run off screen. */
+.rangepop.right { left: auto; right: 0; }
+.rp-presets {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--rule);
 }
 .rp-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
 .rp-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }

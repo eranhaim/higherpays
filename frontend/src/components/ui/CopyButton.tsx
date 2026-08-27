@@ -6,13 +6,17 @@ interface CopyButtonProps {
   /** Button text in its resting state. */
   label?: string;
   disabled?: boolean;
+  /** Row-action size, for a table cell. */
+  small?: boolean;
+  /** The filled button, when copying is the main thing to do on the dialog. */
+  primary?: boolean;
 }
 
 /**
  * Copies a value and confirms it on the button itself, so the feedback is
  * where the user is looking rather than only in a toast.
  */
-export function CopyButton({ value, label = 'Copy', disabled }: CopyButtonProps) {
+export function CopyButton({ value, label = 'Copy', disabled, small, primary }: CopyButtonProps) {
   const [isCopied, setIsCopied] = useState(false);
 
   useEffect(() => {
@@ -31,8 +35,9 @@ export function CopyButton({ value, label = 'Copy', disabled }: CopyButtonProps)
     }
   };
 
+  const className = ['btn', primary ? '' : 'ghost', small ? 'small' : ''].filter(Boolean).join(' ');
   return (
-    <button className="btn ghost" type="button" onClick={copy} disabled={disabled || !value}>
+    <button className={className} type="button" onClick={copy} disabled={disabled || !value}>
       {isCopied ? 'Copied' : label}
     </button>
   );

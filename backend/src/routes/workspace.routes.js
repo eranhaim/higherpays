@@ -20,6 +20,10 @@ const publicWorkspace = (w) => ({
   labels: { account: w.account_label, accounts: w.account_label_plural, agent: w.agent_label, agents: w.agent_label_plural },
   minLinkAmount: w.min_link_amount == null ? null : Number(w.min_link_amount),
   maxLinkAmount: w.max_link_amount == null ? null : Number(w.max_link_amount),
+  // The agency's own MantaPay identity: the MID it sends on every link, and
+  // the endpoint MantaPay must be told to notify.
+  merchantId: w.merchant_id,
+  webhookEndpointId: w.webhook_endpoint_id,
 });
 
 // GET /workspaces/:id — the agency and its settings.
@@ -28,13 +32,19 @@ router.get('/', requirePermission('settings.view'), asyncHandler(async (req, res
   res.json(publicWorkspace(w));
 }));
 
-// PATCH /workspaces/:id  { name?, accountLabel?, accountLabelPlural?, agentLabel?, agentLabelPlural? }
+// PATCH /workspaces/:id  { name?, accountLabel?, …, merchantId? }
 router.patch('/', requirePermission('settings.edit'), asyncHandler(async (req, res) => {
   const body = req.body || {};
   const sets = [], vals = [];
   if ('name' in body) {
     if (!isStr(body.name, 120)) return badRequest(res, 'name is required', ['name']);
-    vals.push(body.name.trim()); sets.push(`name = $${vals.length}`);
+    vals.push(body.name.trim()); sets.push(`name = ${vals.length}`);
+  }
+  // Empty clears it, which falls the server back to MANTAPAY_MERCHANT_ID.
+  if ('merchantId' in body) {
+    const mid = body.merchantId == null ? '' : String(body.merchantId).trim();
+    if (mid.length > 64) return badRequest(res, 'merchantId is at most 64 characters', ['merchantId']);
+    vals.push(mid || null); sets.push(`merchant_id = ${vals.length}`);
   }
   for (const [key, col] of Object.entries(LABELS)) {
     if (!(key in body)) continue;

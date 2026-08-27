@@ -10,3 +10,4 @@ export { FilterBar } from './FilterBar';
 export { DateRangePicker, type DateRange } from './DateRangePicker';
 export { DetailRow } from './DetailRow';
 export { CopyButton } from './CopyButton';
+export { Select } from './Select';

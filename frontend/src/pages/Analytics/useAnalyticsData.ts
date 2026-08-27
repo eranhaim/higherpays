@@ -47,10 +47,19 @@ function parseLocalDate(input: string, endOfDay: boolean): number | null {
   return date.getTime();
 }
 
-/** Start of the `from` day to end of the `to` day, local time. Null when the inputs are not a valid range. */
+/**
+ * Start of the `from` day to end of the `to` day, local time.
+ *
+ * The shared picker can be cleared to "all time", but this page always compares
+ * a bounded window against the one before it — so an open bound falls back to
+ * the last 30 days rather than leaving the page with nothing to draw.
+ * Null only when the two bounds are the wrong way round.
+ */
 export function toDateWindow(filters: AnalyticsFilters): DateWindow | null {
-  const fromMs = parseLocalDate(filters.from, false);
-  const toMs = parseLocalDate(filters.to, true);
+  const to = filters.to || toLocalDateInput(Date.now());
+  const from = filters.from || toLocalDateInput((parseLocalDate(to, false) ?? Date.now()) - 29 * DAY_MS);
+  const fromMs = parseLocalDate(from, false);
+  const toMs = parseLocalDate(to, true);
   if (fromMs === null || toMs === null || toMs < fromMs) return null;
   return { fromMs, toMs, days: Math.round((toMs - fromMs) / DAY_MS) };
 }

@@ -23,6 +23,13 @@ const SHAPES: Record<NavIconName, ReactNode> = {
       <path d="M6 12h.01M18 12h.01" />
     </>
   ),
+  settlements: (
+    <>
+      <path d="M6 2h9l5 5v15H6z" />
+      <path d="M15 2v5h5" />
+      <path d="M9 13h6M9 17h6" />
+    </>
+  ),
   accounts: <><circle cx="12" cy="8" r="4" /><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7" /></>,
   agents: (
     <>

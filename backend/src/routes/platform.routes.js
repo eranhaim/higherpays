@@ -150,20 +150,6 @@ router.patch('/workspaces/:id/status', asyncHandler(async (req, res) => {
   res.json(w);
 }));
 
-// PATCH /platform/workspaces/:id/merchant-id  { merchantId }
-// The MID MantaPay knows this agency by. It overrides MANTAPAY_MERCHANT_ID on
-// every hosted-page link and is checked on every inbound notification, so a
-// placeholder here breaks both silently. Empty clears it back to the env value.
-router.patch('/workspaces/:id/merchant-id', asyncHandler(async (req, res) => {
-  const raw = (req.body || {}).merchantId;
-  const merchantId = raw == null || String(raw).trim() === '' ? null : String(raw).trim();
-  if (merchantId && merchantId.length > 64) return badRequest(res, 'merchantId is at most 64 characters', ['merchantId']);
-  const w = (await query('UPDATE workspaces SET merchant_id=$2 WHERE id=$1 RETURNING id, name, merchant_id', [req.params.id, merchantId])).rows[0];
-  if (!w) return res.status(404).json({ error: 'not_found' });
-  await audit({ workspaceId: w.id, actorUserId: uid(req), action: 'platform.workspace.merchant_id', entityType: 'workspace', entityId: w.id, metadata: { merchantId } });
-  res.json({ id: w.id, name: w.name, merchantId: w.merchant_id });
-}));
-
 // POST /platform/agencies — onboard a new agency in one step: workspace,
 // rate card, settlement fees, default split, and an invite for its first
 // admin (who sets their own password via the link).
@@ -202,7 +188,7 @@ router.post('/agencies', asyncHandler(async (req, res) => {
     return ws;
   });
 
-  const link = `https://app.higherpays.com/accept-invite?token=${token}`;
+  const link = `${config.appPublicBase}/accept-invite?token=${token}`;
   await sendEmail({ to: b.adminEmail, subject: `You're invited to run ${b.name} on HigherPays`, body: `Set up your login: ${link}` });
   await audit({ workspaceId: out.id, actorUserId: uid(req), action: 'platform.agency.onboard', entityType: 'workspace', entityId: out.id, metadata: { name: b.name, adminEmail: b.adminEmail } });
   res.status(201).json({ workspaceId: out.id, name: b.name, webhookEndpointId: out.webhook_endpoint_id, blendedRatePct: b.pspRatePct + b.marginRatePct });

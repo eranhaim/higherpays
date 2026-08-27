@@ -17,8 +17,9 @@ export interface UsePaymentsDataResult {
   isLoadingMore: boolean;
   loadMore: () => void;
   complete: (id: string, input: CompletePaymentInput) => Promise<Payment>;
-  /** Records a refund already issued in the provider dashboard. */
-  recordRefund: (id: string) => Promise<void>;
+  /** Records a reversal already issued in the provider dashboard. */
+  recordReversal: (id: string, kind: 'refund' | 'chargeback') => Promise<void>;
+  exportCsv: () => Promise<void>;
 }
 
 export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): UsePaymentsDataResult {
@@ -68,8 +69,9 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     mutationFn: ({ id, input }: { id: string; input: CompletePaymentInput }) => paymentsApi.complete(id, input),
     onSuccess: invalidate,
   });
-  const refund = useMutation({
-    mutationFn: (id: string) => paymentsApi.refund(id),
+  const reverse = useMutation({
+    mutationFn: ({ id, kind }: { id: string; kind: 'refund' | 'chargeback' }) =>
+      kind === 'refund' ? paymentsApi.refund(id) : paymentsApi.chargeback(id),
     onSuccess: invalidate,
   });
 
@@ -85,6 +87,7 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     isLoadingMore: payments.isFetchingNextPage,
     loadMore: () => { void payments.fetchNextPage(); },
     complete: (id, input) => complete.mutateAsync({ id, input }),
-    recordRefund: async (id) => { await refund.mutateAsync(id); },
+    recordReversal: async (id, kind) => { await reverse.mutateAsync({ id, kind }); },
+    exportCsv: () => paymentsApi.exportCsv(filters),
   };
 }

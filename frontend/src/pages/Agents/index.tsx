@@ -220,16 +220,20 @@ function AgentFormModal({ title, subtitle, agent, canEditCommission, onClose, on
             <label htmlFor="agent-country">Country</label>
             <input id="agent-country" type="text" maxLength={2} placeholder="e.g. IL" value={country} onChange={(e) => setCountry(e.target.value.toUpperCase())} />
           </div>
-          <div className="field">
-            <label htmlFor="agent-commission">Commission on each sale</label>
-            <div className="pct-input">
-              <input id="agent-commission" type="number" min={0} max={100} value={commissionText}
-                aria-invalid={Number.isNaN(commission) || undefined} disabled={!canEditCommission}
-                onChange={(e) => setCommissionText(e.target.value)} />
-              <span className="sub">%</span>
+          {/* What someone earns is a revenue decision; without that permission
+              the field is absent rather than shown greyed out. */}
+          {canEditCommission && (
+            <div className="field">
+              <label htmlFor="agent-commission">Commission on each sale</label>
+              <div className="pct-input">
+                <input id="agent-commission" type="number" min={0} max={100} value={commissionText}
+                  aria-invalid={Number.isNaN(commission) || undefined}
+                  onChange={(e) => setCommissionText(e.target.value)} />
+                <span className="sub">%</span>
+              </div>
+              <p className="sub">Share of the distributable amount, after fees. Together with the {labels.account.toLowerCase()} share it must fit in 100%.</p>
             </div>
-            <p className="sub">Share of the distributable amount, after fees. Together with the {labels.account.toLowerCase()} share it must fit in 100%.</p>
-          </div>
+          )}
         </div>
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>

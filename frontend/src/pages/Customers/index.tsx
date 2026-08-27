@@ -5,11 +5,11 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import {
-  PageHeader, Money, DateCell, DataTable, FilterBar, DetailRow, Pill, type Column,
+  PageHeader, Money, DateCell, DataTable, FilterBar, DetailRow, Pill, Select, type Column,
 } from '../../components/ui';
 import {
   CUSTOMER_SEGMENTS, CUSTOMER_SEGMENT_LABELS, PAYMENT_STATUS_LABELS,
-  type Customer, type CustomerSegment,
+  type Customer, type CustomerSegment, type CreateCustomerInput, type UpdateCustomerInput,
 } from '../../api/endpoints';
 import { useCustomersData, useCustomerDetail } from './useCustomersData';
 
@@ -29,53 +29,42 @@ function SegmentTag({ segment }: { segment: CustomerSegment }) {
 export default function CustomersPage() {
   const can = useCan();
   const { labels } = useCurrentSession();
+  const canManage = can('customers.manage');
   const [segment, setSegment] = useState<'' | CustomerSegment>('');
   const [search, setSearch] = useState('');
   const q = useDebounced(search, 300);
   const query = useMemo(() => ({ segment: segment || undefined, q: q.trim() || undefined }), [segment, q]);
 
-  const { customers, isLoading, isError, hasMore, isLoadingMore, loadMore, createCustomer, exportCsv } = useCustomersData(query);
+  const {
+    customers, isLoading, isError, hasMore, isLoadingMore, loadMore,
+    createCustomer, updateCustomer, eraseCustomer, exportCsv,
+  } = useCustomersData(query);
   const [detailId, setDetailId] = useState<string | null>(null);
   const detail = useCustomerDetail(detailId);
-
   const [addOpen, setAddOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [telegramName, setTelegramName] = useState('');
-  const [email, setEmail] = useState('');
-  const [phone, setPhone] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
+  const [editing, setEditing] = useState<Customer | null>(null);
+  const [erasing, setErasing] = useState<Customer | null>(null);
+  const [isErasing, setIsErasing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
-
-  const closeAdd = () => { setAddOpen(false); setName(''); setTelegramName(''); setEmail(''); setPhone(''); };
-
-  const submitAdd = async () => {
-    if (!name.trim()) { toast('Name is required.'); return; }
-    setIsSaving(true);
-    try {
-      await createCustomer({
-        name: name.trim(),
-        telegramName: telegramName.trim() || undefined,
-        email: email.trim() || undefined,
-        phone: phone.trim() || undefined,
-      });
-      closeAdd();
-      toast('Customer added.');
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not add the customer.');
-    } finally {
-      setIsSaving(false);
-    }
-  };
 
   const runExport = async () => {
     setIsExporting(true);
+    try { await exportCsv(); toast('Customers exported to CSV.'); }
+    catch (err) { toast(err instanceof Error ? err.message : 'Export failed.'); }
+    finally { setIsExporting(false); }
+  };
+
+  const confirmErase = async (c: Customer) => {
+    setIsErasing(true);
     try {
-      await exportCsv();
-      toast('Customers exported to CSV.');
+      await eraseCustomer(c.id);
+      setErasing(null);
+      setDetailId(null);
+      toast(`${c.name} erased. Their payments stay, anonymised.`);
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Export failed.');
+      toast(err instanceof Error ? err.message : 'Could not erase the customer.');
     } finally {
-      setIsExporting(false);
+      setIsErasing(false);
     }
   };
 
@@ -92,6 +81,14 @@ export default function CustomersPage() {
     { key: 'spend', header: 'Total spend', align: 'right', render: (c) => <Money amount={c.totalSpend} direction="in" /> },
     { key: 'last', header: 'Last purchase', render: (c) => <DateCell ts={c.lastPurchaseAt} /> },
     { key: 'segment', header: 'Segment', render: (c) => <SegmentTag segment={c.segment} /> },
+    ...(canManage ? [{
+      key: 'actions', header: 'Actions', hideHeader: true, align: 'right' as const,
+      render: (c: Customer) => (
+        <div className="cell-actions">
+          <button className="btn ghost small" onClick={() => setEditing(c)}>Edit</button>
+        </div>
+      ),
+    }] : []),
   ];
 
   return (
@@ -104,16 +101,16 @@ export default function CustomersPage() {
             {can('customers.export') && (
               <button className="btn ghost" onClick={runExport} disabled={isExporting}>{isExporting ? 'Exporting…' : 'Export CSV'}</button>
             )}
-            {can('customers.manage') && <button className="btn" onClick={() => setAddOpen(true)}>Add customer</button>}
+            {canManage && <button className="btn" onClick={() => setAddOpen(true)}>Add customer</button>}
           </>
         }
       />
 
       <FilterBar>
-        <select aria-label="Filter by segment" value={segment} onChange={(e) => setSegment(e.target.value as '' | CustomerSegment)}>
+        <Select label="Segment" hideLabel value={segment} onChange={(v) => setSegment(v as '' | CustomerSegment)}>
           <option value="">All segments</option>
           {CUSTOMER_SEGMENTS.map((s) => <option key={s} value={s}>{CUSTOMER_SEGMENT_LABELS[s]}</option>)}
-        </select>
+        </Select>
         <input type="search" className="search-input" aria-label="Search customers"
           placeholder="Search name, Telegram, email or phone" value={search} onChange={(e) => setSearch(e.target.value)} />
         <button className="btn ghost" onClick={() => { setSegment(''); setSearch(''); }}>Clear</button>
@@ -137,7 +134,7 @@ export default function CustomersPage() {
         }
       />
 
-      <Modal open={detailId !== null} onClose={() => setDetailId(null)}
+      <Modal open={detailId !== null && editing === null && erasing === null} onClose={() => setDetailId(null)}
         title={detail.data?.name ?? 'Customer'} subtitle={detail.data?.telegramName ?? detail.data?.email ?? undefined}>
         {detail.isLoading && <p className="sub">Loading…</p>}
         {detail.isError && <p className="sub">Couldn't load this customer.</p>}
@@ -176,13 +173,105 @@ export default function CustomersPage() {
               </div>
             )}
             <div className="modal-actions">
-              <button className="btn" onClick={() => setDetailId(null)}>Close</button>
+              {canManage && (
+                <>
+                  <button className="btn ghost" onClick={() => setEditing(detail.data)}>Edit</button>
+                  <button className="btn ghost" onClick={() => setErasing(detail.data)}>Erase</button>
+                </>
+              )}
+              <span className="spacer" />
+              <button className="btn ghost" onClick={() => setDetailId(null)}>Close</button>
             </div>
           </>
         )}
       </Modal>
 
-      <Modal open={addOpen} onClose={closeAdd} title="Add customer" subtitle="Keep only data you have a lawful basis to hold.">
+      {addOpen && (
+        <CustomerFormModal
+          title="Add customer"
+          subtitle="Keep only data you have a lawful basis to hold."
+          onClose={() => setAddOpen(false)}
+          onSubmit={async (values) => {
+            await createCustomer(values);
+            setAddOpen(false);
+            toast('Customer added.');
+          }}
+        />
+      )}
+
+      {editing && (
+        <CustomerFormModal
+          title={`Edit ${editing.name}`}
+          customer={editing}
+          onClose={() => setEditing(null)}
+          onSubmit={async (values) => {
+            await updateCustomer(editing.id, values);
+            setEditing(null);
+            toast('Customer updated.');
+          }}
+        />
+      )}
+
+      <Modal open={erasing !== null} onClose={() => setErasing(null)} title={erasing ? `Erase ${erasing.name}?` : ''}
+        subtitle="Their name and contact details are wiped for good. Their payments stay in the ledger, anonymised. Use this for an erasure request.">
+        {erasing && (
+          <div className="modal-actions">
+            <button className="btn ghost" onClick={() => setErasing(null)}>Keep</button>
+            <button className="btn danger" disabled={isErasing} onClick={() => confirmErase(erasing)}>{isErasing ? 'Erasing…' : 'Erase customer'}</button>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+interface CustomerFormValues {
+  name: string;
+  telegramName?: string;
+  email?: string;
+  phone?: string;
+  segment?: CustomerSegment;
+}
+
+/** Add and edit are the same form; edit also lets the segment be set by hand. */
+function CustomerFormModal({ title, subtitle, customer, onClose, onSubmit }: {
+  title: string;
+  subtitle?: string;
+  customer?: Customer;
+  onClose: () => void;
+  onSubmit: (values: CreateCustomerInput & UpdateCustomerInput) => Promise<void>;
+}) {
+  const [name, setName] = useState(customer?.name ?? '');
+  const [telegramName, setTelegramName] = useState(customer?.telegramName ?? '');
+  const [email, setEmail] = useState(customer?.email ?? '');
+  const [phone, setPhone] = useState(customer?.phone ?? '');
+  const [segment, setSegment] = useState<CustomerSegment>(customer?.segment ?? 'new');
+  const [isSaving, setIsSaving] = useState(false);
+  const editing = Boolean(customer);
+
+  const submit = async () => {
+    if (!name.trim()) { toast('Name is required.'); return; }
+    setIsSaving(true);
+    try {
+      const values: CustomerFormValues = {
+        name: name.trim(),
+        // Editing sends the cleared field so the server blanks it; adding just omits it.
+        telegramName: telegramName.trim() || (editing ? '' : undefined),
+        email: email.trim() || (editing ? '' : undefined),
+        phone: phone.trim() || (editing ? '' : undefined),
+        ...(editing ? { segment } : {}),
+      };
+      await onSubmit(values);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not save the customer.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={title} subtitle={subtitle}>
+      <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
         <div className="field">
           <label htmlFor="customer-name">Name</label>
           <input id="customer-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
@@ -201,11 +290,17 @@ export default function CustomersPage() {
             <input id="customer-phone" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
           </div>
         </div>
+        {editing && (
+          <Select id="customer-segment" label="Segment" value={segment} onChange={(v) => setSegment(v as CustomerSegment)}
+            hint="Segments are recomputed from spend; setting one by hand holds until the next purchase.">
+            {CUSTOMER_SEGMENTS.map((s) => <option key={s} value={s}>{CUSTOMER_SEGMENT_LABELS[s]}</option>)}
+          </Select>
+        )}
         <div className="modal-actions">
-          <button className="btn ghost" onClick={closeAdd}>Cancel</button>
-          <button className="btn" onClick={submitAdd} disabled={isSaving}>{isSaving ? 'Adding…' : 'Add customer'}</button>
+          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+          <button type="submit" className="btn" disabled={isSaving}>{isSaving ? 'Saving…' : editing ? 'Save changes' : 'Add customer'}</button>
         </div>
-      </Modal>
-    </div>
+      </form>
+    </Modal>
   );
 }

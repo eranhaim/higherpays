@@ -147,7 +147,7 @@ export function NotificationsPane() {
                           <button className="btn ghost small" disabled={setChannelActive.isPending} onClick={() => setActive(c, !c.active)}>
                             {c.active ? 'Pause' : 'Resume'}
                           </button>
-                          <button className="btn danger small" onClick={() => setRemoving(c)}>Remove</button>
+                          <button className="btn ghost small" onClick={() => setRemoving(c)}>Remove</button>
                         </div>
                       )}
                     </td>

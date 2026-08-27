@@ -19,14 +19,17 @@ interface MoneyProps {
  * Renders a money value with tabular numerals and its direction colour.
  * Every money number in the UI should come through here so figures line up
  * in a column and money in never looks like money out.
+ *
+ * Zero is neither in nor out: a settled balance must not read as a debt.
  */
 export function Money({ amount, currency, direction, emphasis }: MoneyProps) {
   const session = useCurrentSession();
   const c = currency ?? session.currency;
   const text = formatMoney(amount, c);
+  const tone = amount === 0 ? undefined : direction;
   const cls = [
     'amt',
-    direction === 'in' ? 'up' : direction === 'out' ? 'down' : '',
+    tone === 'in' ? 'up' : tone === 'out' ? 'down' : '',
     emphasis ? 'strong' : '',
   ].filter(Boolean).join(' ');
   return <span className={cls}>{text}</span>;

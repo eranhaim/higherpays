@@ -17,6 +17,26 @@ function range(req, source) {
   return { F: from.toISOString(), T: to.toISOString() };
 }
 
+// GET /?limit — every payout run, newest first, with who was paid.
+router.get('/', requirePermission('revenue.view'), asyncHandler(async (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+  const rows = (await query(`
+    SELECT p.id, p.payee_type, p.period_start::text AS period_start, p.period_end::text AS period_end, p.net, p.currency, p.status, p.created_at,
+           COALESCE(a.name, u.full_name) AS payee
+      FROM payouts p
+      LEFT JOIN accounts a ON a.id = p.account_id
+      LEFT JOIN agents ag ON ag.id = p.agent_id
+      LEFT JOIN users u ON u.id = ag.user_id
+     WHERE p.workspace_id = $1
+     ORDER BY p.created_at DESC, p.id DESC LIMIT $2`, [wid(req), limit])).rows;
+  res.json({
+    payouts: rows.map((r) => ({
+      id: r.id, payeeType: r.payee_type, payee: r.payee, periodStart: r.period_start, periodEnd: r.period_end,
+      amount: num(r.net), currency: r.currency, status: r.status, createdAt: r.created_at,
+    })),
+  });
+}));
+
 // GET /breakdown?from&to — accrued owed per account and per agent, the reserve
 // the provider holds, and whether the agency can pay everyone today.
 router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (req, res) => {

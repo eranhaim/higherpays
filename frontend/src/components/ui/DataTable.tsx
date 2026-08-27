@@ -70,7 +70,12 @@ export function DataTable<T>(props: DataTableProps<T>) {
                   // mouse-only.
                   tabIndex={onRowClick ? 0 : undefined}
                   role={onRowClick ? 'button' : undefined}
-                  onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  // A button or link inside the row is its own action; clicking
+                  // it must not also open the row.
+                  onClick={onRowClick ? (e) => {
+                    if ((e.target as HTMLElement).closest('button, a, input, select, label')) return;
+                    onRowClick(row);
+                  } : undefined}
                   onKeyDown={onRowClick ? (e) => {
                     if (e.key !== 'Enter' && e.key !== ' ') return;
                     e.preventDefault();

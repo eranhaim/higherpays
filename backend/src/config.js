@@ -63,6 +63,8 @@ const config = {
   // (e.g. https://api.higherpays.com). If unset, MantaPay falls back to the
   // URL configured on the merchant profile.
   webhookPublicBase: process.env.WEBHOOK_PUBLIC_BASE || null,
+  // Where the console is served, for the links we put in emails.
+  appPublicBase: (process.env.APP_PUBLIC_BASE || 'https://higherpays.com').replace(/\/$/, ''),
   // A single-use payment link dies this long after creation if nobody pays.
   // MantaPay honours ExpiredOn on the hosted page; the reconciler mirrors it.
   linkTtlMinutes: parseInt(process.env.LINK_TTL_MINUTES || String(24 * 60), 10),

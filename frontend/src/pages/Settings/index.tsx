@@ -1,38 +1,39 @@
 import { useSearchParams } from 'react-router-dom';
 import { useCan } from '../../hooks/usePermission';
-import { EmptyState, PageHeader } from '../../components/ui';
-import { GeneralPane } from './GeneralPane';
+import { PageHeader } from '../../components/ui';
+import { WorkspacePane } from './WorkspacePane';
 import { CategoriesPane } from './CategoriesPane';
 import { NotificationsPane } from './NotificationsPane';
+import { ActivityPane } from './ActivityPane';
+import { AccountPane } from './AccountPane';
 
-type SettingsTab = 'general' | 'categories' | 'notifications';
+type SettingsTab = 'workspace' | 'categories' | 'notifications' | 'activity' | 'account';
 
+/**
+ * Two kinds of settings share this page. The workspace tabs need
+ * `settings.view`; the personal tabs (notifications, account) belong to
+ * everyone with a login, so the page itself is open to every role.
+ */
 export default function SettingsPage() {
   const can = useCan();
   const [searchParams, setSearchParams] = useSearchParams();
-
-  if (!can('settings.view')) {
-    return (
-      <div>
-        <PageHeader title="Settings" />
-        <div className="card">
-          <EmptyState title="You don't have access to settings." hint="Ask an admin if you need it." />
-        </div>
-      </div>
-    );
-  }
+  const seesWorkspace = can('settings.view');
 
   const tabs: Array<{ id: SettingsTab; label: string }> = [
-    { id: 'general', label: 'General' },
-    { id: 'categories', label: 'Categories' },
-    ...(can('payments.view') ? [{ id: 'notifications' as const, label: 'Notifications' }] : []),
+    ...(seesWorkspace ? [
+      { id: 'workspace' as const, label: 'Workspace' },
+      { id: 'categories' as const, label: 'Categories' },
+    ] : []),
+    { id: 'notifications', label: 'Notifications' },
+    ...(seesWorkspace ? [{ id: 'activity' as const, label: 'Activity' }] : []),
+    { id: 'account', label: 'My account' },
   ];
   const requested = searchParams.get('tab');
-  const tab = tabs.find((t) => t.id === requested)?.id ?? 'general';
+  const tab = tabs.find((t) => t.id === requested)?.id ?? tabs[0].id;
 
   return (
     <div>
-      <PageHeader title="Settings" />
+      <PageHeader title="Settings" subtitle={seesWorkspace ? 'How this workspace runs, and your own login.' : 'Your notifications and your login.'} />
 
       <div className="tabbar" role="tablist" aria-label="Settings sections">
         {tabs.map((t) => (
@@ -63,9 +64,11 @@ export default function SettingsPage() {
       </div>
 
       <div id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`}>
-        {tab === 'general' && <GeneralPane />}
+        {tab === 'workspace' && <WorkspacePane />}
         {tab === 'categories' && <CategoriesPane />}
         {tab === 'notifications' && <NotificationsPane />}
+        {tab === 'activity' && <ActivityPane />}
+        {tab === 'account' && <AccountPane />}
       </div>
     </div>
   );

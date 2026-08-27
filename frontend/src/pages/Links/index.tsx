@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useDebounced } from '../../hooks/useDebounced';
 import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
@@ -8,7 +9,7 @@ import { formatMoney, sum } from '../../lib/format';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import {
-  PageHeader, StatCard, StatGrid, Money, Pill, DateCell, CopyButton,
+  PageHeader, StatCard, StatGrid, Money, Pill, DateCell, CopyButton, DetailRow, Select,
   DataTable, FilterBar, DateRangePicker, type Column, type DateRange,
 } from '../../components/ui';
 import {
@@ -31,6 +32,8 @@ export default function LinksPage() {
   const can = useCan();
   const { labels } = useCurrentSession();
   const { rateCard } = useRateCard();
+  const canCreate = can('links.create');
+  const canComplete = can('payments.complete');
   const [filters, setFilters] = useState<LinksFilters>(DEFAULT_FILTERS);
 
   // Sent to the server, not applied to the loaded page: the list is paginated.
@@ -58,6 +61,7 @@ export default function LinksPage() {
   const [amountText, setAmountText] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
+  const [detail, setDetail] = useState<PaymentLink | null>(null);
   const [cancelling, setCancelling] = useState<PaymentLink | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const [isReconciling, setIsReconciling] = useState(false);
@@ -109,6 +113,7 @@ export default function LinksPage() {
     try {
       await cancelLink(l.id);
       setCancelling(null);
+      setDetail(null);
       toast('Link cancelled.');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not cancel the link.');
@@ -141,12 +146,15 @@ export default function LinksPage() {
     { key: 'expires', header: 'Expires', render: (l) => l.expiresAt ? <DateCell ts={l.expiresAt} /> : <span className="sub">never</span> },
     {
       key: 'actions', header: 'Actions', hideHeader: true, align: 'right',
-      render: (l) => isShareable(l.status) ? (
+      render: (l) => (
         <div className="cell-actions">
-          {l.checkoutUrl && <CopyButton value={l.checkoutUrl} label="Copy" />}
-          {can('links.create') && <button className="btn ghost small" onClick={() => setCancelling(l)}>Cancel</button>}
+          {isShareable(l.status) && l.checkoutUrl && <CopyButton value={l.checkoutUrl} label="Copy" small />}
+          {isShareable(l.status) && canCreate && <button className="btn ghost small" onClick={() => setCancelling(l)}>Cancel</button>}
+          {l.status === 'pending' && canComplete && (
+            <Link className="btn ghost small" to={`/payments?needs_details=1&q=${encodeURIComponent(l.referenceId)}`}>Complete</Link>
+          )}
         </div>
-      ) : null,
+      ),
     },
   ];
 
@@ -162,7 +170,7 @@ export default function LinksPage() {
                 {isReconciling ? 'Reconciling…' : 'Reconcile'}
               </button>
             )}
-            {can('links.create') && <button className="btn" onClick={openCreate}>New link</button>}
+            {canCreate && <button className="btn" onClick={openCreate}>New link</button>}
           </>
         }
       />
@@ -186,18 +194,18 @@ export default function LinksPage() {
       </StatGrid>
 
       <FilterBar>
-        <select aria-label={`Filter by ${labels.account}`} value={filters.accountId} onChange={(e) => setFilters((f) => ({ ...f, accountId: e.target.value }))}>
+        <Select label={labels.account} hideLabel value={filters.accountId} onChange={(v) => setFilters((f) => ({ ...f, accountId: v }))}>
           <option value="">All {labels.accounts.toLowerCase()}</option>
           {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
-        <select aria-label="Filter by type" value={filters.type} onChange={(e) => setFilters((f) => ({ ...f, type: e.target.value as LinksFilters['type'] }))}>
+        </Select>
+        <Select label="Type" hideLabel value={filters.type} onChange={(v) => setFilters((f) => ({ ...f, type: v as LinksFilters['type'] }))}>
           <option value="">All types</option>
           {LINK_TYPES.map((t) => <option key={t} value={t}>{LINK_TYPE_LABELS[t]}</option>)}
-        </select>
-        <select aria-label="Filter by status" value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value as LinksFilters['status'] }))}>
+        </Select>
+        <Select label="Status" hideLabel value={filters.status} onChange={(v) => setFilters((f) => ({ ...f, status: v as LinksFilters['status'] }))}>
           <option value="">All statuses</option>
           {LINK_STATUSES.map((s) => <option key={s} value={s}>{LINK_STATUS_LABELS[s]}</option>)}
-        </select>
+        </Select>
         <input type="number" className="amount-input" aria-label="Minimum amount" placeholder="Min" value={filters.min}
           aria-invalid={inverted || undefined} onChange={(e) => setFilters((f) => ({ ...f, min: e.target.value }))} />
         <input type="number" className="amount-input" aria-label="Maximum amount" placeholder="Max" value={filters.max}
@@ -212,9 +220,10 @@ export default function LinksPage() {
         columns={columns}
         rows={links}
         rowKey={(l) => l.id}
+        onRowClick={setDetail}
         isLoading={isLoading}
         emptyTitle={isError ? "Couldn't load payment links." : 'No links match these filters.'}
-        emptyHint={isError ? 'Try again in a moment.' : can('links.create') ? 'Create one from the header.' : `Ask a ${labels.agent.toLowerCase()} to create one.`}
+        emptyHint={isError ? 'Try again in a moment.' : canCreate ? 'Create one from the header.' : `Ask a ${labels.agent.toLowerCase()} to create one.`}
         footer={
           <span className="table-foot-row">
             {hasActiveFilters(filters) ? 'Matching links' : 'All links'}: {links.length} loaded
@@ -227,33 +236,65 @@ export default function LinksPage() {
         }
       />
 
+      <Modal open={detail !== null && cancelling === null} onClose={() => setDetail(null)} title="Payment link">
+        {detail && (
+          <>
+            <div className="modal-topline">
+              <span className="ref">{detail.referenceId}</span>
+              <Pill tone={STATUS_TONE[detail.status]}>{LINK_STATUS_LABELS[detail.status]}</Pill>
+            </div>
+            <DetailRow label="Type">{LINK_TYPE_LABELS[detail.type]}</DetailRow>
+            <DetailRow label={labels.account}>{detail.account}</DetailRow>
+            <DetailRow label={labels.agent}>{detail.agent ?? '—'}</DetailRow>
+            <DetailRow label="Customer">{detail.customer ?? 'Not known yet'}</DetailRow>
+            <DetailRow label="Amount">{detail.amount == null ? '—' : <Money amount={detail.amount} currency={detail.currency} emphasis />}</DetailRow>
+            <DetailRow label="Created"><DateCell ts={detail.createdAt} /></DetailRow>
+            <DetailRow label="Expires">{detail.expiresAt ? <DateCell ts={detail.expiresAt} /> : 'Never'}</DetailRow>
+            {detail.paidAt && <DetailRow label="Paid"><DateCell ts={detail.paidAt} /></DetailRow>}
+            {isShareable(detail.status) && detail.checkoutUrl && (
+              <div className="field">
+                <label htmlFor="detail-url">Checkout URL</label>
+                <div className="field-row">
+                  <input id="detail-url" type="text" readOnly value={detail.checkoutUrl} onFocus={(e) => e.target.select()} />
+                  <CopyButton value={detail.checkoutUrl} />
+                </div>
+              </div>
+            )}
+            {detail.status === 'pending' && (
+              <div className="callout">
+                <p className="sub">The customer has paid. The payment needs its details — who paid and what for — before it counts as revenue.</p>
+              </div>
+            )}
+            <div className="modal-actions">
+              {detail.status === 'pending' && canComplete && (
+                <Link className="btn" to={`/payments?needs_details=1&q=${encodeURIComponent(detail.referenceId)}`}>Complete on Payments</Link>
+              )}
+              {isShareable(detail.status) && canCreate && (
+                <button className="btn ghost" onClick={() => setCancelling(detail)}>Cancel link</button>
+              )}
+              <span className="spacer" />
+              <button className="btn ghost" onClick={() => setDetail(null)}>Close</button>
+            </div>
+          </>
+        )}
+      </Modal>
+
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New payment link"
         subtitle="The customer pays on MantaPay's hosted page. The amount is fixed in the link.">
-        <div className="field">
-          <label htmlFor="link-account">{labels.account}</label>
-          <select id="link-account" value={accountId} onChange={(e) => setAccountId(e.target.value)}>
-            {activeAccounts.length === 0 && <option value="">No active {labels.accounts.toLowerCase()}</option>}
-            {activeAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="link-type">Type</label>
-          <select id="link-type" value={type} onChange={(e) => setType(e.target.value as LinkType)}>
-            {LINK_TYPES.map((t) => <option key={t} value={t}>{LINK_TYPE_LABELS[t]}</option>)}
-          </select>
-          <p className="sub">
-            {type === 'single_use'
-              ? 'Closes on the first payment, or after 24 hours if nobody pays.'
-              : 'Stays open through any number of payments until you cancel it.'}
-          </p>
-        </div>
-        <div className="field">
-          <label htmlFor="link-customer">Customer</label>
-          <select id="link-customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-            <option value="">Not known yet</option>
-            {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
-        </div>
+        <Select id="link-account" label={labels.account} value={accountId} onChange={setAccountId}>
+          {activeAccounts.length === 0 && <option value="">No active {labels.accounts.toLowerCase()}</option>}
+          {activeAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </Select>
+        <Select id="link-type" label="Type" value={type} onChange={(v) => setType(v as LinkType)}
+          hint={type === 'single_use'
+            ? 'Closes on the first payment, or after 24 hours if nobody pays.'
+            : 'Stays open through any number of payments until you cancel it.'}>
+          {LINK_TYPES.map((t) => <option key={t} value={t}>{LINK_TYPE_LABELS[t]}</option>)}
+        </Select>
+        <Select id="link-customer" label="Customer" value={customerId} onChange={setCustomerId}>
+          <option value="">Not known yet</option>
+          {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </Select>
         <div className="field">
           <label htmlFor="link-amount">Amount</label>
           <input id="link-amount" type="number" min={minAmount} max={maxAmount ?? undefined} step={0.01} placeholder="0.00"
@@ -306,7 +347,7 @@ export default function LinksPage() {
             </div>
             <div className="modal-actions">
               <button className="btn ghost" onClick={() => setCreatedUrl(null)}>Close</button>
-              <CopyButton value={createdUrl} label="Copy link" />
+              <CopyButton value={createdUrl} label="Copy link" primary />
             </div>
           </>
         )}

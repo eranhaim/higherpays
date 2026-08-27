@@ -77,17 +77,31 @@ export interface ReversalResult {
   agencyAdjustment: number;
 }
 
+function filterParams(filters: ListPaymentsQuery): URLSearchParams {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(filters)) {
+    if (v === undefined || v === '' || v === false) continue;
+    // The date inputs give a day; the server compares timestamps, so the
+    // upper bound has to cover the whole of that day.
+    if (k === 'from') qs.set('from', `${v}T00:00:00`);
+    else if (k === 'to') qs.set('to', `${v}T23:59:59.999`);
+    else qs.set(k, String(v));
+  }
+  return qs;
+}
+
 export const paymentsApi = {
-  async list(cursor: string | null = null, filters: ListPaymentsQuery = {}): Promise<Page<Payment>> {
-    const qs = new URLSearchParams({ limit: '50' });
+  list(cursor: string | null = null, filters: ListPaymentsQuery = {}): Promise<Page<Payment>> {
+    const qs = filterParams(filters);
+    qs.set('limit', '50');
     if (cursor) qs.set('cursor', cursor);
-    for (const [k, v] of Object.entries(filters)) {
-      if (v === undefined || v === '' || v === false) continue;
-      if (k === 'from') qs.set('from', `${v}T00:00:00`);
-      else if (k === 'to') qs.set('to', `${v}T23:59:59.999`);
-      else qs.set(k, String(v));
-    }
     return api.get<Page<Payment>>(workspacePath(`/payments?${qs.toString()}`));
+  },
+
+  /** The same filtered list, as a CSV download. */
+  exportCsv(filters: ListPaymentsQuery = {}) {
+    const qs = filterParams(filters).toString();
+    return api.download(workspacePath(qs ? `/payments/export?${qs}` : '/payments/export'), 'payments.csv');
   },
 
   get: (id: string) => api.get<Payment>(workspacePath(`/payments/${id}`)),

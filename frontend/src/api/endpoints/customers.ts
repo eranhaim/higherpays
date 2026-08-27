@@ -59,6 +59,14 @@ export interface CreateCustomerInput {
   segment?: CustomerSegment;
 }
 
+export interface UpdateCustomerInput {
+  name?: string;
+  telegramName?: string;
+  email?: string;
+  phone?: string;
+  segment?: CustomerSegment;
+}
+
 export const customersApi = {
   async list(query: ListCustomersQuery = {}): Promise<Customer[]> {
     const qs = new URLSearchParams();
@@ -74,6 +82,11 @@ export const customersApi = {
   get: (id: string) => api.get<CustomerDetail>(workspacePath(`/customers/${id}`)),
 
   create: (input: CreateCustomerInput) => api.post<Customer>(workspacePath('/customers'), input),
+
+  update: (id: string, input: UpdateCustomerInput) => api.patch<Customer>(workspacePath(`/customers/${id}`), input),
+
+  /** Erasure: name and contact details are wiped; their payments stay, anonymised. */
+  erase: (id: string) => api.del<void>(workspacePath(`/customers/${id}`)),
 
   exportCsv() {
     return api.download(workspacePath('/customers/export'), 'customers.csv');

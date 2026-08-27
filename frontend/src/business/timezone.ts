@@ -83,3 +83,9 @@ export function tzTimeLabel(ts: number | null | undefined, tz: string): string {
   const p = tzParts(ts == null ? Date.now() : ts, tz);
   return String(p.h).padStart(2, '0') + ':' + String(p.mi).padStart(2, '0');
 }
+
+/** `YYYY-MM-DD` for a timestamp in `tz`, matching what `<input type="date">` holds. */
+export function toDateInputTZ(ts: number, tz: string): string {
+  const p = tzParts(ts, tz);
+  return `${p.y}-${String(p.mo).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`;
+}

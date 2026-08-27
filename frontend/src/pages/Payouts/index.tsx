@@ -1,14 +1,17 @@
 import { useState } from 'react';
 import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
+import { useTimezone } from '../../hooks/useTimezone';
+import { startOfMonthTZ, toDateInputTZ } from '../../business/timezone';
 import { formatMoney, sum } from '../../lib/format';
 import { toast } from '../../lib/toast';
 import Modal from '../../components/Modal';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DetailRow, EmptyState, LoadingCard, ErrorCard,
-  DateRangePicker, type DateRange,
+  FilterBar, DateRangePicker, DataTable, DateCell, type DateRange, type Column,
 } from '../../components/ui';
-import { usePayoutsData, type PayoutPeriod } from './usePayoutsData';
+import type { PayoutRecord } from '../../api/endpoints';
+import { usePayoutsData, useEarnings } from './usePayoutsData';
 
 /** A payout the user has asked for but not yet confirmed. */
 interface PendingPayout {
@@ -20,41 +23,77 @@ interface PendingPayout {
   payeeCount: number;
 }
 
+function useThisMonth(): [DateRange, (r: DateRange) => void] {
+  const tz = useTimezone();
+  // A payout settles exactly the entries in the window on screen, so the page
+  // opens on a real range rather than an open-ended one.
+  return useState<DateRange>(() => {
+    const now = Date.now();
+    return { from: toDateInputTZ(startOfMonthTZ(now, tz), tz), to: toDateInputTZ(now, tz) };
+  });
+}
+
+/**
+ * Two pages share this route. Whoever sees the whole workspace gets what the
+ * agency owes; an agent or an owner gets what they themselves are owed.
+ */
 export default function PayoutsPage() {
   const can = useCan();
-  const { labels } = useCurrentSession();
-  const [period, setPeriod] = useState<PayoutPeriod>('month');
-  // A custom range overrides the preset. Setting one clears the other so the
-  // header never claims a period the figures don't come from — and a payout
-  // settles exactly the entries in the window on screen.
-  const [custom, setCustom] = useState<DateRange>({ from: '', to: '' });
-  const [pending, setPending] = useState<PendingPayout | null>(null);
-  const { data, isLoading, isError, pay, isPaying } = usePayoutsData(period, custom);
-  const canPay = can('revenue.manage');
+  return can('data.view_all') ? <AgencyPayouts /> : <MyEarnings />;
+}
 
-  const usingCustom = Boolean(custom.from || custom.to);
-  const periodLabel = usingCustom ? 'the selected range' : period === 'month' ? 'this month' : period === 'week' ? 'this week' : 'the last 12 months';
+function MyEarnings() {
+  const [range, setRange] = useThisMonth();
+  const { earnings, isLoading, isError } = useEarnings(range);
 
   const header = (
-    <PageHeader
-      title="Payouts"
-      subtitle={`What you owe your ${labels.accounts.toLowerCase()} and ${labels.agents.toLowerCase()} for ${periodLabel}.`}
-      actions={
-        <>
-          <div className="field">
-            <label htmlFor="payout-period">Period</label>
-            <select id="payout-period" value={usingCustom ? '' : period}
-              onChange={(e) => { setCustom({ from: '', to: '' }); setPeriod(e.target.value as PayoutPeriod); }}>
-              {usingCustom && <option value="">Custom range</option>}
-              <option value="month">This month</option>
-              <option value="week">This week</option>
-              <option value="all">Last 12 months</option>
-            </select>
-          </div>
-          <DateRangePicker value={custom} onChange={setCustom} />
-        </>
-      }
-    />
+    <>
+      <PageHeader title="Earnings" subtitle="What you earned in the selected period, and what you are still owed." />
+      <FilterBar><DateRangePicker value={range} onChange={setRange} /></FilterBar>
+    </>
+  );
+  if (isLoading) return <div>{header}<LoadingCard label="Loading your earnings…" /></div>;
+  if (isError || !earnings) return <div>{header}<ErrorCard message="Couldn't load your earnings." /></div>;
+
+  const { period, balance } = earnings;
+  return (
+    <div>
+      {header}
+      <StatGrid>
+        <StatCard label="Earned this period" value={<Money amount={period.earned} direction="in" emphasis />} sub={`${period.sales} paid sales`} />
+        <StatCard label="Still owed to you" value={<Money amount={balance.owed} direction="in" />} sub="Across all periods, not yet paid out" />
+        <StatCard label="Paid to date" value={<Money amount={balance.paidToDate} />} sub="Everything already paid out" />
+        <StatCard label="Your rate" value={`${period.yourRatePct}%`} sub="Of the amount left after fees" />
+      </StatGrid>
+      <div className="card">
+        <div className="sechead">How this period adds up</div>
+        <DetailRow label="Gross sales"><Money amount={period.gross} direction="in" /></DetailRow>
+        <DetailRow label="Fees deducted"><Money amount={period.deductions} direction="out" /></DetailRow>
+        <DetailRow label="After fees"><Money amount={period.afterFees} /></DetailRow>
+        <DetailRow label={`Your ${period.yourRatePct}%`}><Money amount={period.earned} direction="in" emphasis /></DetailRow>
+      </div>
+    </div>
+  );
+}
+
+function AgencyPayouts() {
+  const can = useCan();
+  const { labels } = useCurrentSession();
+  const [range, setRange] = useThisMonth();
+  const [pending, setPending] = useState<PendingPayout | null>(null);
+  const { data, history, isLoading, isError, pay, isPaying } = usePayoutsData(range);
+  const canPay = can('revenue.manage');
+
+  const header = (
+    <>
+      <PageHeader
+        title="Payouts"
+        subtitle={`What you owe your ${labels.accounts.toLowerCase()} and ${labels.agents.toLowerCase()} in the selected period.`}
+      />
+      <FilterBar>
+        <DateRangePicker value={range} onChange={setRange} />
+      </FilterBar>
+    </>
   );
 
   if (isLoading) return <div>{header}<LoadingCard label="Loading payout breakdown…" /></div>;
@@ -80,6 +119,14 @@ export default function PayoutsPage() {
 
   const payButton = (payeeType: 'account' | 'agent', targetId: string, label: string, amount: number) =>
     canPay ? <button className="btn ghost small" onClick={() => setPending({ payeeType, targetId, label, amount, payeeCount: 1 })}>Pay</button> : null;
+
+  const historyColumns: Column<PayoutRecord>[] = [
+    { key: 'when', header: 'Paid on', render: (p) => <DateCell ts={p.createdAt} /> },
+    { key: 'payee', header: 'Payee', render: (p) => <span className="cname">{p.payee ?? '—'}</span> },
+    { key: 'type', header: 'Type', render: (p) => <Pill>{p.payeeType === 'account' ? labels.account : labels.agent}</Pill> },
+    { key: 'period', header: 'Period', render: (p) => <span className="time">{p.periodStart} – {p.periodEnd}</span> },
+    { key: 'amount', header: 'Amount', align: 'right', render: (p) => <Money amount={p.amount} currency={p.currency} direction="out" /> },
+  ];
 
   return (
     <div>
@@ -116,7 +163,7 @@ export default function PayoutsPage() {
             <div className="warnbar">Paying everyone now leaves you {formatMoney(cash.shortfallIfPaidNow)} short. That is cash you front until the reserve is released.</div>
           ) : <p className="sub">You can pay everyone in full from this period's receipts.</p>}
           {cash.heldInReserve > 0 && data.reserve.source === 'estimated' && (
-            <p className="sub">Reserve estimated from your {data.reserve.pct}% rate. Import a settlement report for the exact figure.</p>
+            <p className="sub">Reserve estimated from your {data.reserve.pct}% rate. Import a settlement report on the Settlements page for the exact figure.</p>
           )}
         </div>
       )}
@@ -145,7 +192,7 @@ export default function PayoutsPage() {
                 <tr><td colSpan={4}><EmptyState title={`No ${labels.accounts.toLowerCase()} yet.`} /></td></tr>
               ) : data.perAccount.map((c) => (
                 <tr key={c.id}>
-                  <td className="cname">{c.name}</td>
+                  <th scope="row">{c.name}</th>
                   <td><Money amount={c.revenue} direction="in" /></td>
                   <td><Money amount={c.owed} direction="out" emphasis /></td>
                   <td>{c.owed > 0 ? <><Pill tone="ok">Accruing</Pill> {payButton('account', c.id, c.name, c.owed)}</> : <Pill>Settled</Pill>}</td>
@@ -180,7 +227,7 @@ export default function PayoutsPage() {
                 <tr><td colSpan={4}><EmptyState title={`No ${labels.agents.toLowerCase()} yet.`} /></td></tr>
               ) : data.perAgent.map((c) => (
                 <tr key={c.id}>
-                  <td className="cname">{c.name}</td>
+                  <th scope="row">{c.name}</th>
                   <td>{c.sales}</td>
                   <td><Money amount={c.owed} direction="out" emphasis /></td>
                   <td>{c.owed > 0 ? <><Pill tone="ok">Accruing</Pill> {payButton('agent', c.id, c.name, c.owed)}</> : <Pill>Settled</Pill>}</td>
@@ -190,6 +237,12 @@ export default function PayoutsPage() {
           </table>
         </div>
         <p className="sub">Balances accrue from paid sales in the selected period. Paying marks them as settled in the ledger.</p>
+      </div>
+
+      <div className="section">
+        <div className="sechead">Payout history</div>
+        <DataTable columns={historyColumns} rows={history} rowKey={(p) => p.id} emptyTitle="No payouts run yet."
+          emptyHint="Every payout you confirm above is recorded here." />
       </div>
 
       <Modal open={pending !== null} onClose={() => setPending(null)} title={pending ? `Pay ${pending.label}?` : ''}

@@ -2,10 +2,9 @@ import { useState } from 'react';
 import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
-import { initials } from '../../lib/format';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
-import { PageHeader, Pill, EmptyState, FilterBar, LoadingCard, ErrorCard } from '../../components/ui';
+import { PageHeader, Pill, DataTable, FilterBar, type Column } from '../../components/ui';
 import { ACCOUNT_STATUS_LABELS, type Account, type AccountStatus } from '../../api/endpoints';
 import { useAccountsData, useAccountDetail } from './useAccountsData';
 
@@ -34,36 +33,68 @@ export default function AccountsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
   const [assigning, setAssigning] = useState<Account | null>(null);
-  const [pausing, setPausing] = useState<Account | null>(null);
-  const [isPausing, setIsPausing] = useState(false);
+  // Activating is harmless; pausing stops every new link and archiving hides
+  // the account, so those two are confirmed.
+  const [confirming, setConfirming] = useState<{ account: Account; status: 'paused' | 'archived' } | null>(null);
+  const [isChangingStatus, setIsChangingStatus] = useState(false);
   const [search, setSearch] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
 
   useUnsavedChanges('account-edit', editing !== null || createOpen);
 
-  // Activating is harmless; pausing stops every new link, so only that
-  // direction is confirmed.
-  const requestStatusChange = (a: Account) => {
-    if (a.status === 'active') { setPausing(a); return; }
-    void applyStatus(a, 'active');
-  };
-
   const applyStatus = async (a: Account, status: AccountStatus) => {
-    setIsPausing(true);
+    setIsChangingStatus(true);
     try {
       await updateAccount(a.id, { status });
-      setPausing(null);
-      toast(status === 'active' ? `${a.name} activated.` : `${a.name} paused. No new links.`);
+      setConfirming(null);
+      toast(status === 'active' ? `${a.name} activated.` : status === 'paused' ? `${a.name} paused. No new links.` : `${a.name} archived.`);
     } catch (err) {
       toast(err instanceof Error ? err.message : `Could not update the ${labels.account.toLowerCase()}.`);
     } finally {
-      setIsPausing(false);
+      setIsChangingStatus(false);
     }
   };
 
   const query = search.trim().toLowerCase();
-  const visible = query
-    ? accounts.filter((a) => `${a.name} ${a.handle ?? ''} ${a.ownerName} ${a.ownerEmail}`.toLowerCase().includes(query))
-    : accounts;
+  const visible = accounts
+    .filter((a) => showArchived || a.status !== 'archived')
+    .filter((a) => !query || `${a.name} ${a.handle ?? ''} ${a.ownerName} ${a.ownerEmail}`.toLowerCase().includes(query));
+  const archivedCount = accounts.filter((a) => a.status === 'archived').length;
+
+  const columns: Column<Account>[] = [
+    {
+      key: 'account', header: labels.account,
+      render: (a) => (
+        <>
+          <div className="cname">{a.name}</div>
+          <div className="cemail">{a.handle ?? a.ownerEmail}</div>
+        </>
+      ),
+    },
+    { key: 'owner', header: 'Owner', render: (a) => <><div>{a.ownerName}</div><div className="cemail">{a.ownerEmail}</div></> },
+    { key: 'status', header: 'Status', render: (a) => <Pill tone={STATUS_TONE[a.status]}>{ACCOUNT_STATUS_LABELS[a.status]}</Pill> },
+    ...(canViewSplits ? [{
+      key: 'share', header: `Share (${labels.account.toLowerCase()} / agency)`, align: 'right' as const,
+      render: (a: Account) => a.revenueSplitPct === undefined ? '—' : <span className="mono">{a.revenueSplitPct}% / {100 - a.revenueSplitPct}%</span>,
+    }] : []),
+    ...(canManage ? [{
+      key: 'agents', header: labels.agents, align: 'right' as const,
+      render: (a: Account) => <span className="mono">{a.agentsAssigned ?? 0}</span>,
+    }] : []),
+    { key: 'country', header: 'Country', render: (a) => a.country ?? '—' },
+    ...(canManage ? [{
+      key: 'actions', header: 'Actions', hideHeader: true, align: 'right' as const,
+      render: (a: Account) => (
+        <div className="cell-actions">
+          <button className="btn ghost small" onClick={() => setEditing(a)}>Edit</button>
+          <button className="btn ghost small" onClick={() => setAssigning(a)}>{labels.agents}</button>
+          {a.status === 'active' && <button className="btn ghost small" onClick={() => setConfirming({ account: a, status: 'paused' })}>Pause</button>}
+          {a.status !== 'active' && <button className="btn ghost small" disabled={isChangingStatus} onClick={() => applyStatus(a, 'active')}>Activate</button>}
+          {a.status !== 'archived' && <button className="btn ghost small" onClick={() => setConfirming({ account: a, status: 'archived' })}>Archive</button>}
+        </div>
+      ),
+    }] : []),
+  ];
 
   return (
     <div>
@@ -77,56 +108,24 @@ export default function AccountsPage() {
         <FilterBar>
           <input type="search" className="search-input" aria-label={`Search ${labels.accounts}`}
             placeholder="Search name, handle or owner" value={search} onChange={(e) => setSearch(e.target.value)} />
+          {archivedCount > 0 && (
+            <label className="check">
+              <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+              Show archived ({archivedCount})
+            </label>
+          )}
           <span className="sub">{visible.length} of {accounts.length}</span>
         </FilterBar>
       )}
 
-      {isLoading ? <LoadingCard label={`Loading ${labels.accounts.toLowerCase()}…`} />
-        : isError ? <ErrorCard message={`Couldn't load ${labels.accounts.toLowerCase()}.`} />
-        : accounts.length === 0 ? (
-          <div className="card">
-            <EmptyState title={`No ${labels.accounts.toLowerCase()} yet.`}
-              hint={canManage ? 'Add the first one to start generating links.' : 'Ask an admin to add one.'} />
-          </div>
-        ) : visible.length === 0 ? (
-          <div className="card"><EmptyState title="Nothing matches that search." hint="Clear the search to see them all." /></div>
-        ) : (
-          <div className="grid">
-            {visible.map((a) => (
-              <div key={a.id} className="card ws">
-                <div className="ws-top">
-                  <div className="ws-mark">{initials(a.name)}</div>
-                  <div className="grow">
-                    <div className="ws-name">{a.name}</div>
-                    <div className="ws-meta">{a.handle ?? a.ownerEmail}</div>
-                  </div>
-                  {canManage && (
-                    <div className="controls">
-                      <button className="btn ghost small" onClick={() => setEditing(a)}>Edit</button>
-                      <button className="btn ghost small" onClick={() => setAssigning(a)}>{labels.agents}</button>
-                      <button className="btn ghost small" onClick={() => requestStatusChange(a)}>
-                        {a.status === 'active' ? 'Pause' : 'Activate'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <div className="ws-row"><span>Status</span><Pill tone={STATUS_TONE[a.status]}>{ACCOUNT_STATUS_LABELS[a.status]}</Pill></div>
-                  <div className="ws-row"><span>Owner</span><span>{a.ownerName}</span></div>
-                  {canViewSplits && a.revenueSplitPct !== undefined && (
-                    <>
-                      <div className="ws-row"><span>{labels.account} share</span><span className="mono">{a.revenueSplitPct}%</span></div>
-                      <div className="ws-row"><span>Agency share</span><span className="mono">{100 - a.revenueSplitPct}%</span></div>
-                    </>
-                  )}
-                  {a.agentsAssigned !== undefined && (
-                    <div className="ws-row"><span>{labels.agents} assigned</span><span className="mono">{a.agentsAssigned}</span></div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+      <DataTable
+        columns={columns}
+        rows={visible}
+        rowKey={(a) => a.id}
+        isLoading={isLoading}
+        emptyTitle={isError ? `Couldn't load ${labels.accounts.toLowerCase()}.` : query ? 'Nothing matches that search.' : `No ${labels.accounts.toLowerCase()} yet.`}
+        emptyHint={isError ? 'Try again in a moment.' : query ? 'Clear the search to see them all.' : canManage ? 'Add the first one to start generating links.' : 'Ask an admin to add one.'}
+      />
 
       {createOpen && (
         <CreateAccountModal
@@ -166,12 +165,17 @@ export default function AccountsPage() {
         />
       )}
 
-      <Modal open={pausing !== null} onClose={() => setPausing(null)} title={pausing ? `Pause ${pausing.name}?` : ''}
-        subtitle="No new payment links can be created. Links already out there keep working, and nothing changes in the ledger.">
-        {pausing && (
+      <Modal open={confirming !== null} onClose={() => setConfirming(null)}
+        title={confirming ? `${confirming.status === 'paused' ? 'Pause' : 'Archive'} ${confirming.account.name}?` : ''}
+        subtitle={confirming?.status === 'paused'
+          ? 'No new payment links can be created. Links already out there keep working, and nothing changes in the ledger.'
+          : 'The account leaves every picker and list. Its history, payments and balances stay, and it can be activated again later.'}>
+        {confirming && (
           <div className="modal-actions">
-            <button className="btn ghost" onClick={() => setPausing(null)}>Keep active</button>
-            <button className="btn" disabled={isPausing} onClick={() => applyStatus(pausing, 'paused')}>{isPausing ? 'Pausing…' : 'Pause'}</button>
+            <button className="btn ghost" onClick={() => setConfirming(null)}>Keep as is</button>
+            <button className={confirming.status === 'archived' ? 'btn danger' : 'btn'} disabled={isChangingStatus} onClick={() => applyStatus(confirming.account, confirming.status)}>
+              {isChangingStatus ? 'Saving…' : confirming.status === 'paused' ? 'Pause' : 'Archive'}
+            </button>
           </div>
         )}
       </Modal>
@@ -322,20 +326,21 @@ function EditAccountModal({ account, canEditSplits, onClose, onSubmit }: EditAcc
           <label htmlFor="edit-account-handle">Handle</label>
           <input id="edit-account-handle" type="text" placeholder="@handle" value={handle} onChange={(e) => setHandle(e.target.value)} />
         </div>
-        <div className="field">
-          <label htmlFor="edit-account-split">{labels.account} share of distributable</label>
-          <div className="pct-input">
-            <input id="edit-account-split" type="number" min={0} max={100} value={splitText} aria-invalid={splitInvalid || undefined}
-              // Renaming is accounts.manage; changing what it is paid is a revenue decision.
-              disabled={!canEditSplits} onChange={(e) => setSplitText(e.target.value)} />
-            <span className="sub">%</span>
+        {/* Renaming is accounts.manage; changing what it is paid is a revenue
+            decision, so without that permission the field is absent, not dead. */}
+        {canEditSplits && (
+          <div className="field">
+            <label htmlFor="edit-account-split">{labels.account} share of distributable</label>
+            <div className="pct-input">
+              <input id="edit-account-split" type="number" min={0} max={100} value={splitText}
+                aria-invalid={splitInvalid || undefined} onChange={(e) => setSplitText(e.target.value)} />
+              <span className="sub">%</span>
+            </div>
+            <p className="sub">
+              {splitInvalid ? <span className="text-neg">0–100 only</span> : `Agency keeps ${100 - split}%.`}
+            </p>
           </div>
-          <p className="sub">
-            {splitInvalid ? <span className="text-neg">0–100 only</span>
-              : !canEditSplits ? 'You can rename this account but not change its share.'
-                : `Agency keeps ${100 - split}%.`}
-          </p>
-        </div>
+        )}
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
           <button type="submit" className="btn" disabled={isSaving || splitInvalid}>{isSaving ? 'Saving…' : 'Save changes'}</button>

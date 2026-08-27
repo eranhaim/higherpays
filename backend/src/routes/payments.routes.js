@@ -6,7 +6,7 @@ const { withTransaction } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
-const { isStr, isOptStr, badRequest } = require('../util/validate');
+const { isStr, isOptStr, badRequest, toCSV } = require('../util/validate');
 const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const { resolveDataScope, scopeParams } = require('../auth/dataScope');
 const { hasPermission } = require('../auth/permissions');
@@ -47,36 +47,59 @@ function publicPayment(p, { seesFees }) {
   };
 }
 
+// The list and the export answer the same question with the same filters;
+// only the page size differs. `cursor` null and `limit` null mean "all".
+async function listPayments(c, req, { cursor, limit }) {
+  const scope = await resolveDataScope(c, req);
+  const q = typeof req.query.q === 'string' && req.query.q.trim() ? `%${req.query.q.trim().toLowerCase()}%` : null;
+  return (await c.query(
+    `${SELECT}
+      WHERE p.workspace_id = $1
+        AND ($2::uuid IS NULL OR p.agent_id = $2::uuid)
+        AND ($3::uuid IS NULL OR p.account_id = $3::uuid)
+        AND ($4::timestamptz IS NULL OR (p.occurred_at, p.id) < ($4::timestamptz, $5::uuid))
+        AND ($7::text IS NULL OR p.status = $7::text)
+        AND ($8::uuid IS NULL OR p.account_id = $8::uuid)
+        AND ($9::uuid IS NULL OR p.agent_id = $9::uuid)
+        AND ($10::timestamptz IS NULL OR p.occurred_at >= $10::timestamptz)
+        AND ($11::timestamptz IS NULL OR p.occurred_at <= $11::timestamptz)
+        AND ($12::text IS NULL OR lower(coalesce(t.provider_transaction_id,'')) LIKE $12::text
+             OR lower(coalesce(cu.name,'')) LIKE $12::text OR lower(a.name) LIKE $12::text
+             OR lower(coalesce(u.full_name,'')) LIKE $12::text OR lower(coalesce(pl.reference_id,'')) LIKE $12::text)
+        AND (NOT $13::boolean OR (p.status = 'paid' AND p.category_id IS NULL))
+      ORDER BY p.occurred_at DESC, p.id DESC LIMIT $6`,
+    [wid(req), ...scopeParams(scope), cursor ? cursor.ts : null, cursor ? cursor.id : null, limit,
+      req.query.status || null, req.query.accountId || null, req.query.agentId || null,
+      req.query.from || null, req.query.to || null, q, req.query.needsDetails === 'true'])).rows;
+}
+
 // GET /?limit&cursor&status&accountId&agentId&from&to&q&needsDetails
 router.get('/', requirePermission('payments.view'), asyncHandler(async (req, res) => {
   const limit = parseLimit(req.query.limit);
   const cursor = decodeCursor(req.query.cursor);
-  const q = typeof req.query.q === 'string' && req.query.q.trim() ? `%${req.query.q.trim().toLowerCase()}%` : null;
-  const rows = await withTransaction(async (c) => {
-    const scope = await resolveDataScope(c, req);
-    return (await c.query(
-      `${SELECT}
-        WHERE p.workspace_id = $1
-          AND ($2::uuid IS NULL OR p.agent_id = $2::uuid)
-          AND ($3::uuid IS NULL OR p.account_id = $3::uuid)
-          AND ($4::timestamptz IS NULL OR (p.occurred_at, p.id) < ($4::timestamptz, $5::uuid))
-          AND ($7::text IS NULL OR p.status = $7::text)
-          AND ($8::uuid IS NULL OR p.account_id = $8::uuid)
-          AND ($9::uuid IS NULL OR p.agent_id = $9::uuid)
-          AND ($10::timestamptz IS NULL OR p.occurred_at >= $10::timestamptz)
-          AND ($11::timestamptz IS NULL OR p.occurred_at <= $11::timestamptz)
-          AND ($12::text IS NULL OR lower(coalesce(t.provider_transaction_id,'')) LIKE $12::text
-               OR lower(coalesce(cu.name,'')) LIKE $12::text OR lower(a.name) LIKE $12::text
-               OR lower(coalesce(u.full_name,'')) LIKE $12::text OR lower(coalesce(pl.reference_id,'')) LIKE $12::text)
-          AND (NOT $13::boolean OR (p.status = 'paid' AND p.category_id IS NULL))
-        ORDER BY p.occurred_at DESC, p.id DESC LIMIT $6`,
-      [wid(req), ...scopeParams(scope), cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1,
-        req.query.status || null, req.query.accountId || null, req.query.agentId || null,
-        req.query.from || null, req.query.to || null, q, req.query.needsDetails === 'true'])).rows;
-  });
+  const rows = await withTransaction((c) => listPayments(c, req, { cursor, limit: limit + 1 }));
   const seesFees = hasPermission(req.access, 'data.view_all');
   const result = page(rows, limit, (r) => r.occurred_at, (r) => r.id);
   res.json({ items: result.items.map((r) => publicPayment(r, { seesFees })), nextCursor: result.nextCursor });
+}));
+
+// GET /export — the filtered list as CSV. Capped so a runaway range cannot
+// hold a connection open building a file nobody can open.
+const EXPORT_MAX_ROWS = 20000;
+router.get('/export', requirePermission('payments.export'), asyncHandler(async (req, res) => {
+  const rows = await withTransaction((c) => listPayments(c, req, { cursor: null, limit: EXPORT_MAX_ROWS }));
+  const seesFees = hasPermission(req.access, 'data.view_all');
+  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'payment.export', metadata: { count: rows.length }, ip: req.ip || null });
+  const csv = toCSV(
+    ['occurred_at', 'reference', 'status', 'amount', 'currency', ...(seesFees ? ['platform_fee'] : []), 'customer', 'account', 'agent', 'category', 'link'],
+    rows.map((r) => [
+      new Date(r.occurred_at).toISOString(), r.provider_transaction_id, r.status, r.amount, r.currency,
+      ...(seesFees ? [r.platform_fee] : []), r.customer, r.account, r.agent, r.category, r.link_reference,
+    ]),
+  );
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="payments_${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send('\ufeff' + csv);
 }));
 
 async function loadScoped(c, req, id) {

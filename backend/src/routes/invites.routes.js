@@ -11,6 +11,7 @@ const { audit } = require('../util/audit');
 const { hashPassword } = require('../auth/passwords');
 const { isStr, badRequest } = require('../util/validate');
 const { sendEmail } = require('../util/email');
+const config = require('../config');
 
 const { wid, uid } = require('../lib/scope');
 const hashToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
@@ -29,7 +30,7 @@ wsRouter.post('/', requireAuth, requireWorkspace, requirePermission('team.manage
     `INSERT INTO invites (workspace_id, email, role, token_hash, invited_by_user_id, expires_at)
      VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, email, role, expires_at, accepted_at`,
     [wid(req), email, role, hashToken(token), uid(req), expires])).rows[0];
-  const link = `https://app.higherpays.com/accept-invite?token=${token}`;
+  const link = `${config.appPublicBase}/accept-invite?token=${token}`;
   await sendEmail({ to: email, subject: `You're invited to HigherPays (${role})`, body: `Set up your login: ${link}` });
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'invite.create', metadata: { email, role } });
   // The token is a bearer credential for a seat and is NOT returned: it only

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   authApi, notificationsApi, workspacesApi, categoriesApi, revenueApi,
   type NotificationEvent, type UpdateWorkspaceInput,
@@ -123,4 +123,23 @@ export function useNotificationSettings() {
   });
 
   return { preferences, channels, savePreferences, createChannel, setChannelActive, setChannelEvents, deleteChannel, testChannel };
+}
+
+export function useAudit() {
+  const { activeWorkspaceId } = useCurrentSession();
+  const entries = useInfiniteQuery({
+    queryKey: ['audit', activeWorkspaceId],
+    queryFn: ({ pageParam }) => workspacesApi.listAudit(pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.nextCursor,
+    enabled: Boolean(activeWorkspaceId),
+  });
+  return {
+    entries: entries.data?.pages.flatMap((p) => p.items) ?? [],
+    isLoading: entries.isLoading,
+    isError: entries.isError,
+    hasMore: entries.hasNextPage,
+    isLoadingMore: entries.isFetchingNextPage,
+    loadMore: () => { void entries.fetchNextPage(); },
+  };
 }

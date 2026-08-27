@@ -1,6 +1,6 @@
 export { authApi, type TwoFactorSetup, type Session } from './auth';
-export { workspacesApi, type PlatformFee, type LinkLimits, type WorkspacePermissions, type WorkspaceSettings, type UpdateWorkspaceInput } from './workspaces';
-export { platformApi, type PlatformWorkspace } from './platform';
+export { workspacesApi, type PlatformFee, type LinkLimits, type WorkspacePermissions, type WorkspaceSettings, type UpdateWorkspaceInput, type AuditEntry } from './workspaces';
+export { platformApi, type PlatformWorkspace, type PlatformOverview, type OnboardAgencyInput, type PlatformFeeInput } from './platform';
 export { revenueApi, type RevenueRule } from './revenue';
 export {
   accountsApi, ACCOUNT_STATUS_LABELS,
@@ -11,7 +11,7 @@ export { teamApi, type Member, type MemberStatus } from './team';
 export { categoriesApi, type Category } from './categories';
 export {
   customersApi, CUSTOMER_SEGMENTS, CUSTOMER_SEGMENT_LABELS,
-  type Customer, type CustomerDetail, type CustomerPayment, type CustomerSegment, type ListCustomersQuery, type CreateCustomerInput,
+  type Customer, type CustomerDetail, type CustomerPayment, type CustomerSegment, type ListCustomersQuery, type CreateCustomerInput, type UpdateCustomerInput,
 } from './customers';
 export {
   linksApi, LINK_TYPES, LINK_TYPE_LABELS, LINK_STATUSES, LINK_STATUS_LABELS, isShareable,
@@ -21,11 +21,13 @@ export {
   paymentsApi, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, isReversed,
   type Payment, type PaymentStatus, type ListPaymentsQuery, type CompletePaymentInput, type ReversalResult,
 } from './payments';
-export { payoutsApi, type PayoutBreakdown, type RunPayoutInput } from './payouts';
+export { payoutsApi, type PayoutBreakdown, type RunPayoutInput, type PayoutRecord } from './payouts';
+export { meApi, type Earnings } from './me';
+export { settlementsApi, type Settlement, type ReserveSchedule, type ImportResult } from './settlements';
 export { feesApi, type FeesSummary } from './fees';
 export { analyticsApi, type AnalyticsReport, type AnalyticsQuery } from './analytics';
 export {
   notificationsApi, NOTIFICATION_EVENT_LABELS,
   type Notification, type NotificationEvent, type NotificationPreferences, type NotificationChannel,
 } from './notifications';
-export { invitesApi, INVITABLE_ROLES, type Invite, type InvitableRole } from './invites';
+export { invitesApi, INVITABLE_ROLES, type Invite, type InvitableRole, type InvitePreview } from './invites';

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useDebounced } from '../../hooks/useDebounced';
 import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
@@ -7,7 +8,7 @@ import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DateCell,
-  DataTable, FilterBar, DateRangePicker, DetailRow,
+  DataTable, FilterBar, DateRangePicker, DetailRow, Select,
   type Column, type DateRange,
 } from '../../components/ui';
 import { formatMoney, sum } from '../../lib/format';
@@ -42,15 +43,25 @@ interface Filters {
 
 const DEFAULT_FILTERS: Filters = { status: '', accountId: '', agentId: '', from: '', to: '', search: '', needsDetails: false };
 
+type ReversalKind = 'refund' | 'chargeback';
+
 export default function PaymentsPage() {
   const can = useCan();
   const { labels } = useCurrentSession();
   const { rateCard } = useRateCard();
   const canScope = can('data.view_all');
   const canComplete = can('payments.complete');
-  const canRefund = can('revenue.manage');
+  const canReverse = can('revenue.manage');
+  const canExport = can('payments.export');
 
-  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  // Another page can point here at one payment ("complete the details for
+  // this link"), so the search and the details-needed filter come from the URL.
+  const [params] = useSearchParams();
+  const [filters, setFilters] = useState<Filters>(() => ({
+    ...DEFAULT_FILTERS,
+    search: params.get('q') ?? '',
+    needsDetails: params.get('needs_details') === '1',
+  }));
   const search = useDebounced(filters.search, 300);
   const query = useMemo<ListPaymentsQuery>(() => ({
     status: filters.status || undefined,
@@ -64,14 +75,13 @@ export default function PaymentsPage() {
 
   const {
     payments, categories, customers, accounts, agents,
-    isLoading, isError, hasMore, isLoadingMore, loadMore, complete, recordRefund,
+    isLoading, isError, hasMore, isLoadingMore, loadMore, complete, recordReversal, exportCsv,
   } = usePaymentsData(query, canScope);
 
   const [detail, setDetail] = useState<Payment | null>(null);
   const [completing, setCompleting] = useState<Payment | null>(null);
-  const [refunding, setRefunding] = useState<Payment | null>(null);
-  const [refundConfirmed, setRefundConfirmed] = useState(false);
-  const [isRecordingRefund, setIsRecordingRefund] = useState(false);
+  const [reversing, setReversing] = useState<{ payment: Payment; kind: ReversalKind } | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   const paid = payments.filter((p) => p.status === 'paid');
   const failed = payments.filter((p) => p.status === 'failed');
@@ -84,6 +94,13 @@ export default function PaymentsPage() {
 
   const range: DateRange = { from: filters.from, to: filters.to };
   const setRange = (r: DateRange) => setFilters((f) => ({ ...f, ...r }));
+
+  const runExport = async () => {
+    setIsExporting(true);
+    try { await exportCsv(); toast('Payments exported to CSV.'); }
+    catch (err) { toast(err instanceof Error ? err.message : 'Export failed.'); }
+    finally { setIsExporting(false); }
+  };
 
   const columns: Column<Payment>[] = [
     {
@@ -107,30 +124,22 @@ export default function PaymentsPage() {
     }] : []),
     { key: 'status', header: 'Status', render: (p) => <StatusPill payment={p} /> },
     { key: 'date', header: 'Date', render: (p) => <DateCell ts={p.occurredAt} /> },
+    ...(canComplete ? [{
+      key: 'actions', header: 'Actions', hideHeader: true, align: 'right' as const,
+      // "Details needed" is a job, not a status: the row carries the way to do it
+      // rather than hiding it behind opening the payment.
+      render: (p: Payment) => p.needsDetails
+        ? <button className="btn ghost small" onClick={() => setCompleting(p)}>Complete</button>
+        : null,
+    }] : []),
   ];
-
-  const closeRefund = () => { setRefunding(null); setRefundConfirmed(false); };
-
-  const submitRefund = async (p: Payment) => {
-    if (!refundConfirmed) { toast('Confirm you issued the refund in MantaPay first.'); return; }
-    setIsRecordingRefund(true);
-    try {
-      await recordRefund(p.id);
-      closeRefund();
-      setDetail(null);
-      toast(`Recorded refund of ${formatMoney(p.amount, p.currency)}.`);
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not record the refund.');
-    } finally {
-      setIsRecordingRefund(false);
-    }
-  };
 
   return (
     <div>
       <PageHeader
         title="Payments"
         subtitle={canScope ? 'Every payment attempt, with the fees taken on each.' : 'Payments credited to you.'}
+        actions={canExport ? <button className="btn ghost" onClick={runExport} disabled={isExporting}>{isExporting ? 'Exporting…' : 'Export CSV'}</button> : null}
       />
 
       {isError && (
@@ -160,28 +169,25 @@ export default function PaymentsPage() {
       </StatGrid>
 
       <FilterBar>
-        <select
-          aria-label="Filter by status"
+        <Select
+          label="Status" hideLabel
           value={filters.needsDetails ? 'needs_details' : filters.status}
-          onChange={(e) => {
-            const v = e.target.value;
-            setFilters((f) => ({ ...f, needsDetails: v === 'needs_details', status: v === 'needs_details' ? '' : v as Filters['status'] }));
-          }}
+          onChange={(v) => setFilters((f) => ({ ...f, needsDetails: v === 'needs_details', status: v === 'needs_details' ? '' : v as Filters['status'] }))}
         >
           <option value="">All statuses</option>
           <option value="needs_details">Details needed</option>
           {PAYMENT_STATUSES.map((s) => <option key={s} value={s}>{PAYMENT_STATUS_LABELS[s]}</option>)}
-        </select>
+        </Select>
         {canScope && (
           <>
-            <select aria-label={`Filter by ${labels.account}`} value={filters.accountId} onChange={(e) => setFilters((f) => ({ ...f, accountId: e.target.value }))}>
+            <Select label={labels.account} hideLabel value={filters.accountId} onChange={(v) => setFilters((f) => ({ ...f, accountId: v }))}>
               <option value="">All {labels.accounts.toLowerCase()}</option>
               {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-            <select aria-label={`Filter by ${labels.agent}`} value={filters.agentId} onChange={(e) => setFilters((f) => ({ ...f, agentId: e.target.value }))}>
+            </Select>
+            <Select label={labels.agent} hideLabel value={filters.agentId} onChange={(v) => setFilters((f) => ({ ...f, agentId: v }))}>
               <option value="">All {labels.agents.toLowerCase()}</option>
               {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
+            </Select>
           </>
         )}
         <DateRangePicker value={range} onChange={setRange} />
@@ -216,7 +222,7 @@ export default function PaymentsPage() {
         }
       />
 
-      <Modal open={!!detail && !refunding && !completing} onClose={() => setDetail(null)} title="Payment">
+      <Modal open={!!detail && !reversing && !completing} onClose={() => setDetail(null)} title="Payment">
         {detail && (
           <>
             <div className="modal-topline">
@@ -241,8 +247,11 @@ export default function PaymentsPage() {
               {detail.needsDetails && canComplete && (
                 <button className="btn" onClick={() => setCompleting(detail)}>Complete details</button>
               )}
-              {detail.status === 'paid' && canRefund && (
-                <button className="btn danger" onClick={() => setRefunding(detail)}>Record refund</button>
+              {detail.status === 'paid' && canReverse && (
+                <>
+                  <button className="btn ghost" onClick={() => setReversing({ payment: detail, kind: 'refund' })}>Record refund</button>
+                  <button className="btn ghost" onClick={() => setReversing({ payment: detail, kind: 'chargeback' })}>Record chargeback</button>
+                </>
               )}
               <span className="spacer" />
               <button className="btn ghost" onClick={() => setDetail(null)}>Close</button>
@@ -266,37 +275,79 @@ export default function PaymentsPage() {
         />
       )}
 
-      <Modal
-        open={!!refunding}
-        onClose={closeRefund}
-        title="Record a refund"
-        subtitle="Issue the refund in MantaPay first. Recording it here reverses the sale in your ledger so payouts stay correct."
-      >
-        {refunding && (
-          <>
-            <div className="callout">
-              <DetailRow label="Refund to customer"><Money amount={refunding.amount} currency={refunding.currency} direction="out" /></DetailRow>
-              {rateCard.refundFee !== undefined && (
-                <DetailRow label="Refund fee"><Money amount={rateCard.refundFee} direction="out" /></DetailRow>
-              )}
-              {refunding.platformFee != null && (
-                <p className="sub">Platform fees already taken ({formatMoney(refunding.platformFee)}) are not returned by the provider.</p>
-              )}
-            </div>
-            <label className="check-row">
-              <input type="checkbox" checked={refundConfirmed} onChange={(e) => setRefundConfirmed(e.target.checked)} />
-              <span>I have issued this refund in MantaPay.</span>
-            </label>
-            <div className="modal-actions">
-              <button className="btn ghost" onClick={closeRefund}>Cancel</button>
-              <button className="btn danger" onClick={() => submitRefund(refunding)} disabled={isRecordingRefund}>
-                {isRecordingRefund ? 'Recording…' : `Record refund of ${formatMoney(refunding.amount, refunding.currency)}`}
-              </button>
-            </div>
-          </>
-        )}
-      </Modal>
+      {reversing && (
+        <ReversalModal
+          payment={reversing.payment}
+          kind={reversing.kind}
+          fee={reversing.kind === 'refund' ? rateCard.refundFee : rateCard.chargebackFee}
+          onClose={() => setReversing(null)}
+          onSubmit={async () => {
+            await recordReversal(reversing.payment.id, reversing.kind);
+            setReversing(null);
+            setDetail(null);
+            toast(`Recorded ${reversing.kind} of ${formatMoney(reversing.payment.amount, reversing.payment.currency)}.`);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+const REVERSAL_COPY: Record<ReversalKind, { title: string; subtitle: string; confirm: string; feeLabel: string }> = {
+  refund: {
+    title: 'Record a refund',
+    subtitle: 'Issue the refund in MantaPay first. Recording it here reverses the sale in your ledger so payouts stay correct.',
+    confirm: 'I have issued this refund in MantaPay.',
+    feeLabel: 'Refund fee',
+  },
+  chargeback: {
+    title: 'Record a chargeback',
+    subtitle: "MantaPay has taken the money back from you. Recording it here reverses the sale and charges the chargeback fee to whoever bears it.",
+    confirm: 'MantaPay has reported this chargeback.',
+    feeLabel: 'Chargeback fee',
+  },
+};
+
+/** A refund or a chargeback: the same reversal, with a different fee and wording. */
+function ReversalModal({ payment, kind, fee, onClose, onSubmit }: {
+  payment: Payment;
+  kind: ReversalKind;
+  fee: number | undefined;
+  onClose: () => void;
+  onSubmit: () => Promise<void>;
+}) {
+  const copy = REVERSAL_COPY[kind];
+  const [confirmed, setConfirmed] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const submit = async () => {
+    if (!confirmed) { toast('Tick the confirmation first.'); return; }
+    setIsSaving(true);
+    try { await onSubmit(); }
+    catch (err) { toast(err instanceof Error ? err.message : `Could not record the ${kind}.`); }
+    finally { setIsSaving(false); }
+  };
+
+  return (
+    <Modal open onClose={onClose} title={copy.title} subtitle={copy.subtitle}>
+      <div className="callout">
+        <DetailRow label="Reversed"><Money amount={payment.amount} currency={payment.currency} direction="out" /></DetailRow>
+        {fee !== undefined && <DetailRow label={copy.feeLabel}><Money amount={fee} direction="out" /></DetailRow>}
+        {payment.platformFee != null && (
+          <p className="sub">Platform fees already taken ({formatMoney(payment.platformFee)}) are not returned by the provider.</p>
+        )}
+      </div>
+      <label className="check-row">
+        <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
+        <span>{copy.confirm}</span>
+      </label>
+      <div className="modal-actions">
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        <button className="btn danger" onClick={submit} disabled={isSaving}>
+          {isSaving ? 'Recording…' : `Record ${kind} of ${formatMoney(payment.amount, payment.currency)}`}
+        </button>
+      </div>
+    </Modal>
   );
 }
 
@@ -337,13 +388,10 @@ function CompleteDetailsModal({ payment, categories, customers, onClose, onSubmi
 
   return (
     <Modal open onClose={onClose} title="Complete payment details" subtitle={`${formatMoney(payment.amount, payment.currency)} · ${payment.account}`}>
-      <div className="field">
-        <label htmlFor="complete-customer">Customer</label>
-        <select id="complete-customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
-          <option value="">New customer…</option>
-          {customers.map((c) => <option key={c.id} value={c.id}>{c.name}{c.telegramName ? ` · ${c.telegramName}` : ''}</option>)}
-        </select>
-      </div>
+      <Select id="complete-customer" label="Customer" value={customerId} onChange={setCustomerId}>
+        <option value="">New customer…</option>
+        {customers.map((c) => <option key={c.id} value={c.id}>{c.name}{c.telegramName ? ` · ${c.telegramName}` : ''}</option>)}
+      </Select>
       {typingNew && (
         <div className="form-row">
           <div className="field">
@@ -356,13 +404,11 @@ function CompleteDetailsModal({ payment, categories, customers, onClose, onSubmi
           </div>
         </div>
       )}
-      <div className="field">
-        <label htmlFor="complete-category">Category</label>
-        <select id="complete-category" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-          {categories.length === 0 && <option value="">No categories defined — ask an admin</option>}
-          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-      </div>
+      <Select id="complete-category" label="Category" value={categoryId} onChange={setCategoryId}
+        hint={categories.length === 0 ? 'No categories defined yet — an admin adds them under Settings.' : undefined}>
+        {categories.length === 0 && <option value="">No categories defined</option>}
+        {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+      </Select>
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>Cancel</button>
         <button className="btn" onClick={submit} disabled={isSaving || !categoryId}>{isSaving ? 'Saving…' : 'Save details'}</button>

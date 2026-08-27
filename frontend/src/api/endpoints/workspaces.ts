@@ -1,6 +1,6 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
-import type { WorkspaceLabels, WorkspaceRole } from '../types';
+import type { Page, WorkspaceLabels, WorkspaceRole } from '../types';
 
 /** Response from `GET /workspaces/:wid/platform-fee`. */
 export interface PlatformFee {
@@ -24,6 +24,10 @@ export interface WorkspaceSettings {
   labels: WorkspaceLabels;
   minLinkAmount: number | null;
   maxLinkAmount: number | null;
+  /** The MID MantaPay knows this agency by. Null falls back to the server default. */
+  merchantId: string | null;
+  /** The path segment MantaPay must be told to notify. */
+  webhookEndpointId: string;
 }
 
 export interface UpdateWorkspaceInput {
@@ -32,6 +36,7 @@ export interface UpdateWorkspaceInput {
   accountLabelPlural?: string;
   agentLabel?: string;
   agentLabelPlural?: string;
+  merchantId?: string | null;
 }
 
 export interface LinkLimits {
@@ -44,6 +49,18 @@ export interface WorkspacePermissions {
   workspaceId: string;
   role: WorkspaceRole;
   permissions: string[];
+}
+
+/** One line of the workspace's activity log. */
+export interface AuditEntry {
+  id: string;
+  action: string;
+  entityType: string | null;
+  entityId: string | null;
+  metadata: Record<string, unknown>;
+  ip: string | null;
+  createdAt: string;
+  actor: { name: string; email: string } | null;
 }
 
 export const workspacesApi = {
@@ -59,4 +76,10 @@ export const workspacesApi = {
     api.patch<LinkLimits>(workspacePath('/link-limits'), input),
 
   getPermissions: () => api.get<WorkspacePermissions>(workspacePath('/permissions')),
+
+  listAudit(cursor: string | null = null): Promise<Page<AuditEntry>> {
+    const qs = new URLSearchParams({ limit: '50' });
+    if (cursor) qs.set('cursor', cursor);
+    return api.get<Page<AuditEntry>>(workspacePath(`/audit?${qs.toString()}`));
+  },
 };

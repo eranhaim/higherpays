@@ -128,7 +128,7 @@ export default function TeamPage() {
             ? <button className="btn ghost small" onClick={() => setSuspending(m)}>Suspend</button>
             : <button className="btn ghost small" disabled={isBusy} onClick={() => changeStatus(m, 'active')}>Reactivate</button>}
           {/* Only a plain seat can be removed; a profile keeps its login. */}
-          {!m.agentId && !m.accountId && <button className="btn danger small" onClick={() => setRemoving(m)}>Remove</button>}
+          {!m.agentId && !m.accountId && <button className="btn ghost small" onClick={() => setRemoving(m)}>Remove</button>}
         </div>
       ),
     }] : []),

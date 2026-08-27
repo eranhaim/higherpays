@@ -6,11 +6,11 @@ import { useState } from 'react';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useCan } from '../../hooks/usePermission';
 import type { AnalyticsReport } from '../../api/endpoints';
-import { toIsoDate, DAY_MS, MONTHS_SHORT } from '../../lib/format';
+import { toIsoDate, MONTHS_SHORT } from '../../lib/format';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, DataTable, DetailRow, LoadingCard, ErrorCard,
-  type Column,
+  FilterBar, DateRangePicker, type Column, type DateRange,
 } from '../../components/ui';
 import { BarChart, Heatmap, MetricRow, type BarPoint } from './charts';
 import {
@@ -134,11 +134,6 @@ export default function AnalyticsPage() {
 
   const { dateWindow, report, previous, isLoading, isError, accounts, agents } = useAnalyticsData(filters, canScope);
 
-  const setLastDays = (days: number) => {
-    const now = Date.now();
-    setFilters((f) => ({ ...f, from: toLocalDateInput(now - days * DAY_MS), to: toLocalDateInput(now) }));
-  };
-
   const exportCSV = () => {
     if (!report) { toast('Nothing to export yet.'); return; }
     downloadCSV(buildCSV(report, activeWorkspace?.name ?? '', filters, labels), `higherpays-analytics-${toIsoDate(Date.now())}.csv`);
@@ -161,36 +156,34 @@ export default function AnalyticsPage() {
     { key: 'profit', header: 'Agency profit', align: 'right', render: (r) => <Money amount={r.agencyProfit} direction="in" /> },
   ];
 
-  const actions = (
+  const range: DateRange = { from: filters.from, to: filters.to };
+  const setRange = (r: DateRange) => setFilters((f) => ({ ...f, ...r }));
+
+  const header = (
     <>
-      <div className="field">
-        <label htmlFor="analytics-from">From</label>
-        <input id="analytics-from" type="date" value={filters.from} max={filters.to} onChange={(e) => setFilters((f) => ({ ...f, from: e.target.value }))} />
-      </div>
-      <div className="field">
-        <label htmlFor="analytics-to">To</label>
-        <input id="analytics-to" type="date" value={filters.to} min={filters.from} onChange={(e) => setFilters((f) => ({ ...f, to: e.target.value }))} />
-      </div>
-      <button className="btn ghost" onClick={() => setLastDays(14)}>14d</button>
-      <button className="btn ghost" onClick={() => setLastDays(30)}>30d</button>
-      <button className="btn ghost" onClick={() => setLastDays(90)}>90d</button>
-      {canScope && (
-        <>
-          <select aria-label={`Filter by ${labels.account}`} value={filters.accountId} onChange={(e) => setFilters((f) => ({ ...f, accountId: e.target.value, agentId: '' }))}>
-            <option value="">All {labels.accounts.toLowerCase()}</option>
-            {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-          <select aria-label={`Filter by ${labels.agent}`} value={filters.agentId} onChange={(e) => setFilters((f) => ({ ...f, agentId: e.target.value, accountId: '' }))}>
-            <option value="">All {labels.agents.toLowerCase()}</option>
-            {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-        </>
-      )}
-      {can('payments.export') && <button className="btn ghost" onClick={exportCSV} disabled={!report}>Export CSV</button>}
+      <PageHeader
+        title="Analytics"
+        subtitle={canScope ? activeWorkspace?.name ?? '' : 'Your performance'}
+        actions={<button className="btn ghost" onClick={exportCSV} disabled={!report}>Export CSV</button>}
+      />
+      <FilterBar>
+        <DateRangePicker value={range} onChange={setRange} />
+        {canScope && (
+          <>
+            <select aria-label={`Filter by ${labels.account}`} value={filters.accountId} onChange={(e) => setFilters((f) => ({ ...f, accountId: e.target.value, agentId: '' }))}>
+              <option value="">All {labels.accounts.toLowerCase()}</option>
+              {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            <select aria-label={`Filter by ${labels.agent}`} value={filters.agentId} onChange={(e) => setFilters((f) => ({ ...f, agentId: e.target.value, accountId: '' }))}>
+              <option value="">All {labels.agents.toLowerCase()}</option>
+              {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </>
+        )}
+        <button className="btn ghost" onClick={() => setFilters(defaultFilters())}>Clear</button>
+      </FilterBar>
     </>
   );
-
-  const header = <PageHeader title="Analytics" subtitle={canScope ? activeWorkspace?.name ?? '' : 'Your performance'} actions={actions} />;
 
   if (!dateWindow) return <div>{header}<ErrorCard message="Choose a valid date range." /></div>;
   if (isLoading) return <div>{header}<LoadingCard /></div>;
