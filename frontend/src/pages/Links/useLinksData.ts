@@ -1,13 +1,12 @@
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
-  linksApi, accountsApi, customersApi, workspacesApi,
-  type ListLinksQuery, type PaymentLink, type Account, type Customer, type LinkLimits, type LinkType,
+  linksApi, accountsApi, workspacesApi,
+  type ListLinksQuery, type PaymentLink, type Account, type LinkLimits, type LinkType,
 } from '../../api/endpoints';
 
 export interface CreateLinkFormInput {
   accountId: string;
-  customerId?: string;
   type: LinkType;
   amount: number;
   description?: string;
@@ -21,7 +20,6 @@ export interface ReconcileSummary {
 export interface UseLinksDataResult {
   links: PaymentLink[];
   accounts: Account[];
-  customers: Customer[];
   linkLimits: LinkLimits | null;
   isLoading: boolean;
   isError: boolean;
@@ -48,11 +46,6 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     enabled,
   });
   const accounts = useQuery({ queryKey: ['accounts', activeWorkspaceId], queryFn: () => accountsApi.list(), enabled });
-  const customers = useQuery({
-    queryKey: ['customers', activeWorkspaceId, 'picker'],
-    queryFn: () => customersApi.list({ limit: 200 }),
-    enabled,
-  });
   const linkLimits = useQuery({
     queryKey: ['link-limits', activeWorkspaceId],
     queryFn: () => workspacesApi.getLinkLimits(),
@@ -80,7 +73,6 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
   return {
     links: links.data?.pages.flatMap((p) => p.items) ?? [],
     accounts: accounts.data ?? [],
-    customers: customers.data ?? [],
     linkLimits: linkLimits.data ?? null,
     isLoading: links.isLoading,
     isError: links.isError,

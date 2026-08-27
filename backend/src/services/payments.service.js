@@ -38,10 +38,11 @@ async function recordPaymentOutcome(client, workspaceId, params) {
     throw new Error(`recordPaymentOutcome: unsupported status "${status}"`);
   }
 
-  // 1) The link gives the attribution: account, agent, customer.
+  // 1) The link gives the attribution: account and agent. The customer is
+  //    unknown until the agent completes the payment's details.
   const link = linkReference
     ? (await client.query(
-        `SELECT id, type, status, account_id, customer_id, created_by_agent_id, amount
+        `SELECT id, type, status, account_id, created_by_agent_id, amount
            FROM payment_links WHERE workspace_id = $1 AND reference_id = $2`,
         [workspaceId, linkReference])).rows[0]
     : null;
@@ -63,13 +64,13 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   const paymentStatus = status === 'approved' ? 'paid' : 'failed';
   const payment = (await client.query(
     `INSERT INTO payments
-       (workspace_id, account_id, payment_link_id, customer_id, agent_id,
+       (workspace_id, account_id, payment_link_id, agent_id,
         amount, currency, status, payment_method, provider_payment_id, occurred_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
      ON CONFLICT (workspace_id, provider_payment_id) DO UPDATE
        SET status = CASE WHEN payments.status = 'paid' THEN payments.status ELSE EXCLUDED.status END
      RETURNING id, status`,
-    [workspaceId, link.account_id, link.id, link.customer_id, link.created_by_agent_id,
+    [workspaceId, link.account_id, link.id, link.created_by_agent_id,
      grossValue, currency, paymentStatus, paymentMethod, providerTransactionId])).rows[0];
 
   // 3) The provider's record of the attempt.

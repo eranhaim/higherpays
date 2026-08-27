@@ -29,7 +29,7 @@ const publicLink = (l) => ({
   amount: l.amount == null ? null : Number(l.amount), currency: l.currency,
   status: l.status, referenceId: l.reference_id, description: l.description,
   checkoutUrl: l.checkout_url, expiresAt: l.expires_at, paidAt: l.paid_at, createdAt: l.created_at,
-  accountId: l.account_id, account: l.account, customerId: l.customer_id, customer: l.customer,
+  accountId: l.account_id, account: l.account,
   agentId: l.created_by_agent_id, agent: l.agent,
 });
 
@@ -66,10 +66,9 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
          SELECT pl.*, ${EFFECTIVE_STATUS} AS effective_status FROM payment_links pl WHERE pl.workspace_id = $1
        )
        SELECT pl.*, pl.effective_status AS status,
-              a.name AS account, cu.name AS customer, u.full_name AS agent
+              a.name AS account, u.full_name AS agent
          FROM effective pl
          JOIN accounts a ON a.id = pl.account_id
-         LEFT JOIN customers cu ON cu.id = pl.customer_id
          LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
          LEFT JOIN users u ON u.id = ag.user_id
         WHERE ($2::uuid IS NULL OR pl.created_by_agent_id = $2::uuid)
@@ -83,7 +82,7 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
           AND ($12::timestamptz IS NULL OR pl.created_at <= $12::timestamptz)
           AND ($13::uuid IS NULL OR pl.account_id = $13::uuid)
           AND ($14::text IS NULL OR lower(pl.reference_id) LIKE $14::text
-               OR lower(cu.name) LIKE $14::text OR lower(u.full_name) LIKE $14::text)
+               OR lower(u.full_name) LIKE $14::text)
         ORDER BY pl.created_at DESC, pl.id DESC LIMIT $6`,
       [wid(req), ...scopeParams(scope),
         cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1,
@@ -100,10 +99,9 @@ router.get('/:id', requirePermission('links.view'), asyncHandler(async (req, res
   const out = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
     const row = (await c.query(
-      `SELECT pl.*, ${EFFECTIVE_STATUS} AS status, a.name AS account, cu.name AS customer, u.full_name AS agent
+      `SELECT pl.*, ${EFFECTIVE_STATUS} AS status, a.name AS account, u.full_name AS agent
          FROM payment_links pl
          JOIN accounts a ON a.id = pl.account_id
-         LEFT JOIN customers cu ON cu.id = pl.customer_id
          LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
          LEFT JOIN users u ON u.id = ag.user_id
         WHERE pl.workspace_id = $1 AND pl.id = $2
@@ -116,9 +114,10 @@ router.get('/:id', requirePermission('links.view'), asyncHandler(async (req, res
   res.json(publicLink(out));
 }));
 
-// POST /  { accountId, customerId?, type: 'single_use'|'reusable', amount, currency, description? }
+// POST /  { accountId, type: 'single_use'|'reusable', amount, currency, description? }
+// The customer is attached later, when the agent completes the payment's details.
 router.post('/', requirePermission('links.create'), asyncHandler(async (req, res) => {
-  const { accountId, customerId, type, amount, currency, description } = req.body || {};
+  const { accountId, type, amount, currency, description } = req.body || {};
   if (!accountId) return badRequest(res, 'accountId is required', ['accountId']);
   if (!vocab.LINK_TYPE.includes(type)) return badRequest(res, `type must be one of ${vocab.LINK_TYPE.join(', ')}`, ['type']);
   if (!/^[A-Za-z]{3}$/.test(currency || '')) return badRequest(res, 'currency must be a 3-letter code', ['currency']);
@@ -167,21 +166,16 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
           AND ($3::uuid IS NULL OR EXISTS (SELECT 1 FROM account_agents ag WHERE ag.account_id = a.id AND ag.agent_id = $3::uuid))`,
       [accountId, wid(req), scope.kind === 'agent' ? scope.agentId : null])).rows[0];
     if (!account) return { err: 'account_not_found' };
-    if (customerId) {
-      const cust = (await c.query(
-        'SELECT id FROM customers WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL', [customerId, wid(req)])).rows[0];
-      if (!cust) return { err: 'customer_not_found' };
-    }
 
     const checkoutUrl = await generateProviderLink({ ws, currency: cur, amount: amt, referenceId, description, expiresAt });
 
     const link = (await c.query(
       `INSERT INTO payment_links
-         (workspace_id, account_id, customer_id, created_by_agent_id, type, pricing_mode, amount, currency,
+         (workspace_id, account_id, created_by_agent_id, type, pricing_mode, amount, currency,
           status, reference_id, provider_link_id, description, expires_at, checkout_url)
-       VALUES ($1,$2,$3,$4,$5,'fixed',$6,$7,'active',$8,$8,$9,$10,$11)
+       VALUES ($1,$2,$3,$4,'fixed',$5,$6,'active',$7,$7,$8,$9,$10)
        RETURNING *`,
-      [wid(req), accountId, customerId || null, scope.kind === 'agent' ? scope.agentId : null,
+      [wid(req), accountId, scope.kind === 'agent' ? scope.agentId : null,
         type, amt, cur, referenceId, description || null, expiresAt, checkoutUrl])).rows[0];
     return { link };
   });

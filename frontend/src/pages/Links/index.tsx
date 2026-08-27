@@ -51,12 +51,11 @@ export default function LinksPage() {
   }), [filters.status, filters.type, filters.min, filters.max, filters.from, filters.to, filters.accountId, search]);
 
   const {
-    links, accounts, customers, linkLimits, isLoading, isError, hasMore, isLoadingMore, loadMore,
+    links, accounts, linkLimits, isLoading, isError, hasMore, isLoadingMore, loadMore,
     createLink, cancelLink, reconcile,
   } = useLinksData(query);
   const [createOpen, setCreateOpen] = useState(false);
   const [accountId, setAccountId] = useState('');
-  const [customerId, setCustomerId] = useState('');
   const [type, setType] = useState<LinkType>('single_use');
   const [amountText, setAmountText] = useState('');
   const [isCreating, setIsCreating] = useState(false);
@@ -86,7 +85,6 @@ export default function LinksPage() {
 
   const openCreate = () => {
     setAccountId(activeAccounts[0]?.id ?? '');
-    setCustomerId('');
     setType('single_use');
     setAmountText('');
     setCreateOpen(true);
@@ -98,7 +96,7 @@ export default function LinksPage() {
     if (aboveMax) { toast(`Maximum link amount is ${formatMoney(maxAmount ?? 0)}.`); return; }
     setIsCreating(true);
     try {
-      const created = await createLink({ accountId, customerId: customerId || undefined, type, amount });
+      const created = await createLink({ accountId, type, amount });
       setCreateOpen(false);
       setCreatedUrl(created.checkoutUrl);
     } catch (err) {
@@ -139,7 +137,6 @@ export default function LinksPage() {
     { key: 'type', header: 'Type', render: (l) => <Pill>{LINK_TYPE_LABELS[l.type]}</Pill> },
     { key: 'account', header: labels.account, render: (l) => l.account },
     { key: 'agent', header: labels.agent, render: (l) => l.agent ?? '—' },
-    { key: 'customer', header: 'Customer', render: (l) => <span className="cname" title={l.customer ?? undefined}>{l.customer ?? '—'}</span> },
     { key: 'amount', header: 'Amount', align: 'right', render: (l) => l.amount == null ? '—' : <Money amount={l.amount} currency={l.currency} /> },
     { key: 'status', header: 'Status', render: (l) => <Pill tone={STATUS_TONE[l.status]}>{LINK_STATUS_LABELS[l.status]}</Pill> },
     { key: 'created', header: 'Created', render: (l) => <DateCell ts={l.createdAt} /> },
@@ -211,7 +208,7 @@ export default function LinksPage() {
         <input type="number" className="amount-input" aria-label="Maximum amount" placeholder="Max" value={filters.max}
           aria-invalid={inverted || undefined} onChange={(e) => setFilters((f) => ({ ...f, max: e.target.value }))} />
         <DateRangePicker value={range} onChange={setRange} />
-        <input type="search" className="search-input" aria-label="Search links" placeholder="Search ref, customer, agent"
+        <input type="search" className="search-input" aria-label="Search links" placeholder="Search ref, agent"
           value={filters.search} onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))} />
         <button className="btn ghost" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear</button>
       </FilterBar>
@@ -246,7 +243,6 @@ export default function LinksPage() {
             <DetailRow label="Type">{LINK_TYPE_LABELS[detail.type]}</DetailRow>
             <DetailRow label={labels.account}>{detail.account}</DetailRow>
             <DetailRow label={labels.agent}>{detail.agent ?? '—'}</DetailRow>
-            <DetailRow label="Customer">{detail.customer ?? 'Not known yet'}</DetailRow>
             <DetailRow label="Amount">{detail.amount == null ? '—' : <Money amount={detail.amount} currency={detail.currency} emphasis />}</DetailRow>
             <DetailRow label="Created"><DateCell ts={detail.createdAt} /></DetailRow>
             <DetailRow label="Expires">{detail.expiresAt ? <DateCell ts={detail.expiresAt} /> : 'Never'}</DetailRow>
@@ -290,10 +286,6 @@ export default function LinksPage() {
             ? 'Closes on the first payment, or after 24 hours if nobody pays.'
             : 'Stays open through any number of payments until you cancel it.'}>
           {LINK_TYPES.map((t) => <option key={t} value={t}>{LINK_TYPE_LABELS[t]}</option>)}
-        </Select>
-        <Select id="link-customer" label="Customer" value={customerId} onChange={setCustomerId}>
-          <option value="">Not known yet</option>
-          {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </Select>
         <div className="field">
           <label htmlFor="link-amount">Amount</label>

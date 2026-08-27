@@ -52,15 +52,12 @@ export interface PaymentLink {
   createdAt: string;
   accountId: string;
   account: string;
-  customerId: string | null;
-  customer: string | null;
   agentId: string | null;
   agent: string | null;
 }
 
 export interface CreateLinkInput {
   accountId: string;
-  customerId?: string;
   type: LinkType;
   amount: number;
   currency: string;
