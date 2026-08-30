@@ -408,7 +408,7 @@ Do not add a flag to `DataTable` to suppress its frame — that is the wrapper's
 
 ### Deploy is manual
 
-Pushing to `main` does nothing on its own. Production deploy is `git pull && docker compose up -d --build` run on the EC2 box.
+Pushing to `main` does nothing on its own. Deploy with `./deploy/deploy.sh` (optionally naming one service), which SSHes to the EC2 box, pulls `origin/main`, rebuilds, and health-checks. It uploads nothing — the server only runs pushed commits, so it refuses to deploy a dirty or unpushed tree. Target host and key live in `deploy/deploy.env` (gitignored; copy `deploy.env.example`).
 
 ---
 

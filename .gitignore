@@ -28,6 +28,9 @@ Thumbs.db
 .env.*
 !.env.example
 
+# Deploy target (host + key path) - machine-local, never committed
+deploy/deploy.env
+
 # Coverage
 coverage/
 .git-commit-msg.tmp
