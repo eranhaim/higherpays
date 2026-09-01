@@ -184,16 +184,24 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
       [accountId, wid(req), scope.kind === 'agent' ? scope.agentId : null])).rows[0];
     if (!account) return { err: 'account_not_found' };
 
-    const checkoutUrl = await generateProviderLink({ ws, currency: cur, amount: amt, referenceId, description, expiresAt });
+    // HigherPays' own fee, paid by the customer on top of the price. Copied
+    // onto the link so a later rate change cannot rewrite what this customer
+    // was charged, and never part of the amount the agency is credited.
+    const card = (await c.query('SELECT checkout_fee FROM effective_platform_fee($1, now())', [wid(req)])).rows[0];
+    const checkoutFee = Number(card?.checkout_fee || 0);
+
+    const checkoutUrl = await generateProviderLink({
+      ws, currency: cur, amount: amt + checkoutFee, referenceId, description, expiresAt,
+    });
 
     const link = (await c.query(
       `INSERT INTO payment_links
-         (workspace_id, account_id, created_by_agent_id, type, pricing_mode, amount, currency,
+         (workspace_id, account_id, created_by_agent_id, type, pricing_mode, amount, checkout_fee, currency,
           status, reference_id, provider_link_id, description, expires_at, checkout_url)
-       VALUES ($1,$2,$3,$4,'fixed',$5,$6,'active',$7,$7,$8,$9,$10)
+       VALUES ($1,$2,$3,$4,'fixed',$5,$6,$7,'active',$8,$8,$9,$10,$11)
        RETURNING *`,
       [wid(req), accountId, scope.kind === 'agent' ? scope.agentId : null,
-        type, amt, cur, referenceId, description || null, expiresAt, checkoutUrl])).rows[0];
+        type, amt, checkoutFee, cur, referenceId, description || null, expiresAt, checkoutUrl])).rows[0];
     return { link };
   });
 

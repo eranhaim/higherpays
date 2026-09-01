@@ -22,7 +22,7 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
   const summary = { checked: 0, updated: [], skipped: [] };
 
   const stuck = (await c.query(
-    `SELECT id, reference_id, amount, currency, expires_at < now() AS is_expired
+    `SELECT id, reference_id, amount, checkout_fee, currency, expires_at < now() AS is_expired
        FROM payment_links
       WHERE workspace_id = $1 AND type = 'single_use' AND status = 'active'
         AND created_at < now() - ($2 || ' minutes')::interval`,
@@ -43,7 +43,9 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
       const outcome = await paymentsService.recordPaymentOutcome(c, ws.id, {
         providerTransactionId: statusResp.transaction_id || ('ref-' + link.reference_id),
         status: 'approved',
-        gross: statusResp.gross_amount != null ? Number(statusResp.gross_amount) : Number(link.amount || 0),
+        gross: statusResp.gross_amount != null
+          ? Number(statusResp.gross_amount)
+          : Number(link.amount || 0) + Number(link.checkout_fee || 0),
         fee: null,
         currency: (statusResp.unit || link.currency || 'EUR').toString().toUpperCase(),
         linkReference: link.reference_id,

@@ -62,6 +62,7 @@ async function createTenant(app, opts = {}) {
     mdrPct: opts.mdrPct ?? null,
     settlementPct: opts.settlementPct ?? null,
     pspFixedFee: opts.pspFixedFee ?? 0.5,
+    checkoutFee: opts.checkoutFee ?? 0,
     marginRatePct: opts.marginRatePct ?? 5,
     accountSplitPct: opts.accountSplitPct ?? 70,
     agentPct: opts.agentPct ?? 10,

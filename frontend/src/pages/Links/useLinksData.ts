@@ -1,4 +1,4 @@
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
   linksApi, accountsApi, workspacesApi,
@@ -37,6 +37,9 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     queryFn: ({ pageParam }) => linksApi.list(pageParam, filters),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
+    // Keep the current rows on screen while a changed filter loads, so nudging
+    // the amount spinner doesn't blank the table and the stat cards.
+    placeholderData: keepPreviousData,
     enabled,
   });
   const accounts = useQuery({ queryKey: ['accounts', activeWorkspaceId], queryFn: () => accountsApi.list(), enabled });

@@ -42,7 +42,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   //    unknown until the agent completes the payment's details.
   const link = linkReference
     ? (await client.query(
-        `SELECT id, type, status, account_id, created_by_agent_id, amount
+        `SELECT id, type, status, account_id, created_by_agent_id, amount, checkout_fee
            FROM payment_links WHERE workspace_id = $1 AND reference_id = $2`,
         [workspaceId, linkReference])).rows[0]
     : null;
@@ -53,7 +53,13 @@ async function recordPaymentOutcome(client, workspaceId, params) {
     return { paymentId: null, transactionId: null, linkId: null, newSale: false };
   }
 
-  const grossValue = gross != null ? gross : Number(link.amount || 0);
+  // `gross` is what the customer paid. The checkout fee inside it is
+  // HigherPays' own, so it leaves the sale here: the ledger splits the price
+  // the creator set, and the fee is carried as the transaction's surcharge,
+  // which the revenue engine already counts as our revenue.
+  const paidValue = gross != null ? gross : Number(link.amount || 0) + Number(link.checkout_fee || 0);
+  const surcharge = Math.min(Number(link.checkout_fee || 0), paidValue);
+  const grossValue = paidValue - surcharge;
   // MantaPay does not send fees in notifications; the ledger prices the sale
   // from the rate card and the Search API later replaces the estimate.
   const feeValue = fee != null ? fee : 0;
@@ -76,13 +82,13 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   // 3) The provider's record of the attempt.
   const tx = (await client.query(
     `INSERT INTO transactions
-       (workspace_id, payment_id, type, status, gross, fee, net, currency, provider_transaction_id, occurred_at, raw_payload)
-     VALUES ($1,$2,'payment',$3,$4,$5,$6,$7,$8,now(),$9)
+       (workspace_id, payment_id, type, status, gross, fee, surcharge, net, currency, provider_transaction_id, occurred_at, raw_payload)
+     VALUES ($1,$2,'payment',$3,$4,$5,$6,$7,$8,$9,now(),$10)
      ON CONFLICT (workspace_id, provider_transaction_id) DO UPDATE
        SET status = CASE WHEN transactions.status = 'approved' THEN transactions.status ELSE EXCLUDED.status END,
            fee = EXCLUDED.fee, net = EXCLUDED.net
      RETURNING id, status`,
-    [workspaceId, payment.id, status, grossValue, feeValue, grossValue - feeValue, currency,
+    [workspaceId, payment.id, status, grossValue, feeValue, surcharge, grossValue - feeValue, currency,
      providerTransactionId, rawPayload])).rows[0];
 
   // 4) A paid single-use link waits for the agent to complete the details.

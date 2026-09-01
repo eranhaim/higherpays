@@ -15,7 +15,6 @@ export interface FeesSummary {
   };
   platformFees: {
     margin: number;
-    surcharge: number;
     total: number;
     percentOfGross: number;
   };

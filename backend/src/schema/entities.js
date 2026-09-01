@@ -132,6 +132,7 @@ const PlatformFeeRate = entity('platform_fee_rates', {
     settlementPct:   percent(),                // settlement fee, applied after the fixed fee
     pspFixedFee:     money().notNull().default('0'),
     marginRatePct:   percent().notNull().default('0'),
+    checkoutFee:     money().notNull().default('0'),   // charged to the customer, HigherPays' own
     blendedRatePct:  numeric(6, 2).generatedAs('psp_rate_pct + margin_rate_pct'),
     effectiveFrom:   timestamp().notNull().default('now()'),
     createdByUserId: uuid().references('users', 'SET NULL'),
@@ -301,6 +302,7 @@ const PaymentLink = entity('payment_links', {
     type:                  enumOf(LINK_TYPE).notNull(),
     pricingMode:           enumOf(PRICING_MODE).notNull().default("'fixed'"),
     amount:                money(),             // null when the payer chooses the amount
+    checkoutFee:           money().notNull().default('0'),  // added at checkout, copied from the rate card
     currency:              char(3).notNull(),
     status:                enumOf(LINK_STATUS).notNull().default("'active'"),
     referenceId:           text(),              // our reference, sent to the provider
