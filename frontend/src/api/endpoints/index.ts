@@ -8,7 +8,7 @@ export {
 export { revenueApi, type RevenueRule } from './revenue';
 export {
   accountsApi, ACCOUNT_STATUS_LABELS,
-  type Account, type AccountStatus, type AccountAgent, type CreateAccountInput, type UpdateAccountInput,
+  type Account, type AccountStatus, type PayModel, type AccountAgent, type CreateAccountInput, type UpdateAccountInput,
 } from './accounts';
 export { agentsApi, type Agent, type CreateAgentInput, type UpdateAgentInput } from './agents';
 export { teamApi, type Member, type MemberStatus } from './team';

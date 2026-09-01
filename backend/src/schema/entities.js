@@ -20,6 +20,8 @@ const WORKSPACE_ROLE = ['workspace_admin', 'analyst', 'agent', 'account_owner'];
 const ACCESS_STATUS = ['active', 'suspended'];
 
 const ACCOUNT_STATUS = [ 'active', 'paused', 'archived'];
+// How a creator is paid: a share of every sale, or a salary per payout period.
+const PAY_MODEL = ['share', 'salary'];
 const CUSTOMER_SEGMENT = ['new', 'regular', 'high_value', 'vip', 'inactive', 'at_risk'];
 const PRICING_MODE = ['fixed', 'open'];
 // single_use dies on the first payment, or 24h after creation if nobody pays.
@@ -197,7 +199,9 @@ const Account = entity('accounts', {
     handle:            text(),
     country:           char(2),
     status:            enumOf(ACCOUNT_STATUS).notNull().default("'active'"),
-    revenueSplitPct:   percent().notNull().default('70'),
+    payModel:          enumOf(PAY_MODEL).notNull().default("'share'"),
+    revenueSplitPct:   percent().notNull().default('70'),   // ignored while payModel is 'salary'
+    salaryAmount:      money().notNull().default('0'),      // owed once per payout period
   },
   foreignKeys: [
     { columns: ['workspaceId', 'userId', 'role'], table: 'workspace_users',
@@ -636,7 +640,7 @@ module.exports = {
 
   status: {
     USER_STATUS, WORKSPACE_STATUS, WORKSPACE_ROLE, ACCESS_STATUS,
-    ACCOUNT_STATUS, CUSTOMER_SEGMENT, PRICING_MODE,
+    ACCOUNT_STATUS, PAY_MODEL, CUSTOMER_SEGMENT, PRICING_MODE,
     LINK_TYPE, LINK_STATUS,
     PAYMENT_STATUS, TRANSACTION_TYPE, TRANSACTION_STATUS, REVENUE_ENTRY_TYPE,
     REVENUE_ENTRY_STATUS, PAYEE_TYPE, PAYOUT_STATUS, FEE_MODEL, CHANNEL_TYPE,

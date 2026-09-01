@@ -29,12 +29,17 @@ export interface Account {
   // The share and the roster are only sent to callers who see the whole
   // workspace (the owner also gets their own share); an agent gets the
   // account without its terms.
+  payModel?: PayModel;
   revenueSplitPct?: number;
+  salaryAmount?: number;
   agentsAssigned?: number;
   agents?: AccountAgent[];
 }
 
 /** Creating an account creates its owner's login as well. */
+/** How a creator is paid: a share of every sale, or a salary per period. */
+export type PayModel = 'share' | 'salary';
+
 export interface CreateAccountInput {
   email: string;
   fullName: string;
@@ -42,6 +47,8 @@ export interface CreateAccountInput {
   handle?: string;
   country?: string;
   revenueSplitPct?: number;
+  payModel?: PayModel;
+  salaryAmount?: number;
 }
 
 export interface UpdateAccountInput {
@@ -50,6 +57,8 @@ export interface UpdateAccountInput {
   country?: string;
   status?: AccountStatus;
   revenueSplitPct?: number;
+  payModel?: PayModel;
+  salaryAmount?: number;
 }
 
 export const accountsApi = {

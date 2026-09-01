@@ -14,6 +14,7 @@ const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
 
 const ACCOUNT_STATUS = ['active', 'paused', 'archived'];
+const { status: vocab } = require('../schema/entities');
 
 // Every account row the caller may see: an agent the ones they are assigned,
 // an owner their own, everyone else the whole workspace.
@@ -29,10 +30,14 @@ function visible(row, scope) {
     createdAt: row.created_at,
   };
   if (scope.kind === 'workspace') {
+    out.payModel = row.pay_model;
     out.revenueSplitPct = Number(row.revenue_split_pct);
+    out.salaryAmount = Number(row.salary_amount);
     out.agentsAssigned = Number(row.agents_assigned || 0);
   } else if (scope.kind === 'account') {
+    out.payModel = row.pay_model;
     out.revenueSplitPct = Number(row.revenue_split_pct);
+    out.salaryAmount = Number(row.salary_amount);
   }
   return out;
 }
@@ -90,7 +95,7 @@ router.get('/:id', requirePermission('accounts.view'), asyncHandler(async (req, 
 // that did not exist is created without a password and invited: the owner sets
 // their own, rather than the agency choosing one for them.
 router.post('/', requirePermission('accounts.manage'), asyncHandler(async (req, res) => {
-  const { email, fullName, name, handle, country, revenueSplitPct } = req.body || {};
+  const { email, fullName, name, handle, country, revenueSplitPct, payModel, salaryAmount } = req.body || {};
   if (!isStr(email, 100) || !email.includes('@')) return badRequest(res, 'a valid email is required', ['email']);
   if (!isStr(fullName, 120)) return badRequest(res, 'fullName is required', ['fullName']);
   if (!isStr(name, 100)) return badRequest(res, 'name is required', ['name']);
@@ -98,18 +103,24 @@ router.post('/', requirePermission('accounts.manage'), asyncHandler(async (req, 
   if (country != null && !/^[A-Za-z]{2}$/.test(country)) return badRequest(res, 'country must be 2 letters', ['country']);
   const split = revenueSplitPct == null ? 70 : Number(revenueSplitPct);
   if (!(split >= 0 && split <= 100)) return badRequest(res, 'revenueSplitPct must be 0..100', ['revenueSplitPct']);
+  const pay = payModel == null ? 'share' : payModel;
+  if (!vocab.PAY_MODEL.includes(pay)) return badRequest(res, `payModel must be one of ${vocab.PAY_MODEL.join(', ')}`, ['payModel']);
+  const salary = salaryAmount == null ? 0 : Number(salaryAmount);
+  if (!(salary >= 0)) return badRequest(res, 'salaryAmount must be 0 or more', ['salaryAmount']);
 
   const out = await withTransaction(async (c) => {
-    const problem = await splitTooHigh(c, wid(req), split);
+    // A salaried creator takes no share, so there is nothing to check.
+    const problem = pay === 'salary' ? null : await splitTooHigh(c, wid(req), split);
     if (problem) return { err: problem, fields: ['revenueSplitPct'] };
     const grant = await grantWorkspaceRole(c, wid(req), { email, fullName }, 'account_owner');
     if (grant.err) return { err: `this person is already a ${grant.role} here`, fields: ['email'] };
     const existing = (await c.query('SELECT 1 FROM accounts WHERE workspace_id=$1 AND user_id=$2', [wid(req), grant.userId])).rows[0];
     if (existing) return { err: 'this person already owns an account here', fields: ['email'] };
     const row = (await c.query(
-      `INSERT INTO accounts (workspace_id, user_id, name, handle, country, revenue_split_pct)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
-      [wid(req), grant.userId, name.trim(), handle || null, country ? country.toUpperCase() : null, split])).rows[0];
+      `INSERT INTO accounts (workspace_id, user_id, name, handle, country, revenue_split_pct, pay_model, salary_amount)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [wid(req), grant.userId, name.trim(), handle || null, country ? country.toUpperCase() : null,
+        split, pay, salary])).rows[0];
     if (grant.isNewLogin) {
       await createInvite(c, {
         workspaceId: wid(req), email, role: 'account_owner', invitedByUserId: uid(req),
@@ -123,7 +134,7 @@ router.post('/', requirePermission('accounts.manage'), asyncHandler(async (req, 
   res.status(201).json({ ...visible(out.row, { kind: 'workspace' }), invited: out.invited });
 }));
 
-// PATCH /:id  { name?, handle?, country?, status?, revenueSplitPct? }
+// PATCH /:id  { name?, handle?, country?, status?, revenueSplitPct?, payModel?, salaryAmount? }
 router.patch('/:id', requirePermission('accounts.manage'), asyncHandler(async (req, res) => {
   const body = req.body || {};
   const sets = [], vals = [];
@@ -139,11 +150,22 @@ router.patch('/:id', requirePermission('accounts.manage'), asyncHandler(async (r
     if (!(newSplit >= 0 && newSplit <= 100)) return badRequest(res, 'revenueSplitPct must be 0..100', ['revenueSplitPct']);
     vals.push(newSplit); sets.push(`revenue_split_pct = $${vals.length}`);
   }
+  if ('payModel' in body) {
+    if (!vocab.PAY_MODEL.includes(body.payModel)) return badRequest(res, `payModel must be one of ${vocab.PAY_MODEL.join(', ')}`, ['payModel']);
+    vals.push(body.payModel); sets.push(`pay_model = $${vals.length}`);
+  }
+  if ('salaryAmount' in body) {
+    const salary = Number(body.salaryAmount);
+    if (!(salary >= 0)) return badRequest(res, 'salaryAmount must be 0 or more', ['salaryAmount']);
+    vals.push(salary); sets.push(`salary_amount = $${vals.length}`);
+  }
   if (!sets.length) return badRequest(res, 'no updatable fields provided');
   vals.push(wid(req), req.params.id);
 
   const out = await withTransaction(async (c) => {
-    if (newSplit != null) {
+    // A salaried creator takes no share, so the room-for-an-agent rule does
+    // not apply to them.
+    if (newSplit != null && body.payModel !== 'salary') {
       const problem = await splitTooHigh(c, wid(req), newSplit);
       if (problem) return { err: problem };
     }

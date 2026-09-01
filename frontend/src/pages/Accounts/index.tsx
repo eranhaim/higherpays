@@ -7,7 +7,10 @@ import { toast } from '../../lib/toast';
 import { PageHeader, Pill, DataTable, FilterBar, Select, ViewPicker, type Column, type SortState } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import { sortRows, type SortValues } from '../../lib/sortRows';
-import { ACCOUNT_STATUS_LABELS, type Account, type AccountStatus, type UpdateAccountInput } from '../../api/endpoints';
+import {
+  ACCOUNT_STATUS_LABELS,
+  type Account, type AccountStatus, type PayModel, type CreateAccountInput, type UpdateAccountInput,
+} from '../../api/endpoints';
 import { useAccountsData, useAccountDetail } from './useAccountsData';
 
 const SORT_VALUES: SortValues<Account> = {
@@ -25,6 +28,58 @@ const STATUS_TONE: Record<AccountStatus, 'ok' | 'warn' | 'muted'> = {
   paused: 'warn',
   archived: 'muted',
 };
+
+/**
+ * How a creator is paid. A share is a cut of what is left after fees on every
+ * sale; a salary is a fixed amount owed once per payout period, and the
+ * creator takes nothing from the sales themselves.
+ */
+function PayFields({ idPrefix, label, model, setModel, splitText, setSplitText, salaryText, setSalaryText }: {
+  idPrefix: string;
+  label: string;
+  model: PayModel;
+  setModel: (m: PayModel) => void;
+  splitText: string;
+  setSplitText: (v: string) => void;
+  salaryText: string;
+  setSalaryText: (v: string) => void;
+}) {
+  const split = parsePct(splitText);
+  const salary = parseFloat(salaryText);
+  return (
+    <div className="field" role="radiogroup" aria-labelledby={`${idPrefix}-pay-label`}>
+      <div className="field-label" id={`${idPrefix}-pay-label`}>{label} pay</div>
+      <label className="check-row">
+        <input type="radio" name={`${idPrefix}-pay`} checked={model === 'share'} onChange={() => setModel('share')} />
+        <span>Share of distributable</span>
+      </label>
+      {model === 'share' && (
+        <div className="pct-input">
+          <input
+            id={`${idPrefix}-split`} type="number" min={0} max={100} value={splitText}
+            aria-label="Share of distributable" aria-invalid={Number.isNaN(split) || undefined}
+            onChange={(e) => setSplitText(e.target.value)}
+          />
+          <span className="sub">%</span>
+        </div>
+      )}
+      <label className="check-row">
+        <input type="radio" name={`${idPrefix}-pay`} checked={model === 'salary'} onChange={() => setModel('salary')} />
+        <span>Salary, per payout period</span>
+      </label>
+      {model === 'salary' && (
+        <>
+          <input
+            id={`${idPrefix}-salary`} type="number" min={0} step={0.01} value={salaryText}
+            aria-label="Salary per payout period" aria-invalid={Number.isNaN(salary) || undefined}
+            onChange={(e) => setSalaryText(e.target.value)}
+          />
+          <p className="sub">They take nothing from each sale; the agency keeps that share and owes this once per period.</p>
+        </>
+      )}
+    </div>
+  );
+}
 
 /** NaN for anything that isn't a usable percentage, so callers can flag it. */
 function parsePct(text: string): number {
@@ -211,7 +266,7 @@ export default function AccountsPage() {
 interface CreateAccountModalProps {
   agents: { id: string; name: string }[];
   onClose: () => void;
-  onSubmit: (input: { email: string; fullName: string; name: string; country?: string; revenueSplitPct: number }, agentIds: string[]) => Promise<void>;
+  onSubmit: (input: CreateAccountInput, agentIds: string[]) => Promise<void>;
 }
 
 /** An account and the login of the person who owns it, in one form. */
@@ -222,6 +277,8 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [splitText, setSplitText] = useState(String(DEFAULT_SPLIT_PCT));
+  const [payModel, setPayModel] = useState<PayModel>('share');
+  const [salaryText, setSalaryText] = useState('0');
   const [assigned, setAssigned] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const split = parsePct(splitText);
@@ -229,7 +286,8 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
   const submit = async () => {
     if (!name.trim()) { toast('Name is required.'); return; }
     if (!fullName.trim() || !email.trim()) { toast("The owner's name and email are required."); return; }
-    if (Number.isNaN(split)) { toast('Share must be 0–100.'); return; }
+    if (payModel === 'share' && Number.isNaN(split)) { toast('Share must be 0–100.'); return; }
+    if (payModel === 'salary' && !(parseFloat(salaryText) >= 0)) { toast('Salary must be an amount of 0 or more.'); return; }
     if (country && !/^[A-Za-z]{2}$/.test(country)) { toast('Country is a 2-letter code.'); return; }
     setIsSaving(true);
     try {
@@ -237,7 +295,9 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
         email: email.trim(), fullName: fullName.trim(),
         name: name.trim(),
         ...(country ? { country } : {}),
-        revenueSplitPct: split,
+        payModel,
+        revenueSplitPct: payModel === 'share' ? split : 0,
+        salaryAmount: payModel === 'salary' ? parseFloat(salaryText) : 0,
       }, assigned);
     } catch (err) {
       toast(err instanceof Error ? err.message : `Could not add the ${labels.account.toLowerCase()}.`);
@@ -271,14 +331,10 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
           <input id="owner-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </div>
       </div>
-      <div className="field">
-        <label htmlFor="account-split">{labels.account} share of distributable</label>
-        <div className="pct-input">
-          <input id="account-split" type="number" min={0} max={100} value={splitText} aria-invalid={Number.isNaN(split) || undefined}
-            onChange={(e) => setSplitText(e.target.value)} />
-          <span className="sub">%</span>
-        </div>
-      </div>
+      <PayFields
+        idPrefix="account" label={labels.account} model={payModel} setModel={setPayModel}
+        splitText={splitText} setSplitText={setSplitText} salaryText={salaryText} setSalaryText={setSalaryText}
+      />
       <div className="field" role="group" aria-labelledby="assign-agents-label">
         <div className="field-label" id="assign-agents-label">Assign {labels.agents.toLowerCase()}</div>
         <div className="check-list">
@@ -350,21 +406,29 @@ function EditAccountForm({ account, agents, assigned: initialAssigned, canEditSp
   const [name, setName] = useState(account.name);
   const [country, setCountry] = useState(account.country ?? '');
   const [splitText, setSplitText] = useState(account.revenueSplitPct === undefined ? '' : String(account.revenueSplitPct));
+  const [payModel, setPayModel] = useState<PayModel>(account.payModel ?? 'share');
+  const [salaryText, setSalaryText] = useState(String(account.salaryAmount ?? 0));
   const [assigned, setAssigned] = useState(initialAssigned);
   const [isSaving, setIsSaving] = useState(false);
   const split = parsePct(splitText);
-  const splitInvalid = canEditSplits && Number.isNaN(split);
+  const splitInvalid = canEditSplits && payModel === 'share' && Number.isNaN(split);
+  const salaryInvalid = canEditSplits && payModel === 'salary' && !(parseFloat(salaryText) >= 0);
 
   const submit = async () => {
     if (!name.trim()) { toast('Name is required.'); return; }
     if (splitInvalid) { toast('Share must be 0–100.'); return; }
+    if (salaryInvalid) { toast('Salary must be an amount of 0 or more.'); return; }
     if (country && !/^[A-Za-z]{2}$/.test(country)) { toast('Country is a 2-letter code.'); return; }
     setIsSaving(true);
     try {
       await onSubmit({
         name: name.trim(),
         country: country.trim(),
-        ...(canEditSplits ? { revenueSplitPct: split } : {}),
+        ...(canEditSplits ? {
+          payModel,
+          revenueSplitPct: payModel === 'share' ? split : 0,
+          salaryAmount: payModel === 'salary' ? parseFloat(salaryText) : 0,
+        } : {}),
       }, assigned);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not save.');
@@ -389,17 +453,17 @@ function EditAccountForm({ account, agents, assigned: initialAssigned, canEditSp
       {/* Renaming is accounts.manage; changing what it is paid is a revenue
           decision, so without that permission the field is absent, not dead. */}
       {canEditSplits && (
-        <div className="field">
-          <label htmlFor="edit-account-split">{labels.account} share of distributable</label>
-          <div className="pct-input">
-            <input id="edit-account-split" type="number" min={0} max={100} value={splitText}
-              aria-invalid={splitInvalid || undefined} onChange={(e) => setSplitText(e.target.value)} />
-            <span className="sub">%</span>
-          </div>
-          <p className="sub">
-            {splitInvalid ? <span className="text-neg">0–100 only</span> : `Agency keeps ${100 - split}%.`}
-          </p>
-        </div>
+        <>
+          <PayFields
+            idPrefix="edit-account" label={labels.account} model={payModel} setModel={setPayModel}
+            splitText={splitText} setSplitText={setSplitText} salaryText={salaryText} setSalaryText={setSalaryText}
+          />
+          {payModel === 'share' && (
+            <p className="sub">
+              {splitInvalid ? <span className="text-neg">0–100 only</span> : `Agency keeps ${100 - split}%.`}
+            </p>
+          )}
+        </>
       )}
       <div className="field" role="group" aria-labelledby="edit-agents-label">
         <div className="field-label" id="edit-agents-label">Assigned {labels.agents.toLowerCase()}</div>
@@ -417,7 +481,7 @@ function EditAccountForm({ account, agents, assigned: initialAssigned, canEditSp
       </div>
       <div className="modal-actions">
         <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-        <button type="submit" className="btn" disabled={isSaving || splitInvalid}>{isSaving ? 'Saving…' : 'Save changes'}</button>
+        <button type="submit" className="btn" disabled={isSaving || splitInvalid || salaryInvalid}>{isSaving ? 'Saving…' : 'Save changes'}</button>
       </div>
     </form>
   );

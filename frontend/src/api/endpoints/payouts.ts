@@ -3,7 +3,7 @@ import { workspacePath } from '../workspacePath';
 
 export interface PayoutBreakdown {
   range: { from: string; to: string };
-  perAccount: Array<{ id: string; name: string; revenue: number; owed: number }>;
+  perAccount: Array<{ id: string; name: string; payModel: 'share' | 'salary'; revenue: number; owed: number }>;
   perAgent: Array<{ id: string; name: string; owed: number; sales: number }>;
   reserve: { pct: number; releaseDays: number; held: number; source: 'settlements' | 'estimated' };
   /** Can the agency pay everyone today? `available` is receipts minus the reserve. */

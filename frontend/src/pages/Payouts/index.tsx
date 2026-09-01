@@ -189,7 +189,7 @@ function AgencyPayouts() {
                 <tr><td colSpan={4}><EmptyState title={`No ${labels.accounts.toLowerCase()} yet.`} /></td></tr>
               ) : data.perAccount.map((c) => (
                 <tr key={c.id}>
-                  <th scope="row">{c.name}</th>
+                  <th scope="row">{c.name}{c.payModel === 'salary' ? <span className="sub inline"> · salary</span> : null}</th>
                   <td><Money amount={c.revenue} direction="in" /></td>
                   <td><Money amount={c.owed} direction="out" emphasis /></td>
                   <td>{c.owed > 0 ? <><Pill tone="ok">Accruing</Pill> {payButton('account', c.id, c.name, c.owed)}</> : <Pill>Settled</Pill>}</td>

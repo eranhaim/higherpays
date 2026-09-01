@@ -41,8 +41,13 @@ router.get('/', requirePermission('revenue.view'), asyncHandler(async (req, res)
 // the provider holds, and whether the agency can pay everyone today.
 router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (req, res) => {
   const { F, T } = range(req, req.query);
+  // A salaried creator earns nothing per sale; they are owed one salary for
+  // the period, unless a payout already covers part of it.
   const perAccount = (await query(`
-    SELECT a.id, a.name, COALESCE(agg.revenue,0) AS revenue, COALESCE(agg.owed,0) AS owed
+    SELECT a.id, a.name, a.pay_model, COALESCE(agg.revenue,0) AS revenue,
+           CASE WHEN a.pay_model = 'salary'
+                THEN CASE WHEN paid.covered THEN 0 ELSE a.salary_amount END
+                ELSE COALESCE(agg.owed,0) END AS owed
       FROM accounts a
       LEFT JOIN (
         SELECT re.account_id, SUM(re.gross) AS revenue,
@@ -50,6 +55,11 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
           FROM revenue_entries re JOIN transactions t ON t.id = re.transaction_id
          WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 GROUP BY re.account_id
       ) agg ON agg.account_id = a.id
+      LEFT JOIN LATERAL (
+        SELECT true AS covered FROM payouts p
+         WHERE p.workspace_id = $3 AND p.account_id = a.id
+           AND p.period_start <= $2::date AND p.period_end >= $1::date LIMIT 1
+      ) paid ON true
      WHERE a.workspace_id = $3 ORDER BY owed DESC`, [F, T, wid(req)])).rows;
   const perAgent = (await query(`
     SELECT ag.id, u.full_name AS name, COALESCE(agg.owed,0) AS owed, COALESCE(agg.sales,0) AS sales
@@ -89,7 +99,9 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
 
   res.json({
     range: { from: F, to: T },
-    perAccount: perAccount.map((r) => ({ id: r.id, name: r.name, revenue: num(r.revenue), owed: num(r.owed) })),
+    perAccount: perAccount.map((r) => ({
+      id: r.id, name: r.name, payModel: r.pay_model, revenue: num(r.revenue), owed: num(r.owed),
+    })),
     perAgent: perAgent.map((r) => ({ id: r.id, name: r.name, owed: num(r.owed), sales: num(r.sales) })),
     reserve,
     cash: cashPosition({ owed: accountsOwed + agentsOwed, received, held: reserve.held }),
@@ -155,6 +167,27 @@ router.post('/run', requirePermission('revenue.manage'), asyncHandler(async (req
       const settled = await c.query(sql.settle, [pay.id, r.rid, F, T, wid(req)]);
       if (settled.rowCount === 0) throw new Error(`payout ${pay.id} settled no entries`);
       out.push({ recipientId: r.rid, amount: Number(r.amount), payoutId: pay.id });
+    }
+
+    // A salary has no revenue entries to settle: it is owed for the period
+    // itself. An overlapping payout means this period is already covered, so
+    // running the same range twice cannot pay it twice.
+    if (payeeType === 'account') {
+      const salaried = (await c.query(`
+        SELECT a.id, a.salary_amount FROM accounts a
+         WHERE a.workspace_id = $1 AND a.pay_model = 'salary' AND a.salary_amount > 0
+           AND a.status <> 'archived'
+           AND ($2::uuid IS NULL OR a.id = $2::uuid)
+           AND NOT EXISTS (
+             SELECT 1 FROM payouts p
+              WHERE p.workspace_id = $1 AND p.account_id = a.id
+                AND p.period_start <= $4::date AND p.period_end >= $3::date)`,
+        [wid(req), targetId, F, T])).rows;
+      for (const s of salaried) {
+        const pay = (await c.query(sql.insert,
+          [wid(req), s.id, F.slice(0, 10), T.slice(0, 10), s.salary_amount, cur])).rows[0];
+        out.push({ recipientId: s.id, amount: Number(s.salary_amount), payoutId: pay.id, salary: true });
+      }
     }
     return out;
   });
