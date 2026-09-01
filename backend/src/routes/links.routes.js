@@ -233,6 +233,99 @@ router.post('/:id/cancel', requirePermission('links.create'), asyncHandler(async
   res.json(publicLink(out));
 }));
 
+// GET /:id/impact — what reassigning this link would move. Read before the
+// confirmation, so the dialog can say it in numbers rather than in general.
+router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
+  const row = (await query(`
+    SELECT count(*)::int AS payments,
+           count(*) FILTER (WHERE re.account_payout_id IS NOT NULL OR re.agent_payout_id IS NOT NULL)::int AS paid_out,
+           COALESCE(SUM(p.amount), 0) AS amount
+      FROM payments p
+      LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
+      LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
+     WHERE p.workspace_id = $1 AND p.payment_link_id = $2`, [wid(req), req.params.id])).rows[0];
+  res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount) });
+}));
+
+// PATCH /:id/attribution  { accountId?, agentId? }
+// Moves a link, and everything already taken on it, to another creator or
+// agent. The ledger is rewritten: each sale is re-posted against the new
+// attribution, so a payout that already paid the old creator for one of these
+// payments is left overpaid — /impact says how many before confirming.
+router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
+  const { accountId, agentId } = req.body || {};
+  if (accountId === undefined && agentId === undefined) {
+    return badRequest(res, 'accountId or agentId is required', ['accountId', 'agentId']);
+  }
+
+  const out = await withTransaction(async (c) => {
+    const link = (await c.query(
+      'SELECT * FROM payment_links WHERE workspace_id = $1 AND id = $2', [wid(req), req.params.id])).rows[0];
+    if (!link) return { notFound: true };
+
+    const nextAccountId = accountId === undefined ? link.account_id : accountId;
+    const nextAgentId = agentId === undefined ? link.created_by_agent_id : (agentId || null);
+
+    const account = (await c.query(
+      "SELECT id FROM accounts WHERE id = $1 AND workspace_id = $2 AND status <> 'archived'",
+      [nextAccountId, wid(req)])).rows[0];
+    if (!account) return { err: 'account_not_found', fields: ['accountId'] };
+
+    if (nextAgentId) {
+      const agent = (await c.query(
+        'SELECT id FROM agents WHERE id = $1 AND workspace_id = $2', [nextAgentId, wid(req)])).rows[0];
+      if (!agent) return { err: 'agent_not_found', fields: ['agentId'] };
+      const assigned = (await c.query(
+        'SELECT 1 FROM account_agents WHERE account_id = $1 AND agent_id = $2', [nextAccountId, nextAgentId])).rows[0];
+      if (!assigned) return { err: 'agent_not_assigned_to_account', fields: ['agentId'] };
+    }
+
+    await c.query(
+      'UPDATE payment_links SET account_id = $2, created_by_agent_id = $3 WHERE id = $1',
+      [link.id, nextAccountId, nextAgentId]);
+    const moved = await c.query(
+      'UPDATE payments SET account_id = $2, agent_id = $3 WHERE payment_link_id = $1',
+      [link.id, nextAccountId, nextAgentId]);
+
+    // Re-post every sale on this link. Deleting first is what makes it a
+    // rewrite: the new entries are unpaid, whatever the old ones had settled.
+    const sales = (await c.query(`
+      SELECT t.id FROM transactions t
+       WHERE t.payment_id IN (SELECT id FROM payments WHERE payment_link_id = $1)
+         AND t.type = 'payment' AND t.status = 'approved'`, [link.id])).rows;
+    for (const t of sales) {
+      await c.query("DELETE FROM revenue_entries WHERE transaction_id = $1 AND entry_type = 'sale'", [t.id]);
+      await c.query('SELECT fn_post_sale($1)', [t.id]);
+    }
+
+    return {
+      link: (await c.query(`
+        SELECT pl.*, ${EFFECTIVE_STATUS} AS status, a.name AS account, u.full_name AS agent
+          FROM payment_links pl
+          JOIN accounts a ON a.id = pl.account_id
+          LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
+          LEFT JOIN users u ON u.id = ag.user_id
+         WHERE pl.id = $1`, [link.id])).rows[0],
+      moved: moved.rowCount,
+      reposted: sales.length,
+      from: { accountId: link.account_id, agentId: link.created_by_agent_id },
+    };
+  });
+
+  if (out.notFound) return res.status(404).json({ error: 'not_found' });
+  if (out.err) return badRequest(res, out.err, out.fields);
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'link.reassign',
+    entityType: 'payment_link', entityId: req.params.id,
+    metadata: {
+      from: out.from,
+      to: { accountId: out.link.account_id, agentId: out.link.created_by_agent_id },
+      payments: out.moved, reposted: out.reposted,
+    },
+  });
+  res.json({ ...publicLink(out.link), moved: out.moved, reposted: out.reposted });
+}));
+
 // POST /reconcile — the same reconciliation the server runs on a timer, on
 // demand. Kept for support: nobody has to wait for the next pass.
 router.post('/reconcile', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {

@@ -68,6 +68,14 @@ export interface CreateLinkInput {
 /** Mirrors LINK_SORTS in backend/src/routes/links.routes.js. */
 export type LinkSort = 'created' | 'amount' | 'status';
 
+/** Everything a reassignment would rewrite. */
+export interface ReassignImpact {
+  payments: number;
+  /** How many of them are in a payout that has already been paid. */
+  paidOut: number;
+  amount: number;
+}
+
 export interface ListLinksQuery {
   status?: string;
   type?: string;
@@ -101,4 +109,10 @@ export const linksApi = {
   create: (input: CreateLinkInput) => api.post<PaymentLink>(workspacePath('/links'), input),
 
   cancel: (id: string) => api.post<PaymentLink>(workspacePath(`/links/${id}/cancel`), {}),
+
+  /** What reassigning this link would move, read before confirming it. */
+  impact: (id: string) => api.get<ReassignImpact>(workspacePath(`/links/${id}/impact`)),
+
+  reassign: (id: string, input: { accountId?: string; agentId?: string | null }) =>
+    api.patch<PaymentLink>(workspacePath(`/links/${id}/attribution`), input),
 };
