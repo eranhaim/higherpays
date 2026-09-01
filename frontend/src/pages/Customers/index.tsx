@@ -237,7 +237,7 @@ export default function CustomersPage() {
       )}
 
       <Modal open={erasing !== null} onClose={() => setErasing(null)} title={erasing ? `Erase ${erasing.name}?` : ''}
-        subtitle="Their name and contact details are wiped for good. Their payments stay in the ledger, anonymised. Use this for an erasure request.">
+        subtitle="Their name and contact details are wiped for good. Their payments are kept, without a name on them. Use this for an erasure request.">
         {erasing && (
           <div className="modal-actions">
             <button className="btn ghost" onClick={() => setErasing(null)}>Keep</button>

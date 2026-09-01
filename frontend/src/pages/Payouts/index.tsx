@@ -233,7 +233,7 @@ function AgencyPayouts() {
             </tbody>
           </table>
         </div>
-        <p className="sub">Balances accrue from paid sales in the selected period. Paying marks them as settled in the ledger.</p>
+        <p className="sub">Balances accrue from paid sales in the selected period. Paying marks them as settled.</p>
       </div>
 
       <div className="section">
@@ -243,7 +243,7 @@ function AgencyPayouts() {
       </div>
 
       <Modal open={pending !== null} onClose={() => setPending(null)} title={pending ? `Pay ${pending.label}?` : ''}
-        subtitle="This settles the balance in the ledger and cannot be undone here.">
+        subtitle="This settles the balance and cannot be undone here.">
         {pending && (
           <>
             <div className="callout">

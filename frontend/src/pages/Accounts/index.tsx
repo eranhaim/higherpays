@@ -248,7 +248,7 @@ export default function AccountsPage() {
       <Modal open={confirming !== null} onClose={() => setConfirming(null)}
         title={confirming ? `${confirming.status === 'paused' ? 'Pause' : 'Archive'} ${confirming.account.name}?` : ''}
         subtitle={confirming?.status === 'paused'
-          ? 'No new payment links can be created. Links already out there keep working, and nothing changes in the ledger.'
+          ? 'No new payment links can be created. Links already out there keep working, and money already taken is untouched.'
           : 'The account leaves every picker and list. Its history, payments and balances stay, and it can be activated again later.'}>
         {confirming && (
           <div className="modal-actions">
@@ -375,7 +375,7 @@ function EditAccountModal({ account, agents, canEditSplits, onClose, onSubmit }:
 
   return (
     <Modal open onClose={onClose} title={`Edit ${account.name}`}
-      subtitle="Changing the share only affects sales posted from now on; the ledger keeps what it already recorded.">
+      subtitle="Changing the share only affects sales from now on. Past sales keep the split they were recorded with.">
       {detail.isError ? <p className="sub">Couldn't load this {labels.account.toLowerCase()}.</p>
         : !detail.data ? <p className="sub">Loading…</p>
           : (

@@ -131,7 +131,7 @@ export default function PlatformPage() {
       )}
 
       <Modal open={suspending !== null} onClose={() => setSuspending(null)} title={suspending ? `Suspend ${suspending.name}?` : ''}
-        subtitle="Nobody in the agency can sign in until it is reactivated. Their data and ledger stay untouched.">
+        subtitle="Nobody in the agency can sign in until it is reactivated. Their data and their money records stay untouched.">
         {suspending && (
           <div className="modal-actions">
             <button className="btn ghost" onClick={() => setSuspending(null)}>Keep active</button>

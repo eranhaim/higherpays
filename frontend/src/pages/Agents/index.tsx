@@ -169,7 +169,7 @@ export default function AgentsPage() {
       )}
 
       <Modal open={suspending !== null} onClose={() => setSuspending(null)} title={suspending ? `Suspend ${suspending.name}?` : ''}
-        subtitle="They are signed out everywhere and cannot sign in again until reactivated. Their links, payments and commission stay in the ledger.">
+        subtitle="They are signed out everywhere and cannot sign in again until reactivated. Their links, payments and commission are all kept.">
         {suspending && (
           <div className="modal-actions">
             <button className="btn ghost" onClick={() => setSuspending(null)}>Keep</button>

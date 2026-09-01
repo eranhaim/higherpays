@@ -375,7 +375,7 @@ export default function LinksPage() {
 
       <Modal open={cancelling !== null} onClose={() => setCancelling(null)}
         title={cancelling ? `Cancel link ${cancelling.referenceId}?` : ''}
-        subtitle="The checkout URL stops working immediately. Nothing changes in the ledger.">
+        subtitle="The checkout URL stops working immediately. Money already taken on it is untouched.">
         {cancelling && (
           <div className="modal-actions">
             <button className="btn ghost" onClick={() => setCancelling(null)}>Keep it</button>

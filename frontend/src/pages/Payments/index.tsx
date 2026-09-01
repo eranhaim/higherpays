@@ -291,7 +291,7 @@ export default function PaymentsPage() {
               </>
             )}
             <DetailRow label="Date"><DateCell ts={detail.occurredAt} /></DetailRow>
-            {isReversed(detail.status) && <div className="warnbar">This sale has been reversed in the ledger.</div>}
+            {isReversed(detail.status) && <div className="warnbar">This sale has been reversed.</div>}
             <div className="modal-actions">
               {detail.needsDetails && canComplete && (
                 <button className="btn" onClick={() => setCompleting(detail)}>Complete details</button>
@@ -422,7 +422,7 @@ function ExportModal({ range, loadedCount, canSeeFees, onClose, onSubmit }: {
 const REVERSAL_COPY: Record<ReversalKind, { title: string; subtitle: string; confirm: string; feeLabel: string }> = {
   refund: {
     title: 'Record a refund',
-    subtitle: 'Issue the refund in MantaPay first. Recording it here reverses the sale in your ledger so payouts stay correct.',
+    subtitle: 'Issue the refund in MantaPay first. Recording it here reverses the sale so payouts stay correct.',
     confirm: 'I have issued this refund in MantaPay.',
     feeLabel: 'Refund fee',
   },
