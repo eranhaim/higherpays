@@ -160,7 +160,7 @@ function AgencyPayouts() {
             <div className="warnbar">Paying everyone now leaves you {formatMoney(cash.shortfallIfPaidNow)} short. That is cash you front until the reserve is released.</div>
           ) : <p className="sub">You can pay everyone in full from this period's receipts.</p>}
           {cash.heldInReserve > 0 && data.reserve.source === 'estimated' && (
-            <p className="sub">Reserve estimated from your {data.reserve.pct}% rate. Import a settlement report on the Settlements page for the exact figure.</p>
+            <p className="sub">Reserve estimated from your {data.reserve.pct}% rate.</p>
           )}
         </div>
       )}

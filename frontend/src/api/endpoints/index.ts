@@ -28,7 +28,6 @@ export {
 } from './payments';
 export { payoutsApi, type PayoutBreakdown, type RunPayoutInput, type PayoutRecord } from './payouts';
 export { meApi, type Earnings } from './me';
-export { settlementsApi, type Settlement, type ReserveSchedule, type ImportResult } from './settlements';
 export { feesApi, type FeesSummary } from './fees';
 export { analyticsApi, type AnalyticsReport, type AnalyticsQuery } from './analytics';
 export {
