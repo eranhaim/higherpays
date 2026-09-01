@@ -10,7 +10,7 @@ export interface UseAccountsDataResult {
   agents: Agent[];
   isLoading: boolean;
   isError: boolean;
-  createAccount: (input: CreateAccountInput, agentIds: string[]) => Promise<void>;
+  createAccount: (input: CreateAccountInput, agentIds: string[]) => Promise<{ invited: boolean }>;
   updateAccount: (id: string, input: UpdateAccountInput) => Promise<void>;
   setAssignedAgents: (account: Account, agentIds: string[]) => Promise<void>;
 }
@@ -33,6 +33,7 @@ export function useAccountsData(canManage: boolean): UseAccountsDataResult {
     mutationFn: async ({ input, agentIds }: { input: CreateAccountInput; agentIds: string[] }) => {
       const created = await accountsApi.create(input);
       for (const agentId of agentIds) await accountsApi.assignAgent(created.id, agentId);
+      return { invited: created.invited };
     },
     onSuccess: invalidate,
   });
@@ -55,7 +56,7 @@ export function useAccountsData(canManage: boolean): UseAccountsDataResult {
     agents: agents.data ?? [],
     isLoading: accounts.isLoading,
     isError: accounts.isError,
-    createAccount: async (input, agentIds) => { await create.mutateAsync({ input, agentIds }); },
+    createAccount: (input, agentIds) => create.mutateAsync({ input, agentIds }),
     updateAccount: async (id, input) => { await update.mutateAsync({ id, input }); },
     setAssignedAgents: async (account, agentIds) => { await assign.mutateAsync({ account, agentIds }); },
   };

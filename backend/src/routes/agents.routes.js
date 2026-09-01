@@ -50,7 +50,7 @@ router.post('/', requirePermission('agents.manage'), asyncHandler(async (req, re
   const out = await withTransaction(async (c) => {
     const problem = await commissionTooHigh(c, wid(req), pct);
     if (problem) return { err: problem, fields: ['commissionPct'] };
-    const grant = await grantWorkspaceRole(c, wid(req), { email, fullName, password }, 'agent');
+    const grant = await grantWorkspaceRole(c, wid(req), { email, fullName, password: password ?? '' }, 'agent');
     if (grant.err === 'weak_password') return { err: 'password of at least 8 characters is required for a new login', fields: ['password'] };
     if (grant.err) return { err: `this person is already a ${grant.role} here`, fields: ['email'] };
     const existing = (await c.query('SELECT 1 FROM agents WHERE workspace_id=$1 AND user_id=$2', [wid(req), grant.userId])).rows[0];

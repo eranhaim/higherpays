@@ -166,9 +166,11 @@ export default function AccountsPage() {
           agents={agents}
           onClose={() => setCreateOpen(false)}
           onSubmit={async (input, agentIds) => {
-            await createAccount(input, agentIds);
+            const created = await createAccount(input, agentIds);
             setCreateOpen(false);
-            toast(`${labels.account} added.`);
+            toast(created.invited
+              ? `${labels.account} added. Invite sent to ${input.email}.`
+              : `${labels.account} added.`);
           }}
         />
       )}
@@ -209,7 +211,7 @@ export default function AccountsPage() {
 interface CreateAccountModalProps {
   agents: { id: string; name: string }[];
   onClose: () => void;
-  onSubmit: (input: { email: string; fullName: string; password: string; name: string; country?: string; revenueSplitPct: number }, agentIds: string[]) => Promise<void>;
+  onSubmit: (input: { email: string; fullName: string; name: string; country?: string; revenueSplitPct: number }, agentIds: string[]) => Promise<void>;
 }
 
 /** An account and the login of the person who owns it, in one form. */
@@ -219,7 +221,6 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
   const [country, setCountry] = useState('');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [splitText, setSplitText] = useState(String(DEFAULT_SPLIT_PCT));
   const [assigned, setAssigned] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -228,13 +229,12 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
   const submit = async () => {
     if (!name.trim()) { toast('Name is required.'); return; }
     if (!fullName.trim() || !email.trim()) { toast("The owner's name and email are required."); return; }
-    if (password.length < 8) { toast('Password must be at least 8 characters.'); return; }
     if (Number.isNaN(split)) { toast('Share must be 0–100.'); return; }
     if (country && !/^[A-Za-z]{2}$/.test(country)) { toast('Country is a 2-letter code.'); return; }
     setIsSaving(true);
     try {
       await onSubmit({
-        email: email.trim(), fullName: fullName.trim(), password,
+        email: email.trim(), fullName: fullName.trim(),
         name: name.trim(),
         ...(country ? { country } : {}),
         revenueSplitPct: split,
@@ -260,6 +260,7 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
         </div>
       </div>
       <div className="sechead">Login details</div>
+      <p className="sub">They get an email and choose their own password. Nothing is sent if this address already has a login.</p>
       <div className="form-row">
         <div className="field">
           <label htmlFor="owner-name">Full name</label>
@@ -269,11 +270,6 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
           <label htmlFor="owner-email">Email</label>
           <input id="owner-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         </div>
-      </div>
-      <div className="field">
-        <label htmlFor="owner-password">Password</label>
-        <input id="owner-password" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
-        <p className="sub">At least 8 characters. Ignored if this email already has a login.</p>
       </div>
       <div className="field">
         <label htmlFor="account-split">{labels.account} share of distributable</label>

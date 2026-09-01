@@ -38,8 +38,6 @@ export interface Account {
 export interface CreateAccountInput {
   email: string;
   fullName: string;
-  /** Required for a new login; ignored when the email already has one. */
-  password?: string;
   name: string;
   handle?: string;
   country?: string;
@@ -62,7 +60,8 @@ export const accountsApi = {
 
   get: (id: string) => api.get<Account>(workspacePath(`/accounts/${id}`)),
 
-  create: (input: CreateAccountInput) => api.post<Account>(workspacePath('/accounts'), input),
+  create: (input: CreateAccountInput) =>
+    api.post<Account & { invited: boolean }>(workspacePath('/accounts'), input),
 
   update: (id: string, input: UpdateAccountInput) => api.patch<Account>(workspacePath(`/accounts/${id}`), input),
 

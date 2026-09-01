@@ -3,18 +3,15 @@
 // analysts. An agent or an account is created directly, login included, on
 // its own route.
 const express = require('express');
-const crypto = require('crypto');
 const { query, withTransaction } = require('../db');
 const { requireAuth, requireWorkspace, requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { hashPassword } = require('../auth/passwords');
 const { isStr, badRequest } = require('../util/validate');
-const { sendEmail } = require('../util/email');
-const config = require('../config');
+const { createInvite, hashToken } = require('../services/invites');
 
 const { wid, uid } = require('../lib/scope');
-const hashToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
 const INVITABLE_ROLES = ['workspace_admin', 'analyst'];
 
 const wsRouter = express.Router({ mergeParams: true });
@@ -24,14 +21,9 @@ wsRouter.post('/', requireAuth, requireWorkspace, requirePermission('team.manage
   const { email, role } = req.body || {};
   if (!isStr(email, 100) || !email.includes('@')) return badRequest(res, 'a valid email is required', ['email']);
   if (!INVITABLE_ROLES.includes(role)) return badRequest(res, `role must be one of ${INVITABLE_ROLES.join(', ')}`, ['role']);
-  const token = crypto.randomBytes(32).toString('base64url');
-  const expires = new Date(Date.now() + 7 * 86400 * 1000);
-  const row = (await query(
-    `INSERT INTO invites (workspace_id, email, role, token_hash, invited_by_user_id, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, email, role, expires_at, accepted_at`,
-    [wid(req), email, role, hashToken(token), uid(req), expires])).rows[0];
-  const link = `${config.appPublicBase}/accept-invite?token=${token}`;
-  await sendEmail({ to: email, subject: `You're invited to HigherPays (${role})`, body: `Set up your login: ${link}` });
+  const row = await withTransaction((c) => createInvite(c, {
+    workspaceId: wid(req), email, role, invitedByUserId: uid(req),
+  }));
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'invite.create', metadata: { email, role } });
   // The token is a bearer credential for a seat and is NOT returned: it only
   // ever reaches the invited address. Tests read it from the email stub.
@@ -79,20 +71,32 @@ publicRouter.post('/:token/accept', asyncHandler(async (req, res) => {
     const inv = (await c.query('SELECT * FROM invites WHERE token_hash=$1', [hashToken(req.params.token)])).rows[0];
     if (!inv || inv.accepted_at || new Date(inv.expires_at) < new Date()) return { err: 'invalid_invite' };
 
-    let user = (await c.query('SELECT id FROM users WHERE email=$1', [inv.email])).rows[0];
+    let user = (await c.query('SELECT id, password_hash FROM users WHERE email=$1', [inv.email])).rows[0];
     const existed = !!user;
     if (!user) {
       if (!password || String(password).length < 8) return { err: 'weak_password' };
       user = (await c.query(
         'INSERT INTO users (email, password_hash, full_name) VALUES ($1,$2,$3) RETURNING id',
         [inv.email, await hashPassword(password), fullName || inv.email])).rows[0];
+    } else if (!user.password_hash) {
+      // The login was created for them and has never been usable; this is
+      // where they choose the password.
+      if (!password || String(password).length < 8) return { err: 'weak_password' };
+      await c.query('UPDATE users SET password_hash=$2 WHERE id=$1', [user.id, await hashPassword(password)]);
     }
-    const seat = await c.query(
-      `INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,$3)
-       ON CONFLICT (workspace_id, user_id) DO NOTHING`, [inv.workspace_id, user.id, inv.role]);
+
+    // A creator's seat is created with the profile, before the invite is sent,
+    // so an existing seat is only a conflict when it is for another role.
+    const seat = (await c.query(
+      'SELECT role FROM workspace_users WHERE workspace_id=$1 AND user_id=$2', [inv.workspace_id, user.id])).rows[0];
     // Consumed either way, so a stale token cannot be replayed.
     await c.query('UPDATE invites SET accepted_at=now() WHERE id=$1', [inv.id]);
-    if (seat.rowCount === 0) return { err: 'already_a_member' };
+    if (seat && seat.role !== inv.role) return { err: 'already_a_member' };
+    if (!seat) {
+      await c.query(
+        'INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,$3)',
+        [inv.workspace_id, user.id, inv.role]);
+    }
     return { userId: user.id, workspaceId: inv.workspace_id, role: inv.role, existed };
   });
   if (out.err === 'weak_password') return badRequest(res, 'weak_password', ['password']);

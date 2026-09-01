@@ -83,17 +83,23 @@ async function createTenant(app, opts = {}) {
 const headersFor = (session, workspaceId) => ({ Authorization: `Bearer ${session.accessToken}`, 'X-Workspace-Id': workspaceId });
 
 /** Create an account (and its owner's login); returns the account plus the owner's session. */
+// The owner's login is created without a password and invited, so the test
+// accepts the invite the way the person would before signing in.
 async function createAccount(app, tenant, overrides = {}) {
   const t = tag();
   const email = overrides.email || `owner+${t}@test.local`;
   const res = await request(app)
     .post(`/workspaces/${tenant.workspaceId}/accounts`).set(tenant.authHeaders)
     .send({
-      email, fullName: overrides.fullName || `Owner ${t}`, password: PASSWORD,
+      email, fullName: overrides.fullName || `Owner ${t}`,
       name: overrides.name || `Ava ${t}`,
       revenueSplitPct: overrides.revenueSplitPct ?? 70,
     })
     .expect(201);
+  if (res.body.invited) {
+    await request(app).post(`/invites/${inviteTokenFor(email)}/accept`)
+      .send({ password: PASSWORD }).expect(201);
+  }
   const session = await login(app, email);
   return { ...res.body, ownerEmail: email, ownerUserId: session.userId, ownerHeaders: headersFor(session, tenant.workspaceId) };
 }
