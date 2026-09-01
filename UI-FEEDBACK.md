@@ -50,7 +50,7 @@ Answers from the 1 Sep review are folded in below. ✅ = shipped, ◐ = partly d
 | D1 — | 5 | answered | Decided: leave the six statuses as they are. Nothing to build. |
 | D2 ✅ | 6 | bug | The amount boxes are debounced like the search box, so a nudge of the spinner no longer refetches per click. They now live in the Amount column header. |
 | D3 ✅ | 9 | visual | Revenue stat card sizing is off next to its neighbours. |
-| D4 ✅ | 9, 12 | copy | Remove the "Expires" column and the "Expires" row in link details — Type and Status already say it. |
+| D4 ✅ | 9, 12 | copy | Column and detail row removed — Type and Status already say it. There was no expiry alert to remove either. The bracketed assumption did need work: how long a single-use link lives is a workspace setting now (Settings → Payment link limits), not one env var for the platform, and the new-link hint reads the real number. |
 | D5 ✅ | 10 | feature | Button removed. Reconciliation now runs on a 10-minute timer in the API for every workspace (`services/links.service.js`); the endpoint stays for support. |
 | D6 ✅ | 12 | visual | "Cancel link" button should be red; "Active" badge should be green. |
 | D7 | 13 | feature | Reassign the Creator and the Agent on an existing link, dropdown + double confirmation. Decided: **the history is rewritten** — past payments are re-attributed and their splits recomputed, so payout totals for closed periods can change after the fact. The dialog must say exactly what it will move, and it is audited. |

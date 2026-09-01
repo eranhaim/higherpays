@@ -87,15 +87,18 @@ router.get('/platform-fee', requirePermission('payments.view'), asyncHandler(asy
 
 // GET /workspaces/:id/link-limits
 router.get('/link-limits', requirePermission('payments.view'), asyncHandler(async (req, res) => {
-  const w = (await query('SELECT min_link_amount, max_link_amount FROM workspaces WHERE id=$1', [wid(req)])).rows[0];
+  const w = (await query(
+    'SELECT min_link_amount, max_link_amount, link_ttl_minutes FROM workspaces WHERE id=$1', [wid(req)])).rows[0];
   res.json({
     minLinkAmount: w.min_link_amount == null ? null : Number(w.min_link_amount),
     maxLinkAmount: w.max_link_amount == null ? null : Number(w.max_link_amount),
+    linkTtlMinutes: w.link_ttl_minutes == null ? config.linkTtlMinutes : Number(w.link_ttl_minutes),
     providerMinimum: 3,
   });
 }));
 
-// PATCH /workspaces/:id/link-limits  { minLinkAmount, maxLinkAmount }  (null clears)
+// PATCH /workspaces/:id/link-limits  { minLinkAmount, maxLinkAmount, linkTtlMinutes }
+// (null clears an amount; a null TTL falls back to the platform default)
 router.patch('/link-limits', requirePermission('settings.edit'), asyncHandler(async (req, res) => {
   const body = req.body || {};
   const norm = (v) => (v == null || v === '' ? null : Number(v));
@@ -103,13 +106,20 @@ router.patch('/link-limits', requirePermission('settings.edit'), asyncHandler(as
   if (min != null && !(min >= 3)) return badRequest(res, 'minimum must be at least the provider floor of 3', ['minLinkAmount']);
   if (max != null && !(max > 0)) return badRequest(res, 'maximum must be positive', ['maxLinkAmount']);
   if (min != null && max != null && max < min) return badRequest(res, 'maximum must be >= minimum', ['maxLinkAmount']);
+  const ttl = 'linkTtlMinutes' in body ? norm(body.linkTtlMinutes) : undefined;
+  if (ttl != null && !(Number.isInteger(ttl) && ttl > 0)) {
+    return badRequest(res, 'linkTtlMinutes must be a whole number of minutes above zero', ['linkTtlMinutes']);
+  }
   const w = (await query(
-    'UPDATE workspaces SET min_link_amount=$2, max_link_amount=$3 WHERE id=$1 RETURNING min_link_amount, max_link_amount',
-    [wid(req), min, max])).rows[0];
-  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'workspace.link_limits', metadata: { min, max } });
+    `UPDATE workspaces SET min_link_amount=$2, max_link_amount=$3,
+            link_ttl_minutes = CASE WHEN $5::boolean THEN $4::int ELSE link_ttl_minutes END
+      WHERE id=$1 RETURNING min_link_amount, max_link_amount, link_ttl_minutes`,
+    [wid(req), min, max, ttl ?? null, ttl !== undefined])).rows[0];
+  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'workspace.link_limits', metadata: { min, max, ttl } });
   res.json({
     minLinkAmount: w.min_link_amount == null ? null : Number(w.min_link_amount),
     maxLinkAmount: w.max_link_amount == null ? null : Number(w.max_link_amount),
+    linkTtlMinutes: w.link_ttl_minutes == null ? config.linkTtlMinutes : Number(w.link_ttl_minutes),
   });
 }));
 

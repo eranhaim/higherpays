@@ -158,7 +158,8 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
   // The provider echoes this back as the attribution key; 64 random bits and a
   // UNIQUE index mean a collision cannot credit the wrong account.
   const referenceId = 'ord_' + crypto.randomBytes(8).toString('hex');
-  const expiresAt = type === 'single_use' ? new Date(Date.now() + config.linkTtlMinutes * 60_000) : null;
+  const ttlMinutes = ws.link_ttl_minutes == null ? config.linkTtlMinutes : Number(ws.link_ttl_minutes);
+  const expiresAt = type === 'single_use' ? new Date(Date.now() + ttlMinutes * 60_000) : null;
 
   const result = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);

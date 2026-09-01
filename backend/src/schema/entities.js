@@ -107,6 +107,7 @@ const Workspace = entity('workspaces', {
 
     minLinkAmount:     money(),
     maxLinkAmount:     money(),
+    linkTtlMinutes:    int(),   // how long a single-use link lives; null = platform default
 
     // What this agency calls an account and an agent. Both forms are stored
     // because pluralising in code breaks on words like "staff" or "talent".

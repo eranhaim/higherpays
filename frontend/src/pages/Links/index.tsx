@@ -96,6 +96,7 @@ export default function LinksPage() {
   const inverted = rangeIsInverted(filters);
 
   const minAmount = linkLimits?.minLinkAmount ?? linkLimits?.providerMinimum ?? 0;
+  const expiryHours = Math.round((linkLimits?.linkTtlMinutes ?? 24 * 60) / 60);
   const maxAmount = linkLimits?.maxLinkAmount ?? null;
   const amount = parseFloat(amountText) || 0;
   const belowMin = amount > 0 && amount < minAmount;
@@ -315,7 +316,7 @@ export default function LinksPage() {
         </Select>
         <Select id="link-type" label="Type" value={type} onChange={(v) => setType(v as LinkType)}
           hint={type === 'single_use'
-            ? 'Closes on the first payment, or after 24 hours if nobody pays.'
+            ? `Closes on the first payment, or after ${expiryHours} ${expiryHours === 1 ? 'hour' : 'hours'} if nobody pays.`
             : 'Stays open through any number of payments until you cancel it.'}>
           {LINK_TYPES.map((t) => <option key={t} value={t}>{LINK_TYPE_LABELS[t]}</option>)}
         </Select>
