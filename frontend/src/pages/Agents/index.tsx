@@ -161,7 +161,7 @@ export default function AgentsPage() {
           canEditCommission={can('revenue.manage')}
           onClose={() => setEditing(null)}
           onSubmit={async (values) => {
-            await updateAgent(editing.id, { commissionPct: values.commissionPct, country: values.country });
+            await updateAgent(editing.id, { fullName: values.fullName, commissionPct: values.commissionPct, country: values.country });
             setEditing(null);
             toast('Saved.');
           }}
@@ -212,7 +212,8 @@ function AgentFormModal({ title, subtitle, agent, canEditCommission, onClose, on
   const creating = !agent;
 
   const submit = async () => {
-    if (creating && (!fullName.trim() || !email.trim())) { toast('Name and email are required.'); return; }
+    if (!fullName.trim()) { toast('Name is required.'); return; }
+    if (creating && !email.trim()) { toast('Email is required.'); return; }
     if (creating && password.length < 8) { toast('Password must be at least 8 characters.'); return; }
     if (Number.isNaN(commission)) { toast('Commission must be 0–100.'); return; }
     if (country && !/^[A-Za-z]{2}$/.test(country)) { toast('Country is a 2-letter code.'); return; }
@@ -237,7 +238,7 @@ function AgentFormModal({ title, subtitle, agent, canEditCommission, onClose, on
         <div className="form-row">
           <div className="field">
             <label htmlFor="agent-name">Full name</label>
-            <input id="agent-name" type="text" value={fullName} disabled={!creating} onChange={(e) => setFullName(e.target.value)} />
+            <input id="agent-name" type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} />
           </div>
           <div className="field">
             <label htmlFor="agent-email">Email</label>

@@ -7,7 +7,7 @@ import { toast } from '../../lib/toast';
 import { PageHeader, Pill, DataTable, FilterBar, Select, ViewPicker, type Column, type SortState } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import { sortRows, type SortValues } from '../../lib/sortRows';
-import { ACCOUNT_STATUS_LABELS, type Account, type AccountStatus } from '../../api/endpoints';
+import { ACCOUNT_STATUS_LABELS, type Account, type AccountStatus, type UpdateAccountInput } from '../../api/endpoints';
 import { useAccountsData, useAccountDetail } from './useAccountsData';
 
 const SORT_VALUES: SortValues<Account> = {
@@ -42,7 +42,6 @@ export default function AccountsPage() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Account | null>(null);
-  const [assigning, setAssigning] = useState<Account | null>(null);
   // Activating is harmless; pausing stops every new link and archiving hides
   // the account, so those two are confirmed.
   const [confirming, setConfirming] = useState<{ account: Account; status: 'paused' | 'archived' } | null>(null);
@@ -127,7 +126,6 @@ export default function AccountsPage() {
       render: (a: Account) => (
         <div className="cell-actions">
           <button className="btn ghost small" onClick={() => setEditing(a)}>Edit</button>
-          <button className="btn ghost small" onClick={() => setAssigning(a)}>{labels.agents}</button>
           {a.status === 'active' && <button className="btn ghost small" onClick={() => setConfirming({ account: a, status: 'paused' })}>Pause</button>}
           {a.status !== 'active' && <button className="btn ghost small" disabled={isChangingStatus} onClick={() => applyStatus(a, 'active')}>Activate</button>}
           {a.status !== 'archived' && <button className="btn ghost small" onClick={() => setConfirming({ account: a, status: 'archived' })}>Archive</button>}
@@ -178,25 +176,14 @@ export default function AccountsPage() {
       {editing && (
         <EditAccountModal
           account={editing}
+          agents={agents}
           canEditSplits={canEditSplits}
           onClose={() => setEditing(null)}
-          onSubmit={async (input) => {
+          onSubmit={async (input, agentIds) => {
             await updateAccount(editing.id, input);
+            await setAssignedAgents(editing, agentIds);
             setEditing(null);
             toast(`${labels.account} updated.`);
-          }}
-        />
-      )}
-
-      {assigning && (
-        <AssignAgentsModal
-          account={assigning}
-          agents={agents}
-          onClose={() => setAssigning(null)}
-          onSubmit={async (agentIds) => {
-            await setAssignedAgents(assigning, agentIds);
-            setAssigning(null);
-            toast('Assignments saved.');
           }}
         />
       )}
@@ -222,13 +209,14 @@ export default function AccountsPage() {
 interface CreateAccountModalProps {
   agents: { id: string; name: string }[];
   onClose: () => void;
-  onSubmit: (input: { email: string; fullName: string; password: string; name: string; revenueSplitPct: number }, agentIds: string[]) => Promise<void>;
+  onSubmit: (input: { email: string; fullName: string; password: string; name: string; country?: string; revenueSplitPct: number }, agentIds: string[]) => Promise<void>;
 }
 
 /** An account and the login of the person who owns it, in one form. */
 function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalProps) {
   const { labels } = useCurrentSession();
   const [name, setName] = useState('');
+  const [country, setCountry] = useState('');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -242,11 +230,13 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
     if (!fullName.trim() || !email.trim()) { toast("The owner's name and email are required."); return; }
     if (password.length < 8) { toast('Password must be at least 8 characters.'); return; }
     if (Number.isNaN(split)) { toast('Share must be 0–100.'); return; }
+    if (country && !/^[A-Za-z]{2}$/.test(country)) { toast('Country is a 2-letter code.'); return; }
     setIsSaving(true);
     try {
       await onSubmit({
         email: email.trim(), fullName: fullName.trim(), password,
         name: name.trim(),
+        ...(country ? { country } : {}),
         revenueSplitPct: split,
       }, assigned);
     } catch (err) {
@@ -258,9 +248,16 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
 
   return (
     <Modal open onClose={onClose} title={`Add ${labels.account.toLowerCase()}`} subtitle="Creates the account and the login of the person who owns it.">
-      <div className="field">
-        <label htmlFor="account-name">{labels.account} name</label>
-        <input id="account-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
+      <div className="form-row">
+        <div className="field">
+          <label htmlFor="account-name">{labels.account} name</label>
+          <input id="account-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="account-country">Country</label>
+          <input id="account-country" type="text" maxLength={2} placeholder="e.g. ES" value={country}
+            onChange={(e) => setCountry(e.target.value.toUpperCase())} />
+        </div>
       </div>
       <div className="sechead">Login details</div>
       <div className="form-row">
@@ -309,16 +306,55 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
 
 interface EditAccountModalProps {
   account: Account;
+  agents: { id: string; name: string }[];
   canEditSplits: boolean;
   onClose: () => void;
-  onSubmit: (input: { name: string; handle: string; revenueSplitPct?: number }) => Promise<void>;
+  onSubmit: (input: UpdateAccountInput, agentIds: string[]) => Promise<void>;
 }
 
-function EditAccountModal({ account, canEditSplits, onClose, onSubmit }: EditAccountModalProps) {
+/**
+ * Everything about one creator in a single dialog: its details, what it is
+ * paid, and which agents work it — who is assigned is what decides what an
+ * agent sees, so it belongs with the rest, not behind a second button.
+ */
+function EditAccountModal({ account, agents, canEditSplits, onClose, onSubmit }: EditAccountModalProps) {
+  const { labels } = useCurrentSession();
+  const detail = useAccountDetail(account.id);
+
+  return (
+    <Modal open onClose={onClose} title={`Edit ${account.name}`}
+      subtitle="Changing the share only affects sales posted from now on; the ledger keeps what it already recorded.">
+      {detail.isError ? <p className="sub">Couldn't load this {labels.account.toLowerCase()}.</p>
+        : !detail.data ? <p className="sub">Loading…</p>
+          : (
+            <EditAccountForm
+              account={account}
+              agents={agents}
+              assigned={detail.data.agents?.map((a) => a.agentId) ?? []}
+              canEditSplits={canEditSplits}
+              onClose={onClose}
+              onSubmit={onSubmit}
+            />
+          )}
+    </Modal>
+  );
+}
+
+// Mounted only once the roster is known, so every field seeds from a prop
+// instead of syncing itself in an effect.
+function EditAccountForm({ account, agents, assigned: initialAssigned, canEditSplits, onClose, onSubmit }: {
+  account: Account;
+  agents: { id: string; name: string }[];
+  assigned: string[];
+  canEditSplits: boolean;
+  onClose: () => void;
+  onSubmit: (input: UpdateAccountInput, agentIds: string[]) => Promise<void>;
+}) {
   const { labels } = useCurrentSession();
   const [name, setName] = useState(account.name);
-  const [handle, setHandle] = useState(account.handle ?? '');
+  const [country, setCountry] = useState(account.country ?? '');
   const [splitText, setSplitText] = useState(account.revenueSplitPct === undefined ? '' : String(account.revenueSplitPct));
+  const [assigned, setAssigned] = useState(initialAssigned);
   const [isSaving, setIsSaving] = useState(false);
   const split = parsePct(splitText);
   const splitInvalid = canEditSplits && Number.isNaN(split);
@@ -326,14 +362,14 @@ function EditAccountModal({ account, canEditSplits, onClose, onSubmit }: EditAcc
   const submit = async () => {
     if (!name.trim()) { toast('Name is required.'); return; }
     if (splitInvalid) { toast('Share must be 0–100.'); return; }
-    const cleanHandle = handle.trim();
+    if (country && !/^[A-Za-z]{2}$/.test(country)) { toast('Country is a 2-letter code.'); return; }
     setIsSaving(true);
     try {
       await onSubmit({
         name: name.trim(),
-        handle: cleanHandle ? (cleanHandle.startsWith('@') ? cleanHandle : `@${cleanHandle}`) : '',
+        country: country.trim(),
         ...(canEditSplits ? { revenueSplitPct: split } : {}),
-      });
+      }, assigned);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not save.');
     } finally {
@@ -342,98 +378,51 @@ function EditAccountModal({ account, canEditSplits, onClose, onSubmit }: EditAcc
   };
 
   return (
-    <Modal open onClose={onClose} title={`Edit ${account.name}`}
-      subtitle="Changing the share only affects sales posted from now on; the ledger keeps what it already recorded.">
-      <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+    <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+      <div className="form-row">
         <div className="field">
           <label htmlFor="edit-account-name">Name</label>
           <input id="edit-account-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div className="field">
-          <label htmlFor="edit-account-handle">Handle</label>
-          <input id="edit-account-handle" type="text" placeholder="@handle" value={handle} onChange={(e) => setHandle(e.target.value)} />
+          <label htmlFor="edit-account-country">Country</label>
+          <input id="edit-account-country" type="text" maxLength={2} placeholder="e.g. ES" value={country}
+            onChange={(e) => setCountry(e.target.value.toUpperCase())} />
         </div>
-        {/* Renaming is accounts.manage; changing what it is paid is a revenue
-            decision, so without that permission the field is absent, not dead. */}
-        {canEditSplits && (
-          <div className="field">
-            <label htmlFor="edit-account-split">{labels.account} share of distributable</label>
-            <div className="pct-input">
-              <input id="edit-account-split" type="number" min={0} max={100} value={splitText}
-                aria-invalid={splitInvalid || undefined} onChange={(e) => setSplitText(e.target.value)} />
-              <span className="sub">%</span>
-            </div>
-            <p className="sub">
-              {splitInvalid ? <span className="text-neg">0–100 only</span> : `Agency keeps ${100 - split}%.`}
-            </p>
+      </div>
+      {/* Renaming is accounts.manage; changing what it is paid is a revenue
+          decision, so without that permission the field is absent, not dead. */}
+      {canEditSplits && (
+        <div className="field">
+          <label htmlFor="edit-account-split">{labels.account} share of distributable</label>
+          <div className="pct-input">
+            <input id="edit-account-split" type="number" min={0} max={100} value={splitText}
+              aria-invalid={splitInvalid || undefined} onChange={(e) => setSplitText(e.target.value)} />
+            <span className="sub">%</span>
           </div>
-        )}
-        <div className="modal-actions">
-          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn" disabled={isSaving || splitInvalid}>{isSaving ? 'Saving…' : 'Save changes'}</button>
+          <p className="sub">
+            {splitInvalid ? <span className="text-neg">0–100 only</span> : `Agency keeps ${100 - split}%.`}
+          </p>
         </div>
-      </form>
-    </Modal>
-  );
-}
-
-interface AssignAgentsModalProps {
-  account: Account;
-  agents: { id: string; name: string }[];
-  onClose: () => void;
-  onSubmit: (agentIds: string[]) => Promise<void>;
-}
-
-/** Which agents work this account. This is what decides what an agent sees. */
-function AssignAgentsModal({ account, agents, onClose, onSubmit }: AssignAgentsModalProps) {
-  const { labels } = useCurrentSession();
-  const detail = useAccountDetail(account.id);
-
-  return (
-    <Modal open onClose={onClose} title={`${labels.agents} for ${account.name}`}
-      subtitle={`An assigned ${labels.agent.toLowerCase()} can create links for this ${labels.account.toLowerCase()} and sees its payments.`}>
-      {detail.isError ? <p className="sub">Couldn't load the current roster.</p>
-        : !detail.data ? <p className="sub">Loading…</p>
-          : <AgentChecklist initial={detail.data.agents?.map((a) => a.agentId) ?? []} agents={agents} onClose={onClose} onSubmit={onSubmit} />}
-    </Modal>
-  );
-}
-
-// Mounted only once the roster is known, so the checklist can seed its state
-// from a prop instead of syncing it in an effect.
-function AgentChecklist({ initial, agents, onClose, onSubmit }: {
-  initial: string[];
-  agents: { id: string; name: string }[];
-  onClose: () => void;
-  onSubmit: (agentIds: string[]) => Promise<void>;
-}) {
-  const { labels } = useCurrentSession();
-  const [assigned, setAssigned] = useState(initial);
-  const [isSaving, setIsSaving] = useState(false);
-
-  const submit = async () => {
-    setIsSaving(true);
-    try { await onSubmit(assigned); }
-    catch (err) { toast(err instanceof Error ? err.message : 'Could not save assignments.'); }
-    finally { setIsSaving(false); }
-  };
-
-  return (
-    <>
-      <div className="check-list">
-        {agents.length === 0 ? <span className="sub">No {labels.agents.toLowerCase()} in this workspace yet.</span>
-          : agents.map((ag) => (
-            <label key={ag.id} className="check-row">
-              <input type="checkbox" checked={assigned.includes(ag.id)}
-                onChange={(e) => setAssigned(e.target.checked ? [...assigned, ag.id] : assigned.filter((id) => id !== ag.id))} />
-              <span>{ag.name}</span>
-            </label>
-          ))}
+      )}
+      <div className="field" role="group" aria-labelledby="edit-agents-label">
+        <div className="field-label" id="edit-agents-label">Assigned {labels.agents.toLowerCase()}</div>
+        <p className="sub">An assigned {labels.agent.toLowerCase()} can create links for this {labels.account.toLowerCase()} and sees its payments.</p>
+        <div className="check-list">
+          {agents.length === 0 ? <span className="sub">No {labels.agents.toLowerCase()} in this workspace yet.</span>
+            : agents.map((ag) => (
+              <label key={ag.id} className="check-row">
+                <input type="checkbox" checked={assigned.includes(ag.id)}
+                  onChange={(e) => setAssigned(e.target.checked ? [...assigned, ag.id] : assigned.filter((id) => id !== ag.id))} />
+                <span>{ag.name}</span>
+              </label>
+            ))}
+        </div>
       </div>
       <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>Cancel</button>
-        <button className="btn" onClick={submit} disabled={isSaving}>{isSaving ? 'Saving…' : 'Save'}</button>
+        <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
+        <button type="submit" className="btn" disabled={isSaving || splitInvalid}>{isSaving ? 'Saving…' : 'Save changes'}</button>
       </div>
-    </>
+    </form>
   );
 }

@@ -56,7 +56,7 @@ Answers from the 1 Sep review are folded in below. ✅ = shipped, ◐ = partly d
 | D7 | 13 | feature | Workspace admin can reassign the Creator and the Agent on an existing link, via dropdown + confirmation. |
 | D8 | 7, 8 | feature | New link modal: min/max from workspace settings, not constants; remove the "Fees on this link" line; "Fixed per transaction" → "Transaction Fee" (from settings); "Net to workspace" → "Net Profit", rendered larger. |
 | D9 | 8 | feature | The €2 checkout fee is a workspace setting. Add it to workspace settings, show it to the customer on the hosted page, keep it out of the workspace's own views, and count it into platform gross. |
-| D10 | 14, 15 | bug | Clicking outside a modal closes it and throws away everything typed (new link, add creator). |
+| D10 ✅ | 14, 15 | bug | A click on the overlay no longer closes any dialog — Escape and Cancel still do. Half of them are forms, and losing a half-filled one to a stray click is worse than the extra click. |
 
 ## E. Payouts
 
@@ -74,14 +74,14 @@ Answers from the 1 Sep review are folded in below. ✅ = shipped, ◐ = partly d
 | F3 | 15 | feature | Creator share: choose percentage or fixed salary. Touches the revenue engine. |
 | F4 ✅ | 15 | copy | Rename the "Owner login" section. |
 | F5 | 15 | copy | Rename the "Creator share of distributable" wording alongside F3. |
-| F6 | 15 | bug | Same outside-click data loss as D10. |
-| F7 | 15 | feature | Country shows as a column but can't be set or edited. |
-| F8 | 15 | feature | Merge the "Edit" and "Chatters" row buttons into one "Edit". |
+| F6 ✅ | 15 | bug | Fixed with D10 — it was one behaviour in the shared Modal. |
+| F7 ✅ | 15 | feature | Country is a field on both the add and the edit dialog. The API already took it; only the form was missing. |
+| F8 ✅ | 15 | feature | One Edit dialog now holds the details, the share and the agent roster. The second button and its modal are gone. |
 | F9 ✅ | 15 | copy | Remove the "Owner" column. |
 | F10 ✅ | 15 | visual | Gone with F11 — the checkbox is now the Status header filter. |
 | F11 ✅ | 15 | bug | A search now reaches archived creators; the plain roster still hides them. The "Show archived" checkbox became a Status filter in the header (Active and paused / Active / Paused / Archived / All). |
 | F12 | 15 | feature | No way to delete a creator. |
-| F13 | 16 | visual | Column alignment reads as RTL in places. |
+| F13 ✅ | 16 | visual | The right-aligned numeric columns (share, agent count) now align left like the rest, same as C7 on Payments. |
 | F14 ✅ | 16 | visual | Row action buttons need spacing. |
 | F15 | 13 | answered | What the code does today: pausing sets `accounts.status = 'paused'`, which blocks creating new links and nothing else. A payment on an existing link is recorded and split exactly as if the creator were active — the payment path never reads the account status, payouts don't filter on it, and the creator's own login still sees the money. That is what "nothing changes in the ledger" means. Open decision: leave it, or make a paused creator's income hold somewhere. |
 
@@ -89,7 +89,7 @@ Answers from the 1 Sep review are folded in below. ✅ = shipped, ◐ = partly d
 
 | id | p | type | item |
 |----|---|------|------|
-| G1 | 18 | bug | Workspace admin should be able to change an agent's name. The field is on the screen — check whether it is disabled for that role. |
+| G1 ✅ | 18 | bug | The field was disabled on edit and the API had no field for it. Both fixed — note the name lives on the login, so it changes in every workspace that person works in. The email stays fixed: it is how they sign in. |
 | G2 | 10 | feature | Archive the "Settlements" tab for now. |
 
 ---
