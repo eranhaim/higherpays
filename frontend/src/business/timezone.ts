@@ -17,7 +17,6 @@ export const TZ_LIST = [
   'Australia/Sydney','Pacific/Auckland',
 ];
 
-const DAY = 86400000;
 
 export function detectedTZ(): string {
   try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; }
@@ -61,14 +60,6 @@ export function startOfMonthTZ(ts: number, tz: string): number {
 export function startOfQuarterTZ(ts: number, tz: string): number {
   const p = tzParts(ts, tz);
   return zonedMs(p.y, Math.floor((p.mo - 1) / 3) * 3 + 1, 1, 0, 0, 0, tz);
-}
-
-export function startOfWeekTZ(ts: number, tz: string): number {
-  const dayNames: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  const wdStr = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short' }).format(new Date(ts));
-  const wd = dayNames[wdStr] || 0;
-  const p = tzParts(startOfDayTZ(ts, tz) - wd * DAY + 12 * 3600e3, tz);
-  return zonedMs(p.y, p.mo, p.d, 0, 0, 0, tz);
 }
 
 export function parseDateTZ(str: string | null | undefined, endOfDay: boolean, tz: string): number | null {

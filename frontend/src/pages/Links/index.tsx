@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useDebounced } from '../../hooks/useDebounced';
 import { useCan } from '../../hooks/usePermission';
@@ -10,17 +10,19 @@ import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DateCell, CopyButton, DetailRow, Select,
-  DataTable, FilterBar, DateRangePicker, type Column, type DateRange,
+  DataTable, FilterBar, Calendar, ViewPicker,
+  type Column, type DateRange, type SortState,
 } from '../../components/ui';
+import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import {
   LINK_TYPES, LINK_TYPE_LABELS, LINK_STATUSES, LINK_STATUS_LABELS, isShareable,
-  type PaymentLink, type LinkStatus, type LinkType,
+  type PaymentLink, type LinkStatus, type LinkType, type LinkSort,
 } from '../../api/endpoints';
 import { useLinksData } from './useLinksData';
 import { DEFAULT_FILTERS, hasActiveFilters, rangeIsInverted, type LinksFilters } from './filters';
 
 const STATUS_TONE: Record<LinkStatus, 'ok' | 'no' | 'warn' | 'muted'> = {
-  active: 'muted',
+  active: 'ok',
   pending: 'warn',
   done: 'ok',
   expired: 'muted',
@@ -36,23 +38,33 @@ export default function LinksPage() {
   const canComplete = can('payments.complete');
   const [filters, setFilters] = useState<LinksFilters>(DEFAULT_FILTERS);
 
+  const [sort, setSort] = useState<SortState>({ key: 'created', dir: 'desc' });
+  // A fresh column starts at its most useful end: newest, largest, first status.
+  const toggleSort = (key: string) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }));
+
   // Sent to the server, not applied to the loaded page: the list is paginated.
-  // Debounced for the free-text box so typing doesn't refetch per key.
+  // The typed boxes are debounced so a keystroke — or a nudge of the amount
+  // spinner — doesn't refetch the whole page.
   const search = useDebounced(filters.search, 300);
+  const min = useDebounced(filters.min, 300);
+  const max = useDebounced(filters.max, 300);
   const query = useMemo(() => ({
     status: filters.status || undefined,
     type: filters.type || undefined,
-    min: filters.min || undefined,
-    max: filters.max || undefined,
+    min: min || undefined,
+    max: max || undefined,
     from: filters.from || undefined,
     to: filters.to || undefined,
     q: search.trim() || undefined,
     accountId: filters.accountId || undefined,
-  }), [filters.status, filters.type, filters.min, filters.max, filters.from, filters.to, filters.accountId, search]);
+    sort: sort.key as LinkSort,
+    dir: sort.dir,
+  }), [filters.status, filters.type, min, max, filters.from, filters.to, filters.accountId, search, sort]);
 
   const {
     links, accounts, linkLimits, isLoading, isError, hasMore, isLoadingMore, loadMore,
-    createLink, cancelLink, reconcile,
+    createLink, cancelLink,
   } = useLinksData(query);
   const [createOpen, setCreateOpen] = useState(false);
   const [accountId, setAccountId] = useState('');
@@ -63,7 +75,6 @@ export default function LinksPage() {
   const [detail, setDetail] = useState<PaymentLink | null>(null);
   const [cancelling, setCancelling] = useState<PaymentLink | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
-  const [isReconciling, setIsReconciling] = useState(false);
 
   const paid = links.filter((l) => l.status === 'pending' || l.status === 'done');
   const conversion = links.length ? Math.round((paid.length / links.length) * 100) : 0;
@@ -73,10 +84,19 @@ export default function LinksPage() {
   const range: DateRange = { from: filters.from, to: filters.to };
   const setRange = (r: DateRange) => setFilters((f) => ({ ...f, ...r }));
 
+  const statCards = [
+    { key: 'links', label: 'Links', card: <StatCard isUnknown={statsUnknown} label="Links" value={links.length} sub={hasMore ? 'Loaded so far' : 'Matching'} /> },
+    { key: 'paid', label: 'Paid', card: <StatCard isUnknown={statsUnknown} label="Paid" value={paid.length} sub="Single-use links paid" /> },
+    { key: 'conversion', label: 'Conversion', card: <StatCard isUnknown={statsUnknown} label="Conversion" value={`${conversion}%`} sub="Paid ÷ links" /> },
+    { key: 'revenue', label: 'Revenue', card: <StatCard isUnknown={statsUnknown} label="Revenue" value={<Money amount={revenue} direction="in" emphasis />} sub="From paid links" /> },
+  ];
+  const statsView = useViewLayout('links.stats', statCards);
+
   const activeAccounts = accounts.filter((a) => a.status === 'active');
   const inverted = rangeIsInverted(filters);
 
   const minAmount = linkLimits?.minLinkAmount ?? linkLimits?.providerMinimum ?? 0;
+  const expiryHours = Math.round((linkLimits?.linkTtlMinutes ?? 24 * 60) / 60);
   const maxAmount = linkLimits?.maxLinkAmount ?? null;
   const amount = parseFloat(amountText) || 0;
   const belowMin = amount > 0 && amount < minAmount;
@@ -120,30 +140,67 @@ export default function LinksPage() {
     }
   };
 
-  const runReconcile = async () => {
-    setIsReconciling(true);
-    try {
-      const result = await reconcile();
-      toast(`Checked ${result.checked} links, updated ${result.updated}.`);
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Reconcile failed.');
-    } finally {
-      setIsReconciling(false);
-    }
-  };
-
   const columns: Column<PaymentLink>[] = [
     { key: 'ref', header: 'Ref', render: (l) => <span className="ref" title={l.referenceId}>{l.referenceId}</span> },
-    { key: 'type', header: 'Type', render: (l) => <Pill>{LINK_TYPE_LABELS[l.type]}</Pill> },
-    { key: 'account', header: labels.account, render: (l) => l.account },
+    {
+      key: 'type', header: 'Type', render: (l) => <Pill>{LINK_TYPE_LABELS[l.type]}</Pill>,
+      isFiltered: filters.type !== '',
+      filter: (
+        <Select label="Type" hideLabel value={filters.type} onChange={(v) => setFilters((f) => ({ ...f, type: v as LinksFilters['type'] }))}>
+          <option value="">All types</option>
+          {LINK_TYPES.map((t) => <option key={t} value={t}>{LINK_TYPE_LABELS[t]}</option>)}
+        </Select>
+      ),
+    },
+    {
+      key: 'account', header: labels.account, render: (l) => l.account,
+      isFiltered: filters.accountId !== '',
+      filter: (
+        <Select label={labels.account} hideLabel value={filters.accountId} onChange={(v) => setFilters((f) => ({ ...f, accountId: v }))}>
+          <option value="">All {labels.accounts.toLowerCase()}</option>
+          {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </Select>
+      ),
+    },
     { key: 'agent', header: labels.agent, render: (l) => l.agent ?? '—' },
-    { key: 'amount', header: 'Amount', align: 'right', render: (l) => l.amount == null ? '—' : <Money amount={l.amount} currency={l.currency} /> },
-    { key: 'status', header: 'Status', render: (l) => <Pill tone={STATUS_TONE[l.status]}>{LINK_STATUS_LABELS[l.status]}</Pill> },
-    { key: 'created', header: 'Created', render: (l) => <DateCell ts={l.createdAt} /> },
-    { key: 'expires', header: 'Expires', render: (l) => l.expiresAt ? <DateCell ts={l.expiresAt} /> : <span className="sub">never</span> },
+    {
+      key: 'amount', header: 'Amount', sortKey: 'amount',
+      render: (l) => l.amount == null ? '—' : <Money amount={l.amount} currency={l.currency} />,
+      isFiltered: filters.min !== '' || filters.max !== '',
+      filter: (
+        <div className="field-row">
+          <input type="number" className="amount-input" aria-label="Minimum amount" placeholder="Min" value={filters.min}
+            aria-invalid={inverted || undefined} onChange={(e) => setFilters((f) => ({ ...f, min: e.target.value }))} />
+          <input type="number" className="amount-input" aria-label="Maximum amount" placeholder="Max" value={filters.max}
+            aria-invalid={inverted || undefined} onChange={(e) => setFilters((f) => ({ ...f, max: e.target.value }))} />
+        </div>
+      ),
+    },
+    {
+      key: 'status', header: 'Status', sortKey: 'status',
+      render: (l) => <Pill tone={STATUS_TONE[l.status]}>{LINK_STATUS_LABELS[l.status]}</Pill>,
+      isFiltered: filters.status !== '',
+      filter: (
+        <Select label="Status" hideLabel value={filters.status} onChange={(v) => setFilters((f) => ({ ...f, status: v as LinksFilters['status'] }))}>
+          <option value="">All statuses</option>
+          {LINK_STATUSES.map((st) => <option key={st} value={st}>{LINK_STATUS_LABELS[st]}</option>)}
+        </Select>
+      ),
+    },
+    {
+      key: 'created', header: 'Created', sortKey: 'created', render: (l) => <DateCell ts={l.createdAt} />,
+      isFiltered: filters.from !== '' || filters.to !== '',
+      filter: <Calendar value={range} onChange={setRange} />,
+    },
+  ];
+
+  const columnsView = useViewLayout('links.columns', columns.map((c) => ({ key: c.key, label: c.header })));
+  const shownColumns: Column<PaymentLink>[] = [
+    ...orderBy(columns, columnsView.visibleKeys),
+    // The actions cell is a control, not data: it is never hidden or moved.
     {
       key: 'actions', header: 'Actions', hideHeader: true, align: 'right',
-      render: (l) => (
+      render: (l: PaymentLink) => (
         <div className="cell-actions">
           {isShareable(l.status) && l.checkoutUrl && <CopyButton value={l.checkoutUrl} label="Copy" small />}
           {isShareable(l.status) && canCreate && <button className="btn ghost small" onClick={() => setCancelling(l)}>Cancel</button>}
@@ -159,14 +216,9 @@ export default function LinksPage() {
     <div>
       <PageHeader
         title="Payment links"
-        subtitle="Hosted checkout links. The customer pays on MantaPay's page; card details never touch this system."
         actions={
           <>
-            {can('revenue.manage') && (
-              <button className="btn ghost" onClick={runReconcile} disabled={isReconciling}>
-                {isReconciling ? 'Reconciling…' : 'Reconcile'}
-              </button>
-            )}
+            <ViewPicker label="Edit cards" view={statsView} />
             {canCreate && <button className="btn" onClick={openCreate}>New link</button>}
           </>
         }
@@ -184,40 +236,23 @@ export default function LinksPage() {
       )}
 
       <StatGrid>
-        <StatCard isUnknown={statsUnknown} label="Links" value={links.length} sub={hasMore ? 'Loaded so far' : 'Matching'} />
-        <StatCard isUnknown={statsUnknown} label="Paid" value={paid.length} sub="Single-use links paid" />
-        <StatCard isUnknown={statsUnknown} label="Conversion" value={`${conversion}%`} sub="Paid ÷ links" />
-        <StatCard isUnknown={statsUnknown} label="Revenue" value={<Money amount={revenue} direction="in" emphasis />} sub="From paid links" />
+        {orderBy(statCards, statsView.visibleKeys).map((c) => <Fragment key={c.key}>{c.card}</Fragment>)}
       </StatGrid>
 
       <FilterBar>
-        <Select label={labels.account} hideLabel value={filters.accountId} onChange={(v) => setFilters((f) => ({ ...f, accountId: v }))}>
-          <option value="">All {labels.accounts.toLowerCase()}</option>
-          {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </Select>
-        <Select label="Type" hideLabel value={filters.type} onChange={(v) => setFilters((f) => ({ ...f, type: v as LinksFilters['type'] }))}>
-          <option value="">All types</option>
-          {LINK_TYPES.map((t) => <option key={t} value={t}>{LINK_TYPE_LABELS[t]}</option>)}
-        </Select>
-        <Select label="Status" hideLabel value={filters.status} onChange={(v) => setFilters((f) => ({ ...f, status: v as LinksFilters['status'] }))}>
-          <option value="">All statuses</option>
-          {LINK_STATUSES.map((s) => <option key={s} value={s}>{LINK_STATUS_LABELS[s]}</option>)}
-        </Select>
-        <input type="number" className="amount-input" aria-label="Minimum amount" placeholder="Min" value={filters.min}
-          aria-invalid={inverted || undefined} onChange={(e) => setFilters((f) => ({ ...f, min: e.target.value }))} />
-        <input type="number" className="amount-input" aria-label="Maximum amount" placeholder="Max" value={filters.max}
-          aria-invalid={inverted || undefined} onChange={(e) => setFilters((f) => ({ ...f, max: e.target.value }))} />
-        <DateRangePicker value={range} onChange={setRange} />
         <input type="search" className="search-input" aria-label="Search links" placeholder="Search ref, agent"
           value={filters.search} onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))} />
-        <button className="btn ghost" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear</button>
+        <button className="btn ghost" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear filters</button>
+        <ViewPicker label="Edit columns" view={columnsView} />
       </FilterBar>
 
       <DataTable
-        columns={columns}
+        columns={shownColumns}
         rows={links}
         rowKey={(l) => l.id}
         onRowClick={setDetail}
+        sort={sort}
+        onSort={toggleSort}
         isLoading={isLoading}
         emptyTitle={isError ? "Couldn't load payment links." : 'No links match these filters.'}
         emptyHint={isError ? 'Try again in a moment.' : canCreate ? 'Create one from the header.' : `Ask a ${labels.agent.toLowerCase()} to create one.`}
@@ -245,7 +280,6 @@ export default function LinksPage() {
             <DetailRow label={labels.agent}>{detail.agent ?? '—'}</DetailRow>
             <DetailRow label="Amount">{detail.amount == null ? '—' : <Money amount={detail.amount} currency={detail.currency} emphasis />}</DetailRow>
             <DetailRow label="Created"><DateCell ts={detail.createdAt} /></DetailRow>
-            <DetailRow label="Expires">{detail.expiresAt ? <DateCell ts={detail.expiresAt} /> : 'Never'}</DetailRow>
             {detail.paidAt && <DetailRow label="Paid"><DateCell ts={detail.paidAt} /></DetailRow>}
             {isShareable(detail.status) && detail.checkoutUrl && (
               <div className="field">
@@ -266,7 +300,7 @@ export default function LinksPage() {
                 <Link className="btn" to={`/payments?needs_details=1&q=${encodeURIComponent(detail.referenceId)}`}>Complete on Payments</Link>
               )}
               {isShareable(detail.status) && canCreate && (
-                <button className="btn ghost" onClick={() => setCancelling(detail)}>Cancel link</button>
+                <button className="btn danger" onClick={() => setCancelling(detail)}>Cancel link</button>
               )}
               <span className="spacer" />
               <button className="btn ghost" onClick={() => setDetail(null)}>Close</button>
@@ -275,15 +309,14 @@ export default function LinksPage() {
         )}
       </Modal>
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New payment link"
-        subtitle="The customer pays on MantaPay's hosted page. The amount is fixed in the link.">
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New payment link">
         <Select id="link-account" label={labels.account} value={accountId} onChange={setAccountId}>
           {activeAccounts.length === 0 && <option value="">No active {labels.accounts.toLowerCase()}</option>}
           {activeAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </Select>
         <Select id="link-type" label="Type" value={type} onChange={(v) => setType(v as LinkType)}
           hint={type === 'single_use'
-            ? 'Closes on the first payment, or after 24 hours if nobody pays.'
+            ? `Closes on the first payment, or after ${expiryHours} ${expiryHours === 1 ? 'hour' : 'hours'} if nobody pays.`
             : 'Stays open through any number of payments until you cancel it.'}>
           {LINK_TYPES.map((t) => <option key={t} value={t}>{LINK_TYPE_LABELS[t]}</option>)}
         </Select>
@@ -299,16 +332,12 @@ export default function LinksPage() {
         </div>
 
         <div className={`pl-fees${fees && fees.effectivePct >= 18 ? ' hot' : fees && fees.effectivePct >= 15 ? ' warm' : ''}`}>
-          <div className="pl-fees-head">
-            <span className="sub">Fees on this link</span>
-            <span className="pl-fee-pct">{fees ? `${fees.effectivePct.toFixed(1)}%` : '—'}</span>
-          </div>
           <div className="fee-line">
             <span>Platform fee ({rateCard.blended.toFixed(1)}%)</span>
             <b className="fee-val">{fees ? formatMoney(fees.blendedFee) : '—'}</b>
           </div>
           <div className="fee-line">
-            <span>Fixed per transaction</span>
+            <span>Transaction fee</span>
             <b className="fee-val">{fees ? formatMoney(fees.fixed) : '—'}</b>
           </div>
           <div className="fee-tot">
@@ -316,7 +345,7 @@ export default function LinksPage() {
             <span className="fee-val">{fees ? formatMoney(fees.total) : '—'}</span>
           </div>
           <div className="fee-net">
-            <span>Net to workspace</span>
+            <span>Net profit</span>
             <span className="fee-val">{fees ? formatMoney(fees.net) : '—'}</span>
           </div>
         </div>
@@ -347,7 +376,7 @@ export default function LinksPage() {
 
       <Modal open={cancelling !== null} onClose={() => setCancelling(null)}
         title={cancelling ? `Cancel link ${cancelling.referenceId}?` : ''}
-        subtitle="The checkout URL stops working immediately. Nothing changes in the ledger.">
+        subtitle="The checkout URL stops working immediately. Money already taken on it is untouched.">
         {cancelling && (
           <div className="modal-actions">
             <button className="btn ghost" onClick={() => setCancelling(null)}>Keep it</button>

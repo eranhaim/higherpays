@@ -83,6 +83,7 @@ export function usePlatformFees() {
       if (input.fixedFee !== rate.pspFixedFee) {
         await platformApi.setPlatformFee(id, {
           pspRatePct: rate.pspRatePct, marginRatePct: rate.marginRatePct, pspFixedFee: input.fixedFee,
+          checkoutFee: rate.checkoutFee,
         });
       }
       const reversalsChanged = !settlement

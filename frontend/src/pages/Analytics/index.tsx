@@ -163,7 +163,6 @@ export default function AnalyticsPage() {
     <>
       <PageHeader
         title="Analytics"
-        subtitle={canScope ? activeWorkspace?.name ?? '' : 'Your performance'}
         actions={<button className="btn ghost" onClick={exportCSV} disabled={!report}>Export CSV</button>}
       />
       <FilterBar>
@@ -180,7 +179,7 @@ export default function AnalyticsPage() {
             </select>
           </>
         )}
-        <button className="btn ghost" onClick={() => setFilters(defaultFilters())}>Clear</button>
+        <button className="btn ghost" onClick={() => setFilters(defaultFilters())}>Clear filters</button>
       </FilterBar>
     </>
   );

@@ -11,7 +11,7 @@ import type { Permission } from './permissions';
 import type { WorkspaceLabels } from '../api/types';
 
 export type NavIconName =
-  | 'payments' | 'links' | 'analytics' | 'payouts' | 'settlements'
+  | 'payments' | 'links' | 'analytics' | 'payouts'
   | 'accounts' | 'agents' | 'customers' | 'team' | 'settings';
 
 export interface NavItem {
@@ -36,7 +36,6 @@ export const NAV: NavGroup[] = [
       { path: '/links', label: 'Payment links', perm: 'links.view', icon: 'links' },
       { path: '/analytics', label: 'Analytics', perm: 'analytics.view', icon: 'analytics' },
       { path: '/payouts', label: 'Payouts', scopedLabel: 'Earnings', perm: 'analytics.view', icon: 'payouts' },
-      { path: '/settlements', label: 'Settlements', perm: 'revenue.view', icon: 'settlements' },
     ],
   },
   {

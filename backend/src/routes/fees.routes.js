@@ -29,7 +29,6 @@ router.get('/', requirePermission('fees.view'), asyncHandler(async (req, res) =>
        COALESCE(SUM(re.fee_mdr),0)          AS mdr,
        COALESCE(SUM(re.fee_fixed),0)        AS fixed,
        COALESCE(SUM(re.fee_settlement),0)   AS settlement,
-       COALESCE(SUM(re.fee_surcharge),0)    AS surcharge,
        COALESCE(SUM(re.platform_margin),0)  AS hp_margin,
        COALESCE(SUM(re.platform_fee),0)     AS platform_fee_total,
        COALESCE(SUM(re.chargeback_fee),0)   AS reversal_fees,
@@ -54,8 +53,7 @@ router.get('/', requirePermission('fees.view'), asyncHandler(async (req, res) =>
     },
     platformFees: {
       margin: r2(t.hp_margin),
-      surcharge: r2(t.surcharge), // collected FROM the payer, not deducted from gross
-      total: r2(n(t.hp_margin) + n(t.surcharge)),
+      total: r2(t.hp_margin),
       percentOfGross: pct(t.hp_margin),
     },
     totalDeducted: r2(t.platform_fee_total),
@@ -78,7 +76,7 @@ router.get('/transactions', requirePermission('fees.view'), asyncHandler(async (
   const { F, T } = range(req);
   const limit = Math.min(1000, Number(req.query.limit) || 200);
   const rows = (await query(
-    `SELECT t.occurred_at, t.provider_transaction_id, t.currency, t.surcharge,
+    `SELECT t.occurred_at, t.provider_transaction_id, t.currency,
             a.name AS account, u.full_name AS agent,
             re.entry_type, re.gross, re.fee_mdr, re.fee_fixed, re.fee_settlement,
             re.platform_margin, re.platform_fee, re.chargeback_fee,
@@ -93,7 +91,7 @@ router.get('/transactions', requirePermission('fees.view'), asyncHandler(async (
     transactions: rows.map((x) => ({
       date: x.occurred_at, reference: x.provider_transaction_id, currency: x.currency,
       type: x.entry_type, account: x.account, agent: x.agent,
-      gross: n(x.gross), surcharge: n(x.surcharge),
+      gross: n(x.gross),
       fees: { mdr: n(x.fee_mdr), fixed: n(x.fee_fixed), settlement: n(x.fee_settlement), higherPays: n(x.platform_margin), reversal: n(x.chargeback_fee), total: n(x.platform_fee) },
       distributable: n(x.distributable),
       accountAmount: n(x.account_amount), agentAmount: n(x.agent_amount), agencyAmount: n(x.agency_amount),

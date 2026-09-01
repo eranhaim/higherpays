@@ -1,14 +1,23 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { HttpError } from '../../api/http';
 import { initials } from '../../lib/format';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
-import { PageHeader, DateCell, DataTable, FilterBar, Pill, type Column } from '../../components/ui';
-import { WORKSPACE_ROLE_LABELS, type WorkspaceRole } from '../../api/types';
+import { PageHeader, DateCell, DataTable, FilterBar, Pill, Select, ViewPicker, type Column, type SortState } from '../../components/ui';
+import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
+import { sortRows, type SortValues } from '../../lib/sortRows';
+import { WORKSPACE_ROLES, WORKSPACE_ROLE_LABELS, type WorkspaceRole } from '../../api/types';
 import { INVITABLE_ROLES, type Member, type Invite, type InvitableRole } from '../../api/endpoints';
 import { useTeamData } from './useTeamData';
+
+const SORT_VALUES: SortValues<Member> = {
+  name: (m) => m.name,
+  role: (m) => m.role,
+  status: (m) => m.status,
+  joined: (m) => m.joinedAt,
+};
 
 /** A token past its expiry no longer resolves, so the invite is dead. */
 function isExpired(i: Invite): boolean {
@@ -31,6 +40,11 @@ export default function TeamPage() {
   const [isBusy, setIsBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [cancelling, setCancelling] = useState<Invite | null>(null);
+  const [role, setRole] = useState<'' | WorkspaceRole>('');
+  const [access, setAccess] = useState<'' | 'active' | 'suspended'>('');
+  const [sort, setSort] = useState<SortState>({ key: 'name', dir: 'asc' });
+  const toggleSort = (key: string) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
 
   // The role names an agency uses for its own people.
   const roleLabel = (role: WorkspaceRole) =>
@@ -98,7 +112,7 @@ export default function TeamPage() {
 
   const memberColumns: Column<Member>[] = [
     {
-      key: 'person', header: 'Member',
+      key: 'person', header: 'Member', sortKey: 'name',
       render: (m) => (
         <div className="person">
           <div className="avatar">{initials(m.name)}</div>
@@ -110,16 +124,40 @@ export default function TeamPage() {
       ),
     },
     {
-      key: 'role', header: 'Role',
+      key: 'role', header: 'Role', sortKey: 'role',
       render: (m) => (
         <>
           <span className="rolebadge">{roleLabel(m.role)}</span>
           {m.accountName ? <span className="sub inline"> · {m.accountName}</span> : null}
         </>
       ),
+      isFiltered: role !== '',
+      filter: (
+        <Select label="Role" hideLabel value={role} onChange={(v) => setRole(v as '' | WorkspaceRole)}>
+          <option value="">All roles</option>
+          {WORKSPACE_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+        </Select>
+      ),
     },
-    { key: 'status', header: 'Access', render: (m) => m.status === 'active' ? <Pill tone="ok">Active</Pill> : <Pill tone="muted">Suspended</Pill> },
-    { key: 'joined', header: 'Joined', render: (m) => <DateCell ts={m.joinedAt} /> },
+    {
+      key: 'status', header: 'Access', sortKey: 'status',
+      render: (m) => m.status === 'active' ? <Pill tone="ok">Active</Pill> : <Pill tone="muted">Suspended</Pill>,
+      isFiltered: access !== '',
+      filter: (
+        <Select label="Access" hideLabel value={access} onChange={(v) => setAccess(v as '' | 'active' | 'suspended')}>
+          <option value="">All access</option>
+          <option value="active">Active</option>
+          <option value="suspended">Suspended</option>
+        </Select>
+      ),
+    },
+    { key: 'joined', header: 'Joined', sortKey: 'joined', render: (m) => <DateCell ts={m.joinedAt} /> },
+  ];
+
+  const columnsView = useViewLayout('team.columns', memberColumns.map((c) => ({ key: c.key, label: c.header })));
+  const shownMemberColumns: Column<Member>[] = [
+    ...orderBy(memberColumns, columnsView.visibleKeys),
+    // The actions cell is a control, not data: it is never hidden or moved.
     ...(canManage ? [{
       key: 'actions', header: 'Actions', hideHeader: true, align: 'right' as const,
       render: (m: Member) => m.isSelf ? null : (
@@ -135,7 +173,12 @@ export default function TeamPage() {
   ];
 
   const query = search.trim().toLowerCase();
-  const visibleMembers = query ? members.filter((m) => `${m.name} ${m.email}`.toLowerCase().includes(query)) : members;
+  const matchingMembers = members
+    .filter((m) => !query || `${m.name} ${m.email}`.toLowerCase().includes(query))
+    .filter((m) => !role || m.role === role)
+    .filter((m) => !access || m.status === access);
+  // The server returns the whole team at once, so the order is decided here.
+  const visibleMembers = useMemo(() => sortRows(matchingMembers, sort, SORT_VALUES), [matchingMembers, sort]);
 
   const inviteColumns: Column<Invite>[] = [
     { key: 'email', header: 'Email', render: (i) => <span className="cemail">{i.email}</span> },
@@ -151,7 +194,6 @@ export default function TeamPage() {
     <div>
       <PageHeader
         title="Team"
-        subtitle={`Everyone who can sign into this workspace. ${labels.agents} and ${labels.accounts.toLowerCase()} are added on their own pages; admins and analysts by invite.`}
         actions={canManage ? <button className="btn" onClick={() => setInviteOpen(true)}>Invite admin or analyst</button> : null}
       />
 
@@ -159,13 +201,17 @@ export default function TeamPage() {
         <FilterBar>
           <input type="search" className="search-input" aria-label="Search members" placeholder="Search name or email"
             value={search} onChange={(e) => setSearch(e.target.value)} />
+          <button className="btn ghost" onClick={() => { setSearch(''); setRole(''); setAccess(''); }}>Clear filters</button>
           <span className="sub">{visibleMembers.length} of {members.length}</span>
+          <ViewPicker label="Edit columns" view={columnsView} />
         </FilterBar>
       )}
 
       <DataTable
-        columns={memberColumns}
+        columns={shownMemberColumns}
         rows={visibleMembers}
+        sort={sort}
+        onSort={toggleSort}
         rowKey={(m) => m.userId}
         isLoading={isLoading}
         emptyTitle={isError ? "Couldn't load the team." : query ? 'No members match that search.' : 'No members yet.'}

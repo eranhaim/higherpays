@@ -14,14 +14,17 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), selec
 
 /**
  * Accessible dialog: named by its title, traps Tab inside itself, closes on
- * Escape or an overlay click, locks page scroll while open, and returns focus
- * to the element that opened it.
+ * Escape, locks page scroll while open, and returns focus to the element that
+ * opened it.
+ *
+ * A click on the overlay does not close it. Half these dialogs are forms, and
+ * losing a half-filled one to a stray click is worse than the extra click on
+ * Cancel.
  *
  * Rendered into document.body. Left inline it would sit inside <main>, which
  * is the app's scroll container, and the page would scroll behind the dialog.
  */
 export default function Modal({ open, onClose, title, subtitle, children }: ModalProps) {
-  const overlayRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
 
@@ -63,12 +66,7 @@ export default function Modal({ open, onClose, title, subtitle, children }: Moda
   if (!open) return null;
 
   return createPortal(
-    <div
-      ref={overlayRef}
-      className="overlay"
-      role="presentation"
-      onClick={(e) => { if (e.target === overlayRef.current) onClose(); }}
-    >
+    <div className="overlay" role="presentation">
       <div ref={dialogRef} className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
         <h3 id={titleId}>{title}</h3>
         {subtitle ? <p className="sub">{subtitle}</p> : null}

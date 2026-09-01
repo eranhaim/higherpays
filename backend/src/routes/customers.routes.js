@@ -18,9 +18,15 @@ const publicCustomer = (r) => ({
   segment: r.segment, totalSpend: Number(r.total_spend), lastPurchaseAt: r.last_purchase_at, createdAt: r.created_at,
 });
 
-// GET /?segment=&q=&limit=&offset=
+// What a caller may sort by. Not free text: the key picks the column.
+// Mirrored in frontend/src/api/endpoints/customers.ts.
+const CUSTOMER_SORTS = { name: 'name', spend: 'total_spend', last: 'last_purchase_at', segment: 'segment' };
+
+// GET /?segment=&q=&sort=&dir=&limit=&offset=
 router.get('/', requirePermission('customers.view'), asyncHandler(async (req, res) => {
   const { segment, q } = req.query;
+  const sortColumn = CUSTOMER_SORTS[req.query.sort] || CUSTOMER_SORTS.last;
+  const dir = req.query.dir === 'asc' ? 'ASC' : 'DESC';
   const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
   const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
   const where = ['workspace_id = $1', 'deleted_at IS NULL'];
@@ -34,8 +40,8 @@ router.get('/', requirePermission('customers.view'), asyncHandler(async (req, re
   vals.push(limit, offset);
   const rows = (await query(
     `SELECT * FROM customers WHERE ${where.join(' AND ')}
-      ORDER BY last_purchase_at DESC NULLS LAST, created_at DESC
-      LIMIT $${vals.length - 1} OFFSET $${vals.length}`, vals)).rows;
+      ORDER BY ${sortColumn} ${dir} NULLS LAST, created_at DESC
+      LIMIT ${vals.length - 1} OFFSET ${vals.length}`, vals)).rows;
   res.json({ customers: rows.map(publicCustomer), limit, offset });
 }));
 

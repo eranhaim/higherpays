@@ -36,6 +36,8 @@ export interface OnboardAgencyInput {
   pspRatePct: number;
   marginRatePct: number;
   pspFixedFee: number;
+  /** Paid by the customer at checkout, on top of the price. Ours, not theirs. */
+  checkoutFee: number;
   chargebackFee: number;
   refundFee: number;
   declineFee: number;
@@ -48,6 +50,8 @@ export interface PlatformFeeRate {
   pspRatePct: number;
   marginRatePct: number;
   pspFixedFee: number;
+  /** Paid by the customer at checkout, on top of the price. Ours, not theirs. */
+  checkoutFee: number;
 }
 
 /** The reversal fees and the rolling reserve, also versioned. */

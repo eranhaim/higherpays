@@ -21,7 +21,8 @@ const r2 = (v) => Math.round(v * 100) / 100;
 const publicFee = (f) => ({
   feeModel: f.fee_model, pspRatePct: n(f.psp_rate_pct), mdrPct: f.mdr_pct == null ? null : n(f.mdr_pct),
   settlementPct: f.settlement_pct == null ? null : n(f.settlement_pct), pspFixedFee: n(f.psp_fixed_fee),
-  marginRatePct: n(f.margin_rate_pct), blendedRatePct: n(f.blended_rate_pct), effectiveFrom: f.effective_from,
+  marginRatePct: n(f.margin_rate_pct), checkoutFee: n(f.checkout_fee),
+  blendedRatePct: n(f.blended_rate_pct), effectiveFrom: f.effective_from,
 });
 const publicSettlementFee = (s) => ({
   chargebackFee: n(s.chargeback_fee), refundFee: n(s.refund_fee), declineFee: n(s.decline_fee),
@@ -107,13 +108,15 @@ router.put('/workspaces/:id/platform-fee', asyncHandler(async (req, res) => {
   if (b.mdrPct != null && !pct(b.mdrPct)) return badRequest(res, 'mdrPct must be 0..100', ['mdrPct']);
   if (b.settlementPct != null && !pct(b.settlementPct)) return badRequest(res, 'settlementPct must be 0..100', ['settlementPct']);
   if (!(pspFixedFee >= 0)) return badRequest(res, 'pspFixedFee must be >= 0', ['pspFixedFee']);
+  const checkoutFee = Number(b.checkoutFee || 0);
+  if (!(checkoutFee >= 0)) return badRequest(res, 'checkoutFee must be >= 0', ['checkoutFee']);
 
   const ws = (await query('SELECT 1 FROM workspaces WHERE id=$1', [req.params.id])).rows[0];
   if (!ws) return res.status(404).json({ error: 'not_found' });
   const fee = (await query(
-    `INSERT INTO platform_fee_rates (workspace_id, fee_model, psp_rate_pct, mdr_pct, settlement_pct, psp_fixed_fee, margin_rate_pct, created_by_user_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-    [req.params.id, feeModel, b.pspRatePct, b.mdrPct ?? null, b.settlementPct ?? null, pspFixedFee, b.marginRatePct, uid(req)])).rows[0];
+    `INSERT INTO platform_fee_rates (workspace_id, fee_model, psp_rate_pct, mdr_pct, settlement_pct, psp_fixed_fee, margin_rate_pct, checkout_fee, created_by_user_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+    [req.params.id, feeModel, b.pspRatePct, b.mdrPct ?? null, b.settlementPct ?? null, pspFixedFee, b.marginRatePct, checkoutFee, uid(req)])).rows[0];
   await audit({ workspaceId: req.params.id, actorUserId: uid(req), action: 'platform.fee.update', entityType: 'workspace', entityId: req.params.id, metadata: b });
   res.status(201).json(publicFee(fee));
 }));
@@ -171,9 +174,9 @@ router.post('/agencies', asyncHandler(async (req, res) => {
       [b.name.trim(), currency, b.merchantId || null])).rows[0];
     // Effective from the beginning of time so any backfilled history is priced.
     await c.query(
-      `INSERT INTO platform_fee_rates (workspace_id, fee_model, psp_rate_pct, mdr_pct, settlement_pct, psp_fixed_fee, margin_rate_pct, effective_from, created_by_user_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'-infinity',$8)`,
-      [ws.id, vocab.FEE_MODEL.includes(b.feeModel) ? b.feeModel : 'flat', b.pspRatePct, b.mdrPct ?? null, b.settlementPct ?? null, Number(b.pspFixedFee || 0), b.marginRatePct, uid(req)]);
+      `INSERT INTO platform_fee_rates (workspace_id, fee_model, psp_rate_pct, mdr_pct, settlement_pct, psp_fixed_fee, margin_rate_pct, checkout_fee, effective_from, created_by_user_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'-infinity',$9)`,
+      [ws.id, vocab.FEE_MODEL.includes(b.feeModel) ? b.feeModel : 'flat', b.pspRatePct, b.mdrPct ?? null, b.settlementPct ?? null, Number(b.pspFixedFee || 0), b.marginRatePct, Number(b.checkoutFee || 0), uid(req)]);
     await c.query(
       `INSERT INTO settlement_fee_config (workspace_id, chargeback_fee, refund_fee, decline_fee, effective_from, created_by_user_id)
        VALUES ($1,$2,$3,$4,'-infinity',$5)`,

@@ -357,6 +357,10 @@ There is no row-level security. Every query filters on `req.access.workspaceId` 
 
 Money math is exact NUMERIC in Postgres, JS `number` in the app. The ledger (splits, payouts, chargebacks) is computed server-side; the frontend only displays it. The one client-side calculation is the fee preview in `frontend/src/business/feeBreakdown.ts` (unit-tested). New currency math belongs there with a unit test, not inline in a page or component.
 
+A creator is paid one of two ways (`accounts.pay_model`): a share of the distributable on every sale, or a salary. A salaried creator scores 0 on each sale — the agency keeps that share — and is owed `salary_amount` once per payout period; the payout run refuses to pay a period that an existing payout already overlaps.
+
+The checkout fee (`platform_fee_rates.checkout_fee`, copied onto each link) is HigherPays' own: the customer pays it on top of the price, so it is added to the provider checkout, subtracted again when the outcome is recorded, and carried as `transactions.surcharge`. It never enters the agency's gross, its splits or its fee report.
+
 Money display always goes through `<Money amount={n} direction="in" | "out" emphasis />`. Never hand-format currency in a page — it carries the direction colour and tabular numerals.
 
 ### Auth and permissions
@@ -369,7 +373,9 @@ A new workspace route without `requireAuth` + `requireWorkspace` is unprotected.
 
 QRMoney is dead — this project fully migrated off it. Do not reintroduce it or add a second payment-provider integration path.
 
-Live provider code: `backend/src/providers/mantapay-*.js`. Payment outcome handling (payment + transaction upsert, link status, `fn_post_sale`, notification fan-out) is centralised in `backend/src/services/payments.service.js` — called by both the webhook route and `/links/reconcile`. Keep it that way; don't duplicate outcome logic in a route handler.
+Live provider code: `backend/src/providers/mantapay-*.js`. Payment outcome handling (payment + transaction upsert, link status, `fn_post_sale`, notification fan-out) is centralised in `backend/src/services/payments.service.js` — called by both the webhook route and the reconciler. Keep it that way; don't duplicate outcome logic in a route handler.
+
+Reconciliation (`backend/src/services/links.service.js`) is the safety net for a webhook that never arrived. The API process runs it every 10 minutes for every workspace; `POST /links/reconcile` runs the same function on demand. There is no button for it.
 
 A payment link is `single_use` (dies on the first payment or after 24h) or `reusable` (many payments, until cancelled). After a payment the agent completes it (`PATCH /payments/:id/details`: customer + category); that is what moves a single-use link from `pending` to `done`.
 

@@ -1,13 +1,24 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { initials } from '../../lib/format';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
-import { PageHeader, DataTable, FilterBar, Pill, type Column } from '../../components/ui';
+import { PageHeader, DataTable, FilterBar, Pill, Select, ViewPicker, type Column, type SortState } from '../../components/ui';
+import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
+import { sortRows, type SortValues } from '../../lib/sortRows';
+import { COUNTRIES, countryName } from '../../lib/countries';
 import type { Agent } from '../../api/endpoints';
 import { useAgentsData } from './useAgentsData';
+
+const SORT_VALUES: SortValues<Agent> = {
+  name: (a) => a.name,
+  status: (a) => a.status,
+  accounts: (a) => a.accountsAssigned,
+  commission: (a) => a.commissionPct,
+  country: (a) => a.country,
+};
 
 /** NaN for anything that isn't a usable percentage, so callers can flag it. */
 function parsePct(text: string): number {
@@ -27,6 +38,10 @@ export default function AgentsPage() {
   const [suspending, setSuspending] = useState<Agent | null>(null);
   const [isChangingStatus, setIsChangingStatus] = useState(false);
   const [search, setSearch] = useState('');
+  const [access, setAccess] = useState<'' | 'active' | 'suspended'>('');
+  const [sort, setSort] = useState<SortState>({ key: 'name', dir: 'asc' });
+  const toggleSort = (key: string) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
 
   useUnsavedChanges('agent-form', createOpen || editing !== null);
 
@@ -44,11 +59,14 @@ export default function AgentsPage() {
   };
 
   const query = search.trim().toLowerCase();
-  const visible = query ? agents.filter((a) => `${a.name} ${a.email}`.toLowerCase().includes(query)) : agents;
+  const matching = query ? agents.filter((a) => `${a.name} ${a.email}`.toLowerCase().includes(query)) : agents;
+  const shown = access ? matching.filter((a) => a.status === access) : matching;
+  // The server returns every agent at once, so the order is decided here.
+  const visible = useMemo(() => sortRows(shown, sort, SORT_VALUES), [shown, sort]);
 
   const columns: Column<Agent>[] = [
     {
-      key: 'person', header: labels.agent,
+      key: 'person', header: labels.agent, sortKey: 'name',
       render: (a) => (
         <div className="person">
           <div className="avatar">{initials(a.name)}</div>
@@ -59,13 +77,30 @@ export default function AgentsPage() {
         </div>
       ),
     },
-    { key: 'status', header: 'Access', render: (a) => a.status === 'active' ? <Pill tone="ok">Active</Pill> : <Pill tone="muted">Suspended</Pill> },
-    { key: 'accounts', header: labels.accounts, align: 'right', render: (a) => <span className="mono">{a.accountsAssigned}</span> },
+    {
+      key: 'status', header: 'Access', sortKey: 'status',
+      render: (a) => a.status === 'active' ? <Pill tone="ok">Active</Pill> : <Pill tone="muted">Suspended</Pill>,
+      isFiltered: access !== '',
+      filter: (
+        <Select label="Access" hideLabel value={access} onChange={(v) => setAccess(v as '' | 'active' | 'suspended')}>
+          <option value="">All access</option>
+          <option value="active">Active</option>
+          <option value="suspended">Suspended</option>
+        </Select>
+      ),
+    },
+    { key: 'accounts', header: labels.accounts, sortKey: 'accounts', render: (a) => <span className="mono">{a.accountsAssigned}</span> },
     ...(canViewCommission ? [{
-      key: 'commission', header: 'Commission', align: 'right' as const,
+      key: 'commission', header: 'Commission', sortKey: 'commission',
       render: (a: Agent) => <span className="mono">{a.commissionPct}%</span>,
     }] : []),
-    { key: 'country', header: 'Country', render: (a) => a.country ?? '—' },
+    { key: 'country', header: 'Country', sortKey: 'country', render: (a) => countryName(a.country) || '—' },
+  ];
+
+  const columnsView = useViewLayout('agents.columns', columns.map((c) => ({ key: c.key, label: c.header })));
+  const shownColumns: Column<Agent>[] = [
+    ...orderBy(columns, columnsView.visibleKeys),
+    // The actions cell is a control, not data: it is never hidden or moved.
     ...(canManage ? [{
       key: 'actions', header: 'Actions', hideHeader: true, align: 'right' as const,
       render: (a: Agent) => (
@@ -83,7 +118,6 @@ export default function AgentsPage() {
     <div>
       <PageHeader
         title={labels.agents}
-        subtitle={`The people who sell for your ${labels.accounts.toLowerCase()}, and what each one earns on a sale.`}
         actions={canManage ? <button className="btn" onClick={() => setCreateOpen(true)}>Add {labels.agent.toLowerCase()}</button> : null}
       />
 
@@ -91,15 +125,19 @@ export default function AgentsPage() {
         <FilterBar>
           <input type="search" className="search-input" aria-label={`Search ${labels.agents}`}
             placeholder="Search name or email" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <button className="btn ghost" onClick={() => { setSearch(''); setAccess(''); }}>Clear filters</button>
           <span className="sub">{visible.length} of {agents.length}</span>
+          <ViewPicker label="Edit columns" view={columnsView} />
         </FilterBar>
       )}
 
       <DataTable
-        columns={columns}
+        columns={shownColumns}
         rows={visible}
         rowKey={(a) => a.id}
         isLoading={isLoading}
+        sort={sort}
+        onSort={toggleSort}
         emptyTitle={isError ? `Couldn't load ${labels.agents.toLowerCase()}.` : query ? 'Nothing matches that search.' : `No ${labels.agents.toLowerCase()} yet.`}
         emptyHint={isError ? 'Try again in a moment.' : query ? 'Clear the search to see them all.' : canManage ? 'Add the first one from the header.' : undefined}
       />
@@ -125,7 +163,7 @@ export default function AgentsPage() {
           canEditCommission={can('revenue.manage')}
           onClose={() => setEditing(null)}
           onSubmit={async (values) => {
-            await updateAgent(editing.id, { commissionPct: values.commissionPct, country: values.country });
+            await updateAgent(editing.id, { fullName: values.fullName, commissionPct: values.commissionPct, country: values.country });
             setEditing(null);
             toast('Saved.');
           }}
@@ -133,7 +171,7 @@ export default function AgentsPage() {
       )}
 
       <Modal open={suspending !== null} onClose={() => setSuspending(null)} title={suspending ? `Suspend ${suspending.name}?` : ''}
-        subtitle="They are signed out everywhere and cannot sign in again until reactivated. Their links, payments and commission stay in the ledger.">
+        subtitle="They are signed out everywhere and cannot sign in again until reactivated. Their links, payments and commission are all kept.">
         {suspending && (
           <div className="modal-actions">
             <button className="btn ghost" onClick={() => setSuspending(null)}>Keep</button>
@@ -176,10 +214,10 @@ function AgentFormModal({ title, subtitle, agent, canEditCommission, onClose, on
   const creating = !agent;
 
   const submit = async () => {
-    if (creating && (!fullName.trim() || !email.trim())) { toast('Name and email are required.'); return; }
+    if (!fullName.trim()) { toast('Name is required.'); return; }
+    if (creating && !email.trim()) { toast('Email is required.'); return; }
     if (creating && password.length < 8) { toast('Password must be at least 8 characters.'); return; }
     if (Number.isNaN(commission)) { toast('Commission must be 0–100.'); return; }
-    if (country && !/^[A-Za-z]{2}$/.test(country)) { toast('Country is a 2-letter code.'); return; }
     setIsSaving(true);
     try {
       await onSubmit({
@@ -201,7 +239,7 @@ function AgentFormModal({ title, subtitle, agent, canEditCommission, onClose, on
         <div className="form-row">
           <div className="field">
             <label htmlFor="agent-name">Full name</label>
-            <input id="agent-name" type="text" value={fullName} disabled={!creating} onChange={(e) => setFullName(e.target.value)} />
+            <input id="agent-name" type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} />
           </div>
           <div className="field">
             <label htmlFor="agent-email">Email</label>
@@ -216,10 +254,10 @@ function AgentFormModal({ title, subtitle, agent, canEditCommission, onClose, on
           </div>
         )}
         <div className="form-row">
-          <div className="field">
-            <label htmlFor="agent-country">Country</label>
-            <input id="agent-country" type="text" maxLength={2} placeholder="e.g. IL" value={country} onChange={(e) => setCountry(e.target.value.toUpperCase())} />
-          </div>
+          <Select id="agent-country" label="Country" value={country} onChange={setCountry}>
+            <option value="">Not set</option>
+            {COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+          </Select>
           {/* What someone earns is a revenue decision; without that permission
               the field is absent rather than shown greyed out. */}
           {canEditCommission && (

@@ -88,7 +88,6 @@ function AgencyPayouts() {
     <>
       <PageHeader
         title="Payouts"
-        subtitle={`What you owe your ${labels.accounts.toLowerCase()} and ${labels.agents.toLowerCase()} in the selected period.`}
       />
       <FilterBar>
         <DateRangePicker value={range} onChange={setRange} />
@@ -136,8 +135,6 @@ function AgencyPayouts() {
         <StatCard label={`Owed to ${labels.accounts.toLowerCase()}`} value={<Money amount={accountsOwed} direction="out" emphasis />} sub="Their share this period" />
         <StatCard label={`Owed to ${labels.agents.toLowerCase()}`} value={<Money amount={agentsOwed} direction="out" emphasis />} sub="Commissions this period" />
         <StatCard label="Owed in total" value={<Money amount={owedTotal} direction="out" />} sub="Not yet paid out" />
-        <StatCard label="Held in reserve" value={<Money amount={data.reserve.held} />}
-          sub={data.reserve.pct ? `${data.reserve.pct}% · released after ${data.reserve.releaseDays} days` : 'No reserve configured'} />
       </StatGrid>
 
       {(owedTotal > 0 || cash.heldInReserve > 0) && (
@@ -163,7 +160,7 @@ function AgencyPayouts() {
             <div className="warnbar">Paying everyone now leaves you {formatMoney(cash.shortfallIfPaidNow)} short. That is cash you front until the reserve is released.</div>
           ) : <p className="sub">You can pay everyone in full from this period's receipts.</p>}
           {cash.heldInReserve > 0 && data.reserve.source === 'estimated' && (
-            <p className="sub">Reserve estimated from your {data.reserve.pct}% rate. Import a settlement report on the Settlements page for the exact figure.</p>
+            <p className="sub">Reserve estimated from your {data.reserve.pct}% rate.</p>
           )}
         </div>
       )}
@@ -192,7 +189,7 @@ function AgencyPayouts() {
                 <tr><td colSpan={4}><EmptyState title={`No ${labels.accounts.toLowerCase()} yet.`} /></td></tr>
               ) : data.perAccount.map((c) => (
                 <tr key={c.id}>
-                  <th scope="row">{c.name}</th>
+                  <th scope="row">{c.name}{c.payModel === 'salary' ? <span className="sub inline"> · salary</span> : null}</th>
                   <td><Money amount={c.revenue} direction="in" /></td>
                   <td><Money amount={c.owed} direction="out" emphasis /></td>
                   <td>{c.owed > 0 ? <><Pill tone="ok">Accruing</Pill> {payButton('account', c.id, c.name, c.owed)}</> : <Pill>Settled</Pill>}</td>
@@ -236,7 +233,7 @@ function AgencyPayouts() {
             </tbody>
           </table>
         </div>
-        <p className="sub">Balances accrue from paid sales in the selected period. Paying marks them as settled in the ledger.</p>
+        <p className="sub">Balances accrue from paid sales in the selected period. Paying marks them as settled.</p>
       </div>
 
       <div className="section">
@@ -246,7 +243,7 @@ function AgencyPayouts() {
       </div>
 
       <Modal open={pending !== null} onClose={() => setPending(null)} title={pending ? `Pay ${pending.label}?` : ''}
-        subtitle="This settles the balance in the ledger and cannot be undone here.">
+        subtitle="This settles the balance and cannot be undone here.">
         {pending && (
           <>
             <div className="callout">

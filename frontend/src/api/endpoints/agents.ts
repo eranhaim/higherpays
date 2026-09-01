@@ -26,6 +26,7 @@ export interface CreateAgentInput {
 }
 
 export interface UpdateAgentInput {
+  fullName?: string;
   commissionPct?: number;
   country?: string;
 }

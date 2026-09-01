@@ -30,7 +30,7 @@ const AGENCIES = [
     name: 'Acme Agency',
     currency: 'EUR',
     merchantId: 'MID-ACME-001',
-    labels: { account: 'Creator', accounts: 'Creators', agent: 'Chatter', agents: 'Chatters' },
+    labels: { account: 'Creator', accounts: 'Creators', agent: 'Agent', agents: 'Agents' },
     linkLimits: { min: 5, max: 2000 },
     fees: {
       feeModel: 'cascade',

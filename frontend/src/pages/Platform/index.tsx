@@ -87,7 +87,6 @@ export default function PlatformPage() {
     <div className="page">
       <PageHeader
         title="Platform"
-        subtitle="Every agency on the platform. This view crosses workspaces."
         actions={
           <>
             <Link className="btn ghost" to="/payments">Back to the console</Link>
@@ -132,7 +131,7 @@ export default function PlatformPage() {
       )}
 
       <Modal open={suspending !== null} onClose={() => setSuspending(null)} title={suspending ? `Suspend ${suspending.name}?` : ''}
-        subtitle="Nobody in the agency can sign in until it is reactivated. Their data and ledger stay untouched.">
+        subtitle="Nobody in the agency can sign in until it is reactivated. Their data and their money records stay untouched.">
         {suspending && (
           <div className="modal-actions">
             <button className="btn ghost" onClick={() => setSuspending(null)}>Keep active</button>
@@ -159,12 +158,16 @@ function OnboardAgencyModal({ onClose, onSubmit }: {
   const [chargebackFee, setChargebackFee] = useState('15');
   const [refundFee, setRefundFee] = useState('1');
   const [declineFee, setDeclineFee] = useState('0.25');
+  const [checkoutFee, setCheckoutFee] = useState('2.00');
   const [accountSplit, setAccountSplit] = useState('70');
   const [agentPct, setAgentPct] = useState('0');
   const [isSaving, setIsSaving] = useState(false);
 
   const pct = { psp: parsePct(pspRate), margin: parsePct(margin), account: parsePct(accountSplit), agent: parsePct(agentPct) };
-  const fees = { fixed: parseAmount(fixedFee), chargeback: parseAmount(chargebackFee), refund: parseAmount(refundFee), decline: parseAmount(declineFee) };
+  const fees = {
+    fixed: parseAmount(fixedFee), chargeback: parseAmount(chargebackFee),
+    refund: parseAmount(refundFee), decline: parseAmount(declineFee), checkout: parseAmount(checkoutFee),
+  };
   const blended = Number.isNaN(pct.psp) || Number.isNaN(pct.margin) ? null : pct.psp + pct.margin;
 
   const submit = async () => {
@@ -177,7 +180,7 @@ function OnboardAgencyModal({ onClose, onSubmit }: {
     try {
       await onSubmit({
         name: name.trim(), currency, merchantId: merchantId.trim() || undefined, adminEmail: adminEmail.trim(),
-        pspRatePct: pct.psp, marginRatePct: pct.margin, pspFixedFee: fees.fixed,
+        pspRatePct: pct.psp, marginRatePct: pct.margin, pspFixedFee: fees.fixed, checkoutFee: fees.checkout,
         chargebackFee: fees.chargeback, refundFee: fees.refund, declineFee: fees.decline,
         accountSplitPct: pct.account, agentPct: pct.agent,
       });
@@ -232,6 +235,7 @@ function OnboardAgencyModal({ onClose, onSubmit }: {
           {pctField('agency-psp', 'PSP rate', pspRate, setPspRate)}
           {pctField('agency-margin', 'HigherPays margin', margin, setMargin)}
           {amountField('agency-fixed', 'Fixed fee per transaction', fixedFee, setFixedFee)}
+          {amountField('agency-checkout', 'Checkout fee (paid by the customer)', checkoutFee, setCheckoutFee)}
         </div>
         <p className="sub">Blended rate the agency sees: {blended === null ? '—' : `${blended}%`}.</p>
 
@@ -266,16 +270,18 @@ function RatesModal({ workspace, onClose, onSubmit }: {
   const [pspRate, setPspRate] = useState('');
   const [margin, setMargin] = useState('');
   const [fixedFee, setFixedFee] = useState('');
+  const [checkoutFee, setCheckoutFee] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const psp = parsePct(pspRate);
   const mrg = parsePct(margin);
   const fixed = parseAmount(fixedFee);
-  const valid = !Number.isNaN(psp) && !Number.isNaN(mrg) && !Number.isNaN(fixed);
+  const checkout = parseAmount(checkoutFee);
+  const valid = !Number.isNaN(psp) && !Number.isNaN(mrg) && !Number.isNaN(fixed) && !Number.isNaN(checkout);
 
   const submit = async () => {
-    if (!valid) { toast('Enter the PSP rate, margin and fixed fee.'); return; }
+    if (!valid) { toast('Enter the PSP rate, margin, fixed fee and checkout fee.'); return; }
     setIsSaving(true);
-    try { await onSubmit({ pspRatePct: psp, marginRatePct: mrg, pspFixedFee: fixed }); }
+    try { await onSubmit({ pspRatePct: psp, marginRatePct: mrg, pspFixedFee: fixed, checkoutFee: checkout }); }
     catch (err) { toast(err instanceof Error ? err.message : 'Could not save the rates.'); }
     finally { setIsSaving(false); }
   };
@@ -300,11 +306,20 @@ function RatesModal({ workspace, onClose, onSubmit }: {
             </div>
           </div>
         </div>
-        <div className="field">
-          <label htmlFor="rates-fixed">Fixed fee per transaction</label>
-          <input id="rates-fixed" type="number" min={0} step={0.01} value={fixedFee} onChange={(e) => setFixedFee(e.target.value)} />
+        <div className="form-row">
+          <div className="field">
+            <label htmlFor="rates-fixed">Fixed fee per transaction</label>
+            <input id="rates-fixed" type="number" min={0} step={0.01} value={fixedFee} onChange={(e) => setFixedFee(e.target.value)} />
+          </div>
+          <div className="field">
+            <label htmlFor="rates-checkout">Checkout fee</label>
+            <input id="rates-checkout" type="number" min={0} step={0.01} value={checkoutFee} onChange={(e) => setCheckoutFee(e.target.value)} />
+          </div>
         </div>
-        <p className="sub">New blended rate: {valid ? `${psp + mrg}%` : '—'}.</p>
+        <p className="sub">
+          New blended rate: {valid ? `${psp + mrg}%` : '—'}. The checkout fee is added to what the customer pays
+          and does not appear in the agency's own figures.
+        </p>
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
           <button type="submit" className="btn" disabled={isSaving || !valid}>{isSaving ? 'Saving…' : 'Save rates'}</button>

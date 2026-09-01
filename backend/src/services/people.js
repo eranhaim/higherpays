@@ -12,15 +12,19 @@ const MIN_PASSWORD_LENGTH = 8;
  * An existing user must not already hold a different role here: one person is
  * one thing per workspace.
  *
- * @returns {{ userId: string } | { err: string }}
+ * Without a password the login is created with none, which cannot sign in
+ * until an invite is accepted — `isNewLogin` tells the caller to send one.
+ *
+ * @returns {{ userId: string, isNewLogin: boolean } | { err: string }}
  */
 async function grantWorkspaceRole(client, workspaceId, { email, fullName, password }, role) {
   let user = (await client.query('SELECT id FROM users WHERE email = $1', [email])).rows[0];
+  const isNewLogin = !user;
   if (!user) {
-    if (!password || String(password).length < MIN_PASSWORD_LENGTH) return { err: 'weak_password' };
+    if (password !== undefined && String(password).length < MIN_PASSWORD_LENGTH) return { err: 'weak_password' };
     user = (await client.query(
       'INSERT INTO users (email, full_name, password_hash) VALUES ($1,$2,$3) RETURNING id',
-      [email, fullName, await hashPassword(password)])).rows[0];
+      [email, fullName, password === undefined ? null : await hashPassword(password)])).rows[0];
   }
 
   const existing = (await client.query(
@@ -30,7 +34,7 @@ async function grantWorkspaceRole(client, workspaceId, { email, fullName, passwo
     await client.query(
       'INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,$3)', [workspaceId, user.id, role]);
   }
-  return { userId: user.id };
+  return { userId: user.id, isNewLogin };
 }
 
 module.exports = { grantWorkspaceRole, MIN_PASSWORD_LENGTH };

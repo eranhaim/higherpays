@@ -29,21 +29,26 @@ export interface Account {
   // The share and the roster are only sent to callers who see the whole
   // workspace (the owner also gets their own share); an agent gets the
   // account without its terms.
+  payModel?: PayModel;
   revenueSplitPct?: number;
+  salaryAmount?: number;
   agentsAssigned?: number;
   agents?: AccountAgent[];
 }
 
 /** Creating an account creates its owner's login as well. */
+/** How a creator is paid: a share of every sale, or a salary per period. */
+export type PayModel = 'share' | 'salary';
+
 export interface CreateAccountInput {
   email: string;
   fullName: string;
-  /** Required for a new login; ignored when the email already has one. */
-  password?: string;
   name: string;
   handle?: string;
   country?: string;
   revenueSplitPct?: number;
+  payModel?: PayModel;
+  salaryAmount?: number;
 }
 
 export interface UpdateAccountInput {
@@ -52,6 +57,8 @@ export interface UpdateAccountInput {
   country?: string;
   status?: AccountStatus;
   revenueSplitPct?: number;
+  payModel?: PayModel;
+  salaryAmount?: number;
 }
 
 export const accountsApi = {
@@ -62,7 +69,8 @@ export const accountsApi = {
 
   get: (id: string) => api.get<Account>(workspacePath(`/accounts/${id}`)),
 
-  create: (input: CreateAccountInput) => api.post<Account>(workspacePath('/accounts'), input),
+  create: (input: CreateAccountInput) =>
+    api.post<Account & { invited: boolean }>(workspacePath('/accounts'), input),
 
   update: (id: string, input: UpdateAccountInput) => api.patch<Account>(workspacePath(`/accounts/${id}`), input),
 

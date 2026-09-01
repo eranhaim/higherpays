@@ -5,11 +5,13 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import {
-  PageHeader, Money, DateCell, DataTable, FilterBar, DetailRow, Pill, Select, type Column,
+  PageHeader, Money, DateCell, DataTable, FilterBar, DetailRow, Pill, Select, ViewPicker,
+  type Column, type SortState,
 } from '../../components/ui';
+import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import {
   CUSTOMER_SEGMENTS, CUSTOMER_SEGMENT_LABELS, PAYMENT_STATUS_LABELS,
-  type Customer, type CustomerSegment, type CreateCustomerInput, type UpdateCustomerInput,
+  type Customer, type CustomerSegment, type CustomerSort, type CreateCustomerInput, type UpdateCustomerInput,
 } from '../../api/endpoints';
 import { useCustomersData, useCustomerDetail } from './useCustomersData';
 
@@ -33,7 +35,16 @@ export default function CustomersPage() {
   const [segment, setSegment] = useState<'' | CustomerSegment>('');
   const [search, setSearch] = useState('');
   const q = useDebounced(search, 300);
-  const query = useMemo(() => ({ segment: segment || undefined, q: q.trim() || undefined }), [segment, q]);
+  const [sort, setSort] = useState<SortState>({ key: 'last', dir: 'desc' });
+  // A fresh column starts at its most useful end: latest, largest, first name.
+  const toggleSort = (key: string) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }));
+  const query = useMemo(() => ({
+    segment: segment || undefined,
+    q: q.trim() || undefined,
+    sort: sort.key as CustomerSort,
+    dir: sort.dir,
+  }), [segment, q, sort]);
 
   const {
     customers, isLoading, isError, hasMore, isLoadingMore, loadMore,
@@ -70,7 +81,7 @@ export default function CustomersPage() {
 
   const columns: Column<Customer>[] = [
     {
-      key: 'customer', header: 'Customer',
+      key: 'customer', header: 'Customer', sortKey: 'name',
       render: (c) => (
         <>
           <div className="cname" title={c.name}>{c.name}</div>
@@ -78,9 +89,24 @@ export default function CustomersPage() {
         </>
       ),
     },
-    { key: 'spend', header: 'Total spend', align: 'right', render: (c) => <Money amount={c.totalSpend} direction="in" /> },
-    { key: 'last', header: 'Last purchase', render: (c) => <DateCell ts={c.lastPurchaseAt} /> },
-    { key: 'segment', header: 'Segment', render: (c) => <SegmentTag segment={c.segment} /> },
+    { key: 'spend', header: 'Total spend', sortKey: 'spend', render: (c) => <Money amount={c.totalSpend} direction="in" /> },
+    { key: 'last', header: 'Last purchase', sortKey: 'last', render: (c) => <DateCell ts={c.lastPurchaseAt} /> },
+    {
+      key: 'segment', header: 'Segment', sortKey: 'segment', render: (c) => <SegmentTag segment={c.segment} />,
+      isFiltered: segment !== '',
+      filter: (
+        <Select label="Segment" hideLabel value={segment} onChange={(v) => setSegment(v as '' | CustomerSegment)}>
+          <option value="">All segments</option>
+          {CUSTOMER_SEGMENTS.map((s) => <option key={s} value={s}>{CUSTOMER_SEGMENT_LABELS[s]}</option>)}
+        </Select>
+      ),
+    },
+  ];
+
+  const columnsView = useViewLayout('customers.columns', columns.map((c) => ({ key: c.key, label: c.header })));
+  const shownColumns: Column<Customer>[] = [
+    ...orderBy(columns, columnsView.visibleKeys),
+    // The actions cell is a control, not data: it is never hidden or moved.
     ...(canManage ? [{
       key: 'actions', header: 'Actions', hideHeader: true, align: 'right' as const,
       render: (c: Customer) => (
@@ -95,7 +121,6 @@ export default function CustomersPage() {
     <div>
       <PageHeader
         title="Customers"
-        subtitle="Everyone who paid, and what they spent. A customer meets an account through a payment link, not by assignment."
         actions={
           <>
             {can('customers.export') && (
@@ -107,20 +132,19 @@ export default function CustomersPage() {
       />
 
       <FilterBar>
-        <Select label="Segment" hideLabel value={segment} onChange={(v) => setSegment(v as '' | CustomerSegment)}>
-          <option value="">All segments</option>
-          {CUSTOMER_SEGMENTS.map((s) => <option key={s} value={s}>{CUSTOMER_SEGMENT_LABELS[s]}</option>)}
-        </Select>
         <input type="search" className="search-input" aria-label="Search customers"
           placeholder="Search name, Telegram, email or phone" value={search} onChange={(e) => setSearch(e.target.value)} />
-        <button className="btn ghost" onClick={() => { setSegment(''); setSearch(''); }}>Clear</button>
+        <button className="btn ghost" onClick={() => { setSegment(''); setSearch(''); }}>Clear filters</button>
+        <ViewPicker label="Edit columns" view={columnsView} />
       </FilterBar>
 
       <DataTable
-        columns={columns}
+        columns={shownColumns}
         rows={customers}
         rowKey={(c) => c.id}
         onRowClick={(c) => setDetailId(c.id)}
+        sort={sort}
+        onSort={toggleSort}
         isLoading={isLoading}
         emptyTitle={isError ? "Couldn't load customers." : 'No customers match.'}
         emptyHint={isError ? 'Try again in a moment.' : 'Customers appear here once a payment is completed, or add one by hand.'}
@@ -165,7 +189,7 @@ export default function CustomersPage() {
                         <td>{p.account}</td>
                         <td>{p.agent ?? '—'}</td>
                         <td><Money amount={p.amount} currency={p.currency} direction={p.status === 'paid' ? 'in' : undefined} /></td>
-                        <td><Pill tone={p.status === 'paid' ? 'ok' : p.status === 'failed' || p.status === 'refunded' ? 'no' : 'muted'}>{PAYMENT_STATUS_LABELS[p.status]}</Pill></td>
+                        <td><Pill tone={p.status === 'paid' ? 'ok' : 'no'}>{PAYMENT_STATUS_LABELS[p.status]}</Pill></td>
                       </tr>
                     ))}
                   </tbody>
@@ -213,7 +237,7 @@ export default function CustomersPage() {
       )}
 
       <Modal open={erasing !== null} onClose={() => setErasing(null)} title={erasing ? `Erase ${erasing.name}?` : ''}
-        subtitle="Their name and contact details are wiped for good. Their payments stay in the ledger, anonymised. Use this for an erasure request.">
+        subtitle="Their name and contact details are wiped for good. Their payments are kept, without a name on them. Use this for an erasure request.">
         {erasing && (
           <div className="modal-actions">
             <button className="btn ghost" onClick={() => setErasing(null)}>Keep</button>

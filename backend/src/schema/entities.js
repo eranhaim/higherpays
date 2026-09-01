@@ -20,6 +20,8 @@ const WORKSPACE_ROLE = ['workspace_admin', 'analyst', 'agent', 'account_owner'];
 const ACCESS_STATUS = ['active', 'suspended'];
 
 const ACCOUNT_STATUS = [ 'active', 'paused', 'archived'];
+// How a creator is paid: a share of every sale, or a salary per payout period.
+const PAY_MODEL = ['share', 'salary'];
 const CUSTOMER_SEGMENT = ['new', 'regular', 'high_value', 'vip', 'inactive', 'at_risk'];
 const PRICING_MODE = ['fixed', 'open'];
 // single_use dies on the first payment, or 24h after creation if nobody pays.
@@ -32,7 +34,10 @@ const LINK_TYPE = ['single_use', 'reusable'];
 //   cancelled  closed by hand
 //   refunded   a paid link was later reversed
 const LINK_STATUS = ['active', 'pending', 'done', 'expired', 'cancelled', 'refunded'];
-const PAYMENT_STATUS = ['pending', 'paid', 'failed', 'cancelled', 'refunded'];
+//   paid      the provider approved the charge
+//   failed    the provider declined it
+//   refunded  a paid charge was reversed, by refund or chargeback
+const PAYMENT_STATUS = ['paid', 'failed', 'refunded'];
 const TRANSACTION_TYPE = ['payment', 'refund', 'chargeback', 'adjustment'];
 const TRANSACTION_STATUS = ['approved', 'declined', 'refunded', 'charged_back'];
 const REVENUE_ENTRY_TYPE = ['sale', 'refund', 'chargeback'];
@@ -102,6 +107,7 @@ const Workspace = entity('workspaces', {
 
     minLinkAmount:     money(),
     maxLinkAmount:     money(),
+    linkTtlMinutes:    int(),   // how long a single-use link lives; null = platform default
 
     // What this agency calls an account and an agent. Both forms are stored
     // because pluralising in code breaks on words like "staff" or "talent".
@@ -129,6 +135,7 @@ const PlatformFeeRate = entity('platform_fee_rates', {
     settlementPct:   percent(),                // settlement fee, applied after the fixed fee
     pspFixedFee:     money().notNull().default('0'),
     marginRatePct:   percent().notNull().default('0'),
+    checkoutFee:     money().notNull().default('0'),   // charged to the customer, HigherPays' own
     blendedRatePct:  numeric(6, 2).generatedAs('psp_rate_pct + margin_rate_pct'),
     effectiveFrom:   timestamp().notNull().default('now()'),
     createdByUserId: uuid().references('users', 'SET NULL'),
@@ -193,7 +200,9 @@ const Account = entity('accounts', {
     handle:            text(),
     country:           char(2),
     status:            enumOf(ACCOUNT_STATUS).notNull().default("'active'"),
-    revenueSplitPct:   percent().notNull().default('70'),
+    payModel:          enumOf(PAY_MODEL).notNull().default("'share'"),
+    revenueSplitPct:   percent().notNull().default('70'),   // ignored while payModel is 'salary'
+    salaryAmount:      money().notNull().default('0'),      // owed once per payout period
   },
   foreignKeys: [
     { columns: ['workspaceId', 'userId', 'role'], table: 'workspace_users',
@@ -298,6 +307,7 @@ const PaymentLink = entity('payment_links', {
     type:                  enumOf(LINK_TYPE).notNull(),
     pricingMode:           enumOf(PRICING_MODE).notNull().default("'fixed'"),
     amount:                money(),             // null when the payer chooses the amount
+    checkoutFee:           money().notNull().default('0'),  // added at checkout, copied from the rate card
     currency:              char(3).notNull(),
     status:                enumOf(LINK_STATUS).notNull().default("'active'"),
     referenceId:           text(),              // our reference, sent to the provider
@@ -332,7 +342,7 @@ const Payment = entity('payments', {
     agentId:           uuid().references('agents', 'SET NULL'),
     amount:            money().notNull(),
     currency:          char(3).notNull(),
-    status:            enumOf(PAYMENT_STATUS).notNull().default("'pending'"),
+    status:            enumOf(PAYMENT_STATUS).notNull(),   // always written with the provider's outcome
     paymentMethod:     text(),                  // when the provider reports it
     providerPaymentId: text(),
     occurredAt:        timestamp().notNull().default('now()'),
@@ -631,7 +641,7 @@ module.exports = {
 
   status: {
     USER_STATUS, WORKSPACE_STATUS, WORKSPACE_ROLE, ACCESS_STATUS,
-    ACCOUNT_STATUS, CUSTOMER_SEGMENT, PRICING_MODE,
+    ACCOUNT_STATUS, PAY_MODEL, CUSTOMER_SEGMENT, PRICING_MODE,
     LINK_TYPE, LINK_STATUS,
     PAYMENT_STATUS, TRANSACTION_TYPE, TRANSACTION_STATUS, REVENUE_ENTRY_TYPE,
     REVENUE_ENTRY_STATUS, PAYEE_TYPE, PAYOUT_STATUS, FEE_MODEL, CHANNEL_TYPE,

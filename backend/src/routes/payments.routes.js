@@ -47,9 +47,26 @@ function publicPayment(p, { seesFees }) {
   };
 }
 
+// What a caller may sort by. Not free text: the key picks the expression, the
+// cast the cursor comparison, and `keyOf` reads the value back off a row for
+// the next cursor. Mirrored in frontend/src/api/endpoints/payments.ts.
+const PAYMENT_SORTS = {
+  date: { expr: 'p.occurred_at', cast: 'timestamptz', keyOf: (r) => r.occurred_at },
+  amount: { expr: 'p.amount', cast: 'numeric', keyOf: (r) => r.amount },
+  status: { expr: 'p.status', cast: 'text', keyOf: (r) => r.status },
+};
+const DEFAULT_SORT = 'date';
+
+function sortFor(req) {
+  const key = typeof req.query.sort === 'string' && PAYMENT_SORTS[req.query.sort] ? req.query.sort : DEFAULT_SORT;
+  const dir = req.query.dir === 'asc' ? 'ASC' : 'DESC';
+  return { ...PAYMENT_SORTS[key], dir, after: dir === 'ASC' ? '>' : '<' };
+}
+
 // The list and the export answer the same question with the same filters;
 // only the page size differs. `cursor` null and `limit` null mean "all".
 async function listPayments(c, req, { cursor, limit }) {
+  const sort = sortFor(req);
   const scope = await resolveDataScope(c, req);
   const q = typeof req.query.q === 'string' && req.query.q.trim() ? `%${req.query.q.trim().toLowerCase()}%` : null;
   return (await c.query(
@@ -57,7 +74,7 @@ async function listPayments(c, req, { cursor, limit }) {
       WHERE p.workspace_id = $1
         AND ($2::uuid IS NULL OR p.agent_id = $2::uuid)
         AND ($3::uuid IS NULL OR p.account_id = $3::uuid)
-        AND ($4::timestamptz IS NULL OR (p.occurred_at, p.id) < ($4::timestamptz, $5::uuid))
+        AND ($4::text IS NULL OR (${sort.expr}, p.id) ${sort.after} ($4::${sort.cast}, $5::uuid))
         AND ($7::text IS NULL OR p.status = $7::text)
         AND ($8::uuid IS NULL OR p.account_id = $8::uuid)
         AND ($9::uuid IS NULL OR p.agent_id = $9::uuid)
@@ -67,36 +84,59 @@ async function listPayments(c, req, { cursor, limit }) {
              OR lower(coalesce(cu.name,'')) LIKE $12::text OR lower(a.name) LIKE $12::text
              OR lower(coalesce(u.full_name,'')) LIKE $12::text OR lower(coalesce(pl.reference_id,'')) LIKE $12::text)
         AND (NOT $13::boolean OR (p.status = 'paid' AND p.category_id IS NULL))
-      ORDER BY p.occurred_at DESC, p.id DESC LIMIT $6`,
-    [wid(req), ...scopeParams(scope), cursor ? cursor.ts : null, cursor ? cursor.id : null, limit,
+      ORDER BY ${sort.expr} ${sort.dir}, p.id ${sort.dir} LIMIT $6`,
+    [wid(req), ...scopeParams(scope), cursor ? cursor.value : null, cursor ? cursor.id : null, limit,
       req.query.status || null, req.query.accountId || null, req.query.agentId || null,
       req.query.from || null, req.query.to || null, q, req.query.needsDetails === 'true'])).rows;
 }
 
-// GET /?limit&cursor&status&accountId&agentId&from&to&q&needsDetails
+// GET /?limit&cursor&sort&dir&status&accountId&agentId&from&to&q&needsDetails
 router.get('/', requirePermission('payments.view'), asyncHandler(async (req, res) => {
   const limit = parseLimit(req.query.limit);
   const cursor = decodeCursor(req.query.cursor);
   const rows = await withTransaction((c) => listPayments(c, req, { cursor, limit: limit + 1 }));
   const seesFees = hasPermission(req.access, 'data.view_all');
-  const result = page(rows, limit, (r) => r.occurred_at, (r) => r.id);
+  const result = page(rows, limit, sortFor(req).keyOf, (r) => r.id);
   res.json({ items: result.items.map((r) => publicPayment(r, { seesFees })), nextCursor: result.nextCursor });
 }));
 
-// GET /export — the filtered list as CSV. Capped so a runaway range cannot
-// hold a connection open building a file nobody can open.
+// Every column the export can carry, in file order. Headers are what the agency
+// reads in the file, not our column names; 'Reference' is MantaPay's
+// transaction id. `feesOnly` columns reach only a caller who sees the whole
+// workspace. Mirrored in frontend/src/api/endpoints/payments.ts.
+const EXPORT_COLUMNS = [
+  { key: 'date', header: 'Date', value: (r) => new Date(r.occurred_at).toISOString() },
+  { key: 'reference', header: 'Reference', value: (r) => r.provider_transaction_id },
+  { key: 'status', header: 'Status', value: (r) => r.status },
+  { key: 'gross', header: 'Gross Revenue', value: (r) => `${r.amount} ${r.currency}` },
+  { key: 'fee', header: 'Platform Fee', feesOnly: true, value: (r) => r.platform_fee },
+  { key: 'net', header: 'Net Revenue', feesOnly: true,
+    value: (r) => (r.platform_fee == null ? null : (Number(r.amount) - Number(r.platform_fee)).toFixed(2)) },
+  { key: 'customer', header: 'Customer', value: (r) => r.customer },
+  { key: 'telegram', header: 'Telegram', value: (r) => r.customer_telegram },
+  { key: 'creator', header: 'Creator', value: (r) => r.account },
+  { key: 'agent', header: 'Agent', value: (r) => r.agent },
+  { key: 'category', header: 'Category', value: (r) => r.category },
+];
+
+// GET /export?columns&limit — the filtered list as CSV. Capped so a runaway
+// range cannot hold a connection open building a file nobody can open.
 const EXPORT_MAX_ROWS = 20000;
 router.get('/export', requirePermission('payments.export'), asyncHandler(async (req, res) => {
-  const rows = await withTransaction((c) => listPayments(c, req, { cursor: null, limit: EXPORT_MAX_ROWS }));
   const seesFees = hasPermission(req.access, 'data.view_all');
+  // No `columns` means every column the caller may see.
+  const requested = typeof req.query.columns === 'string' && req.query.columns.trim()
+    ? new Set(req.query.columns.split(',').map((k) => k.trim()))
+    : null;
+  const columns = EXPORT_COLUMNS.filter((c) => (!c.feesOnly || seesFees) && (!requested || requested.has(c.key)));
+  if (columns.length === 0) return badRequest(res, 'columns must name at least one column', ['columns']);
+
+  const asked = Number(req.query.limit);
+  const limit = Number.isFinite(asked) && asked > 0 ? Math.min(asked, EXPORT_MAX_ROWS) : EXPORT_MAX_ROWS;
+
+  const rows = await withTransaction((c) => listPayments(c, req, { cursor: null, limit }));
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'payment.export', metadata: { count: rows.length }, ip: req.ip || null });
-  const csv = toCSV(
-    ['occurred_at', 'reference', 'status', 'amount', 'currency', ...(seesFees ? ['platform_fee'] : []), 'customer', 'account', 'agent', 'category', 'link'],
-    rows.map((r) => [
-      new Date(r.occurred_at).toISOString(), r.provider_transaction_id, r.status, r.amount, r.currency,
-      ...(seesFees ? [r.platform_fee] : []), r.customer, r.account, r.agent, r.category, r.link_reference,
-    ]),
-  );
+  const csv = toCSV(columns.map((c) => c.header), rows.map((r) => columns.map((c) => c.value(r))));
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="payments_${new Date().toISOString().slice(0, 10)}.csv"`);
   res.send('\ufeff' + csv);

@@ -1,6 +1,5 @@
 import { useSearchParams } from 'react-router-dom';
 import { useCan } from '../../hooks/usePermission';
-import { PageHeader } from '../../components/ui';
 import { WorkspacePane } from './WorkspacePane';
 import { CategoriesPane } from './CategoriesPane';
 import { NotificationsPane } from './NotificationsPane';
@@ -33,7 +32,6 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <PageHeader title="Settings" subtitle={seesWorkspace ? 'How this workspace runs, and your own login.' : 'Your notifications and your login.'} />
 
       <div className="tabbar" role="tablist" aria-label="Settings sections">
         {tabs.map((t) => (

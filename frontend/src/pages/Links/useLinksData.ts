@@ -1,4 +1,4 @@
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
   linksApi, accountsApi, workspacesApi,
@@ -12,11 +12,6 @@ export interface CreateLinkFormInput {
   description?: string;
 }
 
-export interface ReconcileSummary {
-  checked: number;
-  updated: number;
-}
-
 export interface UseLinksDataResult {
   links: PaymentLink[];
   accounts: Account[];
@@ -28,7 +23,6 @@ export interface UseLinksDataResult {
   loadMore: () => void;
   createLink: (input: CreateLinkFormInput) => Promise<PaymentLink>;
   cancelLink: (id: string) => Promise<void>;
-  reconcile: () => Promise<ReconcileSummary>;
 }
 
 export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
@@ -43,6 +37,9 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     queryFn: ({ pageParam }) => linksApi.list(pageParam, filters),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
+    // Keep the current rows on screen while a changed filter loads, so nudging
+    // the amount spinner doesn't blank the table and the stat cards.
+    placeholderData: keepPreviousData,
     enabled,
   });
   const accounts = useQuery({ queryKey: ['accounts', activeWorkspaceId], queryFn: () => accountsApi.list(), enabled });
@@ -60,16 +57,6 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     onSuccess: invalidateLinks,
   });
   const cancel = useMutation({ mutationFn: (id: string) => linksApi.cancel(id), onSuccess: invalidateLinks });
-  const reconcile = useMutation({
-    // Grace 0: a manual click should check every unresolved link, including
-    // one paid seconds ago. The backend's default grace suits unattended callers.
-    mutationFn: () => linksApi.reconcile(0),
-    onSuccess: () => {
-      invalidateLinks();
-      queryClient.invalidateQueries({ queryKey: ['payments', activeWorkspaceId] });
-    },
-  });
-
   return {
     links: links.data?.pages.flatMap((p) => p.items) ?? [],
     accounts: accounts.data ?? [],
@@ -81,9 +68,5 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     loadMore: () => { void links.fetchNextPage(); },
     createLink: (input) => create.mutateAsync(input),
     cancelLink: async (id) => { await cancel.mutateAsync(id); },
-    reconcile: async () => {
-      const result = await reconcile.mutateAsync();
-      return { checked: result.checked, updated: result.updated.length };
-    },
   };
 }

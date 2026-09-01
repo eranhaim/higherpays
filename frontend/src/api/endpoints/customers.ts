@@ -43,10 +43,15 @@ export interface CustomerDetail extends Customer {
   payments: CustomerPayment[];
 }
 
+/** Mirrors CUSTOMER_SORTS in backend/src/routes/customers.routes.js. */
+export type CustomerSort = 'name' | 'spend' | 'last' | 'segment';
+
 export interface ListCustomersQuery {
   segment?: CustomerSegment;
   /** Matches name, email, phone or Telegram name. */
   q?: string;
+  sort?: CustomerSort;
+  dir?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
 }
@@ -72,6 +77,8 @@ export const customersApi = {
     const qs = new URLSearchParams();
     if (query.segment) qs.set('segment', query.segment);
     if (query.q) qs.set('q', query.q);
+    if (query.sort) qs.set('sort', query.sort);
+    if (query.dir) qs.set('dir', query.dir);
     if (query.limit != null) qs.set('limit', String(query.limit));
     if (query.offset != null) qs.set('offset', String(query.offset));
     const suffix = qs.toString() ? `/customers?${qs.toString()}` : '/customers';

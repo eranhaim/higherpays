@@ -11,7 +11,6 @@ import AcceptInvitePage from './pages/AcceptInvite';
 import PaymentsPage from './pages/Payments';
 import LinksPage from './pages/Links';
 import PayoutsPage from './pages/Payouts';
-import SettlementsPage from './pages/Settlements';
 import AccountsPage from './pages/Accounts';
 import AgentsPage from './pages/Agents';
 import CustomersPage from './pages/Customers';
@@ -48,7 +47,6 @@ export default function App() {
                 <Route path="/payments" element={<PaymentsPage />} />
                 <Route path="/links" element={<LinksPage />} />
                 <Route path="/payouts" element={<PayoutsPage />} />
-                <Route path="/settlements" element={<SettlementsPage />} />
                 <Route path="/accounts" element={<AccountsPage />} />
                 <Route path="/agents" element={<AgentsPage />} />
                 <Route path="/customers" element={<CustomersPage />} />

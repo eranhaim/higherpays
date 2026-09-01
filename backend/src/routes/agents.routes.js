@@ -50,7 +50,7 @@ router.post('/', requirePermission('agents.manage'), asyncHandler(async (req, re
   const out = await withTransaction(async (c) => {
     const problem = await commissionTooHigh(c, wid(req), pct);
     if (problem) return { err: problem, fields: ['commissionPct'] };
-    const grant = await grantWorkspaceRole(c, wid(req), { email, fullName, password }, 'agent');
+    const grant = await grantWorkspaceRole(c, wid(req), { email, fullName, password: password ?? '' }, 'agent');
     if (grant.err === 'weak_password') return { err: 'password of at least 8 characters is required for a new login', fields: ['password'] };
     if (grant.err) return { err: `this person is already a ${grant.role} here`, fields: ['email'] };
     const existing = (await c.query('SELECT 1 FROM agents WHERE workspace_id=$1 AND user_id=$2', [wid(req), grant.userId])).rows[0];
@@ -69,6 +69,8 @@ router.post('/', requirePermission('agents.manage'), asyncHandler(async (req, re
 router.patch('/:id', requirePermission('agents.manage'), asyncHandler(async (req, res) => {
   const body = req.body || {};
   const sets = [], vals = [];
+  const fullName = typeof body.fullName === 'string' ? body.fullName.trim() : null;
+  if ('fullName' in body && !fullName) return badRequest(res, 'fullName cannot be empty', ['fullName']);
   const pct = body.commissionPct == null ? null : Number(body.commissionPct);
   if (pct != null) {
     if (!(pct >= 0 && pct <= 100)) return badRequest(res, 'commissionPct must be 0..100', ['commissionPct']);
@@ -78,7 +80,7 @@ router.patch('/:id', requirePermission('agents.manage'), asyncHandler(async (req
     if (body.country != null && !/^[A-Za-z]{2}$/.test(body.country)) return badRequest(res, 'country must be 2 letters', ['country']);
     vals.push(body.country ? body.country.toUpperCase() : null); sets.push(`country = $${vals.length}`);
   }
-  if (!sets.length) return badRequest(res, 'no updatable fields provided');
+  if (!sets.length && !fullName) return badRequest(res, 'no updatable fields provided');
   vals.push(wid(req), req.params.id);
 
   const out = await withTransaction(async (c) => {
@@ -86,9 +88,15 @@ router.patch('/:id', requirePermission('agents.manage'), asyncHandler(async (req
       const problem = await commissionTooHigh(c, wid(req), pct);
       if (problem) return { err: problem };
     }
-    const updated = (await c.query(
-      `UPDATE agents SET ${sets.join(', ')} WHERE workspace_id = $${vals.length - 1} AND id = $${vals.length} RETURNING id`, vals)).rows[0];
+    const updated = sets.length
+      ? (await c.query(
+        `UPDATE agents SET ${sets.join(', ')} WHERE workspace_id = ${vals.length - 1} AND id = ${vals.length} RETURNING id, user_id`, vals)).rows[0]
+      : (await c.query(
+        'SELECT id, user_id FROM agents WHERE workspace_id = $1 AND id = $2', [wid(req), req.params.id])).rows[0];
     if (!updated) return { notFound: true };
+    // The name lives on the login, which is one person across every workspace
+    // they work in: renaming here renames them everywhere.
+    if (fullName) await c.query('UPDATE users SET full_name = $1 WHERE id = $2', [fullName, updated.user_id]);
     return { row: (await c.query(`${SELECT} WHERE ag.id = $1`, [updated.id])).rows[0] };
   });
   if (out.notFound) return res.status(404).json({ error: 'not_found' });
