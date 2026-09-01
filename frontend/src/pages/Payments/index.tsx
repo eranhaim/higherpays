@@ -8,7 +8,7 @@ import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DateCell,
-  DataTable, FilterBar, DateRangePicker, DetailRow, Select, ViewPicker,
+  DataTable, FilterBar, Calendar, DateRangePicker, DetailRow, Select, ViewPicker,
   type Column, type DateRange, type SortState,
 } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
@@ -196,7 +196,7 @@ export default function PaymentsPage() {
     {
       key: 'date', header: 'Date', sortKey: 'date', render: (p) => <DateCell ts={p.occurredAt} />,
       isFiltered: filters.from !== '' || filters.to !== '',
-      filter: <DateRangePicker value={range} onChange={setRange} />,
+      filter: <Calendar value={range} onChange={setRange} />,
     },
   ];
 

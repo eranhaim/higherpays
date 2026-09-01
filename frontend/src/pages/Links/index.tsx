@@ -10,7 +10,7 @@ import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DateCell, CopyButton, DetailRow, Select,
-  DataTable, FilterBar, DateRangePicker, ViewPicker,
+  DataTable, FilterBar, Calendar, ViewPicker,
   type Column, type DateRange, type SortState,
 } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
@@ -189,7 +189,7 @@ export default function LinksPage() {
     {
       key: 'created', header: 'Created', sortKey: 'created', render: (l) => <DateCell ts={l.createdAt} />,
       isFiltered: filters.from !== '' || filters.to !== '',
-      filter: <DateRangePicker value={range} onChange={setRange} />,
+      filter: <Calendar value={range} onChange={setRange} />,
     },
   ];
 

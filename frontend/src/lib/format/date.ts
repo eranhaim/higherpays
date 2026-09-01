@@ -32,6 +32,12 @@ export function formatDate(ts: number, tz: string): string {
   return `${p.d} ${MONTHS_SHORT[p.mo - 1]} ${p.y}`;
 }
 
+/** `13 Aug 2026` for a yyyy-mm-dd day, which carries no timezone at all. */
+export function formatDay(day: string): string {
+  const [y, m, d] = day.split('-').map(Number);
+  return `${d} ${MONTHS_SHORT[m - 1]} ${y}`;
+}
+
 /** `17:34` in the given IANA tz. */
 export function formatTime(ts: number, tz: string): string {
   const p = tzParts(ts, tz);

@@ -8,6 +8,7 @@ export { LoadingCard, ErrorCard } from './StateCard';
 export { DataTable, type Column, type SortState } from './DataTable';
 export { FilterBar } from './FilterBar';
 export { DateRangePicker, type DateRange } from './DateRangePicker';
+export { Calendar } from './Calendar';
 export { DetailRow } from './DetailRow';
 export { CopyButton } from './CopyButton';
 export { Select } from './Select';

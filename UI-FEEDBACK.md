@@ -16,7 +16,7 @@ Answers from the 1 Sep review are folded in below. ✅ = shipped, ◐ = partly d
 | id | p | type | item |
 |----|---|------|------|
 | A1 | 4 | visual | App wordmark font — client wants a different typeface. Needs a direction from them. |
-| A2 | 4 | visual | Browser tab icon (favicon) — replace the purple bolt with the real mark. |
+| A2 ✅ | 4 | visual | You dropped the real mark into frontend/public/favicon.svg. |
 | A3 ✅ | 4, 8 | copy | Drop the explainer subtitle under page titles and modal titles ("Hosted checkout links…", "The customer pays on MantaPay's hosted page…"). Same treatment already applied to Payments. |
 | A4 ◐ | 13, 15 | copy | Terminology: "Chatter" → "Agent" everywhere, "Account" → "Creator". Seed now labels agents "Agent"; the live workspace still says "Chatter" until someone changes it in Settings → Workspace (or we run one UPDATE). Export headers now say Creator/Agent. |
 | A5 | 17 | bug | Layout ratio breaks at other window sizes — nav grid and table overflow. |
