@@ -331,16 +331,12 @@ export default function LinksPage() {
         </div>
 
         <div className={`pl-fees${fees && fees.effectivePct >= 18 ? ' hot' : fees && fees.effectivePct >= 15 ? ' warm' : ''}`}>
-          <div className="pl-fees-head">
-            <span className="sub">Fees on this link</span>
-            <span className="pl-fee-pct">{fees ? `${fees.effectivePct.toFixed(1)}%` : '—'}</span>
-          </div>
           <div className="fee-line">
             <span>Platform fee ({rateCard.blended.toFixed(1)}%)</span>
             <b className="fee-val">{fees ? formatMoney(fees.blendedFee) : '—'}</b>
           </div>
           <div className="fee-line">
-            <span>Fixed per transaction</span>
+            <span>Transaction fee</span>
             <b className="fee-val">{fees ? formatMoney(fees.fixed) : '—'}</b>
           </div>
           <div className="fee-tot">
@@ -348,7 +344,7 @@ export default function LinksPage() {
             <span className="fee-val">{fees ? formatMoney(fees.total) : '—'}</span>
           </div>
           <div className="fee-net">
-            <span>Net to workspace</span>
+            <span>Net profit</span>
             <span className="fee-val">{fees ? formatMoney(fees.net) : '—'}</span>
           </div>
         </div>

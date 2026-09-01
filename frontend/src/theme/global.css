@@ -44,7 +44,7 @@ body {
 .mono, .ref, .ws-meta, .mono-val, .fee-val {
   font-family: var(--mono);
 }
-.amt, .stat .val, .metric-row .mv, .detail-value, .fee-val, .pl-fee-pct, tbody td {
+.amt, .stat .val, .metric-row .mv, .detail-value, .fee-val, tbody td {
   font-variant-numeric: tabular-nums;
 }
 /* The uppercase micro-label. One declaration for every place the console
@@ -680,14 +680,15 @@ label.setrow { cursor: pointer; }
 }
 .pl-fees.hot { border-color: rgba(233, 90, 90, 0.45); }
 .pl-fees.warm { border-color: rgba(245, 196, 81, 0.45); }
-.pl-fees-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
-.pl-fee-pct { font-weight: 800; font-size: 19.8px; line-height: 1; }
 .fee-line { display: flex; justify-content: space-between; font-size: 12.9px; color: var(--muted); padding: 2.5px 0; }
 .fee-line b { color: var(--text); font-weight: 400; }
 /* Indent alone marks these as breakdown lines — see .time-sub on opacity. */
 .fee-line-sub { padding-left: 12px; }
 .fee-tot { display: flex; justify-content: space-between; font-size: var(--text-md); font-weight: 700; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--rule); }
-.fee-net { display: flex; justify-content: space-between; font-size: var(--text-md); font-weight: 700; color: var(--pos); padding-top: 3px; }
+.fee-net {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  font-size: 19.8px; font-weight: 800; color: var(--pos); padding-top: 6px;
+}
 
 /* ── Auth (login) screen ────────────────────────────────────────────────── */
 .auth-shell {
@@ -734,7 +735,9 @@ label.setrow { cursor: pointer; }
 
 /* ── Responsive ─────────────────────────────────────────────────────────── */
 @media (max-width: 900px) {
-  .app { grid-template-columns: 1fr; height: auto; min-height: 100vh; }
+  /* `auto 1fr`, not two auto rows: min-height stretches auto tracks, so a
+     short page made the top bar grow to half the screen. */
+  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; min-height: 100vh; }
   /* The sidebar becomes a sticky top bar with a horizontal-scroll nav strip. */
   .side {
     gap: 12px; border-right: none; border-bottom: 1px solid var(--rule);
