@@ -23,6 +23,7 @@ const feesRoutes = require('./routes/fees.routes');
 const meRoutes = require('./routes/me.routes');
 const webhooksRoutes = require('./routes/webhooks.routes');
 const { wsRouter: invitesWsRoutes, publicRouter: invitesPublicRoutes } = require('./routes/invites.routes');
+const { startReconcileLoop } = require('./services/links.service');
 const { requireAuth, requireWorkspace, requirePlatformAdmin, errorHandler } = require('./middleware');
 const { asyncHandler } = require('./lib/http');
 
@@ -123,6 +124,9 @@ if (require.main === module) {
     log.info({ integration: i.name, enabled: i.enabled, needs: i.enabled ? undefined : i.needs }, 'integration');
   }
   app.listen(config.port, () => log.info({ port: config.port }, 'HigherPays API listening'));
+  // A payment whose webhook never arrived is invisible until someone asks the
+  // provider. Nobody should have to press a button for that.
+  startReconcileLoop();
 }
 
 module.exports = app;

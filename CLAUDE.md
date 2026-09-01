@@ -369,7 +369,9 @@ A new workspace route without `requireAuth` + `requireWorkspace` is unprotected.
 
 QRMoney is dead — this project fully migrated off it. Do not reintroduce it or add a second payment-provider integration path.
 
-Live provider code: `backend/src/providers/mantapay-*.js`. Payment outcome handling (payment + transaction upsert, link status, `fn_post_sale`, notification fan-out) is centralised in `backend/src/services/payments.service.js` — called by both the webhook route and `/links/reconcile`. Keep it that way; don't duplicate outcome logic in a route handler.
+Live provider code: `backend/src/providers/mantapay-*.js`. Payment outcome handling (payment + transaction upsert, link status, `fn_post_sale`, notification fan-out) is centralised in `backend/src/services/payments.service.js` — called by both the webhook route and the reconciler. Keep it that way; don't duplicate outcome logic in a route handler.
+
+Reconciliation (`backend/src/services/links.service.js`) is the safety net for a webhook that never arrived. The API process runs it every 10 minutes for every workspace; `POST /links/reconcile` runs the same function on demand. There is no button for it.
 
 A payment link is `single_use` (dies on the first payment or after 24h) or `reusable` (many payments, until cancelled). After a payment the agent completes it (`PATCH /payments/:id/details`: customer + category); that is what moves a single-use link from `pending` to `done`.
 

@@ -5,6 +5,14 @@ import {
   type Payment, type ListPaymentsQuery, type CompletePaymentInput, type Category, type Customer, type Account, type Agent,
 } from '../../api/endpoints';
 
+/** What the export dialog collects. Range strings are yyyy-mm-dd, '' for open. */
+export interface ExportInput {
+  from: string;
+  to: string;
+  columns: string[];
+  limit?: number;
+}
+
 export interface UsePaymentsDataResult {
   payments: Payment[];
   categories: Category[];
@@ -19,7 +27,7 @@ export interface UsePaymentsDataResult {
   complete: (id: string, input: CompletePaymentInput) => Promise<Payment>;
   /** Records a reversal already issued in the provider dashboard. */
   recordReversal: (id: string, kind: 'refund' | 'chargeback') => Promise<void>;
-  exportCsv: () => Promise<void>;
+  exportCsv: (input: ExportInput) => Promise<void>;
 }
 
 export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): UsePaymentsDataResult {
@@ -88,6 +96,9 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     loadMore: () => { void payments.fetchNextPage(); },
     complete: (id, input) => complete.mutateAsync({ id, input }),
     recordReversal: async (id, kind) => { await reverse.mutateAsync({ id, kind }); },
-    exportCsv: () => paymentsApi.exportCsv(filters),
+    exportCsv: (input) => paymentsApi.exportCsv(
+      { ...filters, from: input.from || undefined, to: input.to || undefined },
+      { columns: input.columns, limit: input.limit },
+    ),
   };
 }

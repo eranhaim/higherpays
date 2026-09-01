@@ -32,7 +32,10 @@ const LINK_TYPE = ['single_use', 'reusable'];
 //   cancelled  closed by hand
 //   refunded   a paid link was later reversed
 const LINK_STATUS = ['active', 'pending', 'done', 'expired', 'cancelled', 'refunded'];
-const PAYMENT_STATUS = ['pending', 'paid', 'failed', 'cancelled', 'refunded'];
+//   paid      the provider approved the charge
+//   failed    the provider declined it
+//   refunded  a paid charge was reversed, by refund or chargeback
+const PAYMENT_STATUS = ['paid', 'failed', 'refunded'];
 const TRANSACTION_TYPE = ['payment', 'refund', 'chargeback', 'adjustment'];
 const TRANSACTION_STATUS = ['approved', 'declined', 'refunded', 'charged_back'];
 const REVENUE_ENTRY_TYPE = ['sale', 'refund', 'chargeback'];
@@ -332,7 +335,7 @@ const Payment = entity('payments', {
     agentId:           uuid().references('agents', 'SET NULL'),
     amount:            money().notNull(),
     currency:          char(3).notNull(),
-    status:            enumOf(PAYMENT_STATUS).notNull().default("'pending'"),
+    status:            enumOf(PAYMENT_STATUS).notNull(),   // always written with the provider's outcome
     paymentMethod:     text(),                  // when the provider reports it
     providerPaymentId: text(),
     occurredAt:        timestamp().notNull().default('now()'),

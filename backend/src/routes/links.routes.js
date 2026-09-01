@@ -11,7 +11,7 @@ const { resolveDataScope, scopeParams } = require('../auth/dataScope');
 const { status: vocab } = require('../schema/entities');
 const config = require('../config');
 const provider = require('../providers/mantapay');
-const paymentsService = require('../services/payments.service');
+const linksService = require('../services/links.service');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -47,12 +47,29 @@ async function generateProviderLink({ ws, currency, amount, referenceId, descrip
   return checkoutUrl;
 }
 
-// GET /?limit&cursor&status&type&min&max&from&to&q&accountId
-// Newest first. An agent sees the links they created; an owner the links
-// against their account; everyone else the workspace. Filtering happens here,
-// not in the browser: the list is cursor-paginated.
+// What a caller may sort by. Not free text: the key picks the expression and
+// the cast the cursor comparison. A link's amount is optional, so it sorts as
+// zero rather than as NULL, which keyset pagination would drop.
+// Mirrored in frontend/src/api/endpoints/links.ts.
+const LINK_SORTS = {
+  created: { expr: 'pl.created_at', cast: 'timestamptz', keyOf: (r) => r.created_at },
+  amount: { expr: 'coalesce(pl.amount, 0)', cast: 'numeric', keyOf: (r) => r.amount ?? 0 },
+  status: { expr: 'pl.effective_status', cast: 'text', keyOf: (r) => r.effective_status },
+};
+
+function sortFor(req) {
+  const key = typeof req.query.sort === 'string' && LINK_SORTS[req.query.sort] ? req.query.sort : 'created';
+  const dir = req.query.dir === 'asc' ? 'ASC' : 'DESC';
+  return { ...LINK_SORTS[key], dir, after: dir === 'ASC' ? '>' : '<' };
+}
+
+// GET /?limit&cursor&sort&dir&status&type&min&max&from&to&q&accountId
+// Newest first by default. An agent sees the links they created; an owner the
+// links against their account; everyone else the workspace. Filtering happens
+// here, not in the browser: the list is cursor-paginated.
 router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) => {
   const limit = parseLimit(req.query.limit);
+  const sort = sortFor(req);
   const cursor = decodeCursor(req.query.cursor);
   const num = (v) => (v === undefined || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
   const min = num(req.query.min), max = num(req.query.max);
@@ -73,7 +90,7 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
          LEFT JOIN users u ON u.id = ag.user_id
         WHERE ($2::uuid IS NULL OR pl.created_by_agent_id = $2::uuid)
           AND ($3::uuid IS NULL OR pl.account_id = $3::uuid)
-          AND ($4::timestamptz IS NULL OR (pl.created_at, pl.id) < ($4::timestamptz, $5::uuid))
+          AND ($4::text IS NULL OR (${sort.expr}, pl.id) ${sort.after} ($4::${sort.cast}, $5::uuid))
           AND ($7::text IS NULL OR pl.effective_status = $7::text)
           AND ($8::text IS NULL OR pl.type = $8::text)
           AND ($9::numeric IS NULL OR pl.amount >= $9::numeric)
@@ -83,14 +100,14 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
           AND ($13::uuid IS NULL OR pl.account_id = $13::uuid)
           AND ($14::text IS NULL OR lower(pl.reference_id) LIKE $14::text
                OR lower(u.full_name) LIKE $14::text)
-        ORDER BY pl.created_at DESC, pl.id DESC LIMIT $6`,
+        ORDER BY ${sort.expr} ${sort.dir}, pl.id ${sort.dir} LIMIT $6`,
       [wid(req), ...scopeParams(scope),
-        cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1,
+        cursor ? cursor.value : null, cursor ? cursor.id : null, limit + 1,
         req.query.status || null, req.query.type || null, min, max,
         req.query.from || null, req.query.to || null,
         req.query.accountId || null, q])).rows;
   });
-  const result = page(rows, limit, (r) => r.created_at, (r) => r.id);
+  const result = page(rows, limit, sort.keyOf, (r) => r.id);
   res.json({ items: result.items.map(publicLink), nextCursor: result.nextCursor });
 }));
 
@@ -208,60 +225,13 @@ router.post('/:id/cancel', requirePermission('links.create'), asyncHandler(async
   res.json(publicLink(out));
 }));
 
-// POST /reconcile — safety net for single-use links whose final webhook never
-// arrived. Polls the provider for every active one older than `graceMinutes`
-// and applies the outcome through the same service the webhook uses, so it
-// never double-posts. Reusable links are not polled: they carry many payments
-// and only the webhook can tell them apart.
+// POST /reconcile — the same reconciliation the server runs on a timer, on
+// demand. Kept for support: nobody has to wait for the next pass.
 router.post('/reconcile', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
   const requested = Number(req.body && req.body.graceMinutes);
-  const graceMin = Number.isFinite(requested) && requested >= 0 ? requested : 10;
-  const summary = { checked: 0, updated: [], skipped: [] };
-
+  const graceMin = Number.isFinite(requested) && requested >= 0 ? requested : linksService.DEFAULT_GRACE_MINUTES;
   const ws = (await query('SELECT * FROM workspaces WHERE id=$1', [wid(req)])).rows[0];
-
-  await withTransaction(async (c) => {
-    const stuck = (await c.query(
-      `SELECT id, reference_id, amount, currency, expires_at < now() AS is_expired
-         FROM payment_links
-        WHERE workspace_id = $1 AND type = 'single_use' AND status = 'active'
-          AND created_at < now() - ($2 || ' minutes')::interval`,
-      [wid(req), String(graceMin)])).rows;
-
-    for (const link of stuck) {
-      summary.checked++;
-      let statusResp;
-      try { statusResp = await provider.getPaymentStatus(ws, link.reference_id); }
-      catch (e) { summary.skipped.push({ linkId: link.id, reason: 'status_error', detail: e.detail || e.message }); continue; }
-
-      if (statusResp.transaction_id) {
-        await c.query('UPDATE payment_links SET provider_request_id=$2 WHERE id=$1', [link.id, statusResp.transaction_id]);
-      }
-      const st = statusResp.status;   // approved | declined | pending | abandoned | unknown
-
-      if (st === 'approved') {
-        const outcome = await paymentsService.recordPaymentOutcome(c, wid(req), {
-          providerTransactionId: statusResp.transaction_id || ('ref-' + link.reference_id),
-          status: 'approved',
-          gross: statusResp.gross_amount != null ? Number(statusResp.gross_amount) : Number(link.amount || 0),
-          fee: null,
-          currency: (statusResp.unit || link.currency || 'EUR').toString().toUpperCase(),
-          linkReference: link.reference_id,
-          rawPayload: statusResp,
-        });
-        summary.updated.push({ linkId: link.id, to: 'pending', paymentId: outcome.paymentId, newSale: outcome.newSale });
-        continue;
-      }
-      // Anything short of approval leaves the link open until its deadline.
-      if (link.is_expired) {
-        await c.query("UPDATE payment_links SET status='expired' WHERE id=$1 AND status='active'", [link.id]);
-        summary.updated.push({ linkId: link.id, to: 'expired', via: st });
-        continue;
-      }
-      summary.skipped.push({ linkId: link.id, reason: 'status_' + st });
-    }
-  });
-
+  const summary = await withTransaction((c) => linksService.reconcileWorkspace(c, ws, graceMin));
   res.json(summary);
 }));
 

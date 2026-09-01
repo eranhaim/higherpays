@@ -65,6 +65,9 @@ export interface CreateLinkInput {
 }
 
 /** Server-side filters for the link list. Empty fields are simply not sent. */
+/** Mirrors LINK_SORTS in backend/src/routes/links.routes.js. */
+export type LinkSort = 'created' | 'amount' | 'status';
+
 export interface ListLinksQuery {
   status?: string;
   type?: string;
@@ -76,6 +79,8 @@ export interface ListLinksQuery {
   /** Matches reference, customer name or agent name. */
   q?: string;
   accountId?: string;
+  sort?: LinkSort;
+  dir?: 'asc' | 'desc';
 }
 
 export const linksApi = {
@@ -96,9 +101,4 @@ export const linksApi = {
   create: (input: CreateLinkInput) => api.post<PaymentLink>(workspacePath('/links'), input),
 
   cancel: (id: string) => api.post<PaymentLink>(workspacePath(`/links/${id}/cancel`), {}),
-
-  reconcile(graceMinutes?: number) {
-    return api.post<{ checked: number; updated: unknown[]; skipped: unknown[] }>(
-      workspacePath('/links/reconcile'), graceMinutes != null ? { graceMinutes } : {});
-  },
 };

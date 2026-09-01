@@ -4,14 +4,12 @@ import type { Page } from '../types';
 import type { LinkType } from './links';
 
 /** Mirrors PAYMENT_STATUS in the schema. */
-export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'cancelled' | 'refunded';
-export const PAYMENT_STATUSES: PaymentStatus[] = ['pending', 'paid', 'failed', 'cancelled', 'refunded'];
+export type PaymentStatus = 'paid' | 'failed' | 'refunded';
+export const PAYMENT_STATUSES: PaymentStatus[] = ['paid', 'failed', 'refunded'];
 
 export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
-  pending: 'Pending',
   paid: 'Paid',
   failed: 'Failed',
-  cancelled: 'Cancelled',
   refunded: 'Refunded',
 };
 
@@ -48,6 +46,9 @@ export interface Payment {
   platformFee?: number | null;
 }
 
+/** Mirrors PAYMENT_SORTS in backend/src/routes/payments.routes.js. */
+export type PaymentSort = 'date' | 'amount' | 'status';
+
 export interface ListPaymentsQuery {
   status?: string;
   accountId?: string;
@@ -58,9 +59,39 @@ export interface ListPaymentsQuery {
   /** Matches provider reference, customer, account, agent or link reference. */
   q?: string;
   needsDetails?: boolean;
+  sort?: PaymentSort;
+  dir?: 'asc' | 'desc';
 }
 
 /** The agent's completion: pick an existing customer or type a new one. */
+/** Mirrors EXPORT_COLUMNS in backend/src/routes/payments.routes.js. */
+export interface ExportColumn {
+  key: string;
+  label: string;
+  /** Only offered to someone who sees the whole workspace. */
+  feesOnly?: boolean;
+}
+
+export const PAYMENT_EXPORT_COLUMNS: ExportColumn[] = [
+  { key: 'date', label: 'Date' },
+  { key: 'reference', label: 'Reference' },
+  { key: 'status', label: 'Status' },
+  { key: 'gross', label: 'Gross Revenue' },
+  { key: 'fee', label: 'Platform Fee', feesOnly: true },
+  { key: 'net', label: 'Net Revenue', feesOnly: true },
+  { key: 'customer', label: 'Customer' },
+  { key: 'telegram', label: 'Telegram' },
+  { key: 'creator', label: 'Creator' },
+  { key: 'agent', label: 'Agent' },
+  { key: 'category', label: 'Category' },
+];
+
+export interface ExportOptions {
+  columns?: string[];
+  /** Caps the rows written; omitted means everything that matches. */
+  limit?: number;
+}
+
 export interface CompletePaymentInput {
   categoryId: string;
   customerId?: string;
@@ -99,9 +130,11 @@ export const paymentsApi = {
   },
 
   /** The same filtered list, as a CSV download. */
-  exportCsv(filters: ListPaymentsQuery = {}) {
-    const qs = filterParams(filters).toString();
-    return api.download(workspacePath(qs ? `/payments/export?${qs}` : '/payments/export'), 'payments.csv');
+  exportCsv(filters: ListPaymentsQuery = {}, options: ExportOptions = {}) {
+    const qs = filterParams(filters);
+    if (options.columns?.length) qs.set('columns', options.columns.join(','));
+    if (options.limit) qs.set('limit', String(options.limit));
+    return api.download(workspacePath(`/payments/export?${qs.toString()}`), 'payments.csv');
   },
 
   get: (id: string) => api.get<Payment>(workspacePath(`/payments/${id}`)),

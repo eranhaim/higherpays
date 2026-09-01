@@ -198,7 +198,7 @@ an approval wins → else pending → else the latest decline.
 
 Dates come back `DD/MM/YYYY HH:mm:ss`, not American.
 
-Used by `POST /workspaces/:wid/links/reconcile` when a webhook never arrived.
+Used by the reconciler when a webhook never arrived: `backend/src/services/links.service.js`, which the API runs every 10 minutes for every workspace and `POST /workspaces/:wid/links/reconcile` runs on demand.
 
 ---
 

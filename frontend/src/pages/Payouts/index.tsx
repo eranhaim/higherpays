@@ -88,7 +88,6 @@ function AgencyPayouts() {
     <>
       <PageHeader
         title="Payouts"
-        subtitle={`What you owe your ${labels.accounts.toLowerCase()} and ${labels.agents.toLowerCase()} in the selected period.`}
       />
       <FilterBar>
         <DateRangePicker value={range} onChange={setRange} />
@@ -136,8 +135,6 @@ function AgencyPayouts() {
         <StatCard label={`Owed to ${labels.accounts.toLowerCase()}`} value={<Money amount={accountsOwed} direction="out" emphasis />} sub="Their share this period" />
         <StatCard label={`Owed to ${labels.agents.toLowerCase()}`} value={<Money amount={agentsOwed} direction="out" emphasis />} sub="Commissions this period" />
         <StatCard label="Owed in total" value={<Money amount={owedTotal} direction="out" />} sub="Not yet paid out" />
-        <StatCard label="Held in reserve" value={<Money amount={data.reserve.held} />}
-          sub={data.reserve.pct ? `${data.reserve.pct}% · released after ${data.reserve.releaseDays} days` : 'No reserve configured'} />
       </StatGrid>
 
       {(owedTotal > 0 || cash.heldInReserve > 0) && (

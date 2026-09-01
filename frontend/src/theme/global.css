@@ -50,7 +50,7 @@ body {
 /* The uppercase micro-label. One declaration for every place the console
    names a section, a field or a column, so they cannot drift apart. */
 .nav-lbl, .ws-picker label, .field label, .field-label,
-.sechead, .stat .lbl, .rp-row label, thead th {
+.sechead, .stat .lbl, thead th, .cal-dow {
   font-size: var(--text-micro); text-transform: uppercase;
   letter-spacing: var(--tracking-label); font-weight: 600; color: var(--muted);
 }
@@ -216,7 +216,7 @@ input.amount-input { width: 110px; }
 .actions-right { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 /* Right-aligned buttons inside a table cell. `.actions-right` is a form-footer
    utility — its display:flex and top margin break table layout. */
-.cell-actions { text-align: right; white-space: nowrap; }
+.cell-actions { display: flex; gap: 6px; justify-content: flex-end; white-space: nowrap; }
 .tgl { font-size: var(--text-sm); }
 .tgl.active { background: var(--brand-fill); color: var(--text); border-color: rgba(21, 195, 175, 0.35); }
 .tabbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -290,21 +290,54 @@ input.amount-input { width: 110px; }
   border-radius: var(--radius-lg); padding: 12px; margin-bottom: 16px;
 }
 .filters select { width: auto; min-width: 150px; }
-.range-picker { position: relative; }
-.rangepop {
+.range-picker, .view-picker { position: relative; }
+.rangepop, .viewpop {
   position: absolute; top: 100%; left: 0; margin-top: 6px;
   background: var(--surface); border: 1px solid var(--rule);
   border-radius: 11px; padding: 12px; z-index: var(--z-popover);
   box-shadow: var(--shadow-pop); min-width: 236px;
 }
+.rangepop { min-width: 268px; }
 /* Anchored to the right edge when opening left-aligned would run off screen. */
-.rangepop.right { left: auto; right: 0; }
+.rangepop.right, .viewpop.right { left: auto; right: 0; }
+.viewpop-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.viewpop-row label { display: flex; align-items: center; gap: 8px; flex: 1; cursor: pointer; }
+.viewpop-actions {
+  display: flex; gap: 8px; justify-content: space-between;
+  padding-top: 10px; margin-top: 8px; border-top: 1px solid var(--rule);
+}
 .rp-presets {
   display: flex; flex-wrap: wrap; gap: 6px;
   padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--rule);
 }
-.rp-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
-.rp-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+.rp-actions {
+  display: flex; gap: 8px; justify-content: space-between; align-items: center;
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--rule);
+}
+
+/* The calendar. Built here rather than left to the browser's native date
+   input, which ignores the theme entirely. */
+.cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.cal-month { font-size: var(--text-sm); font-weight: 650; color: var(--text); }
+.cal-nav {
+  background: none; border: 0; cursor: pointer; color: var(--muted);
+  font-size: 17px; line-height: 1; padding: 2px 9px; border-radius: 7px;
+}
+.cal-nav:hover { color: var(--text); background: var(--brand-wash); }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.cal-dow { text-align: center; padding: 3px 0; }
+.cal-day {
+  aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+  background: none; border: 1px solid transparent; border-radius: 8px;
+  color: var(--text); font: inherit; font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums; cursor: pointer;
+}
+.cal-day:hover { background: var(--brand-fill); }
+/* The days between the two ends read as one band, so the ends keep the
+   rounded corners and the middle does not. */
+.cal-day.in { background: var(--brand-wash); border-radius: 0; }
+.cal-day.today { border-color: var(--brand-edge); }
+.cal-day.sel { background: var(--brand); color: var(--bg); font-weight: 700; }
 
 /* ── Tables ─────────────────────────────────────────────────────────────── */
 .tablewrap {
@@ -327,7 +360,7 @@ input.amount-input { width: 110px; }
 }
 table { width: 100%; border-collapse: collapse; font-size: var(--text-base); }
 thead th {
-  text-align: left; padding: 12px 16px;
+  text-align: left; padding: 12px 20px;
   border-bottom: 1px solid var(--rule); background: var(--surface);
   /* Held against the top of .tablewrap so column headers survive a long list.
      The border is on a pseudo-element because a sticky cell's own border
@@ -338,7 +371,25 @@ thead th::after {
   content: ""; position: absolute; left: 0; right: 0; bottom: -1px;
   border-bottom: 1px solid var(--rule);
 }
-tbody td, tbody th { padding: 13px 16px; border-bottom: 1px solid var(--rule-soft); color: var(--text); }
+/* Sorting and filtering live in the header, so a th holds controls, not just
+   a word. The buttons inherit the header's type rather than the browser's. */
+.th-inner { display: inline-flex; align-items: center; gap: 6px; }
+.th-sort {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font: inherit; color: inherit;
+  text-transform: inherit; letter-spacing: inherit;
+}
+.th-sort:hover, .th-filter:hover { color: var(--text); }
+.th-caret { opacity: 0.5; }
+.th-filter {
+  background: none; border: 0; padding: 0 2px; cursor: pointer;
+  color: var(--muted); font-size: 11px; line-height: 1;
+}
+.th-filter.on { color: var(--brand); }
+.th-filter-pop { min-width: 220px; max-width: 260px; }
+.th-filter-pop .field { margin-bottom: 0; }
+tbody td, tbody th { padding: 13px 20px; border-bottom: 1px solid var(--rule-soft); color: var(--text); }
 /* Row headers (e.g. the permission matrix) label their row without competing
    with the column headers above. */
 tbody th { text-align: left; font-weight: 600; }
@@ -378,6 +429,9 @@ tbody tr.clickable:focus-visible {
 }
 .amt { font-weight: 700; }
 .amt.strong { font-weight: 800; font-size: 15px; }
+/* The emphasised size above is for inline and table use. Inside a stat card
+   the number keeps the card's size. */
+.stat .val .amt.strong { font-size: inherit; }
 .fee { color: var(--muted); font-size: var(--text-sm); }
 .time { color: var(--muted); font-size: var(--text-sm); white-space: nowrap; }
 /* Subordinate to the date above it by size, not opacity: --muted is already

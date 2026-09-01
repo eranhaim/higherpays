@@ -87,7 +87,6 @@ export default function PlatformPage() {
     <div className="page">
       <PageHeader
         title="Platform"
-        subtitle="Every agency on the platform. This view crosses workspaces."
         actions={
           <>
             <Link className="btn ghost" to="/payments">Back to the console</Link>

@@ -8,6 +8,8 @@
 /** Mirrors WORKSPACE_ROLE in backend/src/schema/entities.js. */
 export type WorkspaceRole = 'workspace_admin' | 'analyst' | 'agent' | 'account_owner';
 
+export const WORKSPACE_ROLES: WorkspaceRole[] = ['workspace_admin', 'analyst', 'agent', 'account_owner'];
+
 export const WORKSPACE_ROLE_LABELS: Record<WorkspaceRole, string> = {
   workspace_admin: 'Admin',
   analyst: 'Analyst',

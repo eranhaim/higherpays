@@ -73,7 +73,6 @@ export default function SettlementsPage() {
     <div>
       <PageHeader
         title="Settlements"
-        subtitle="MantaPay's daily reports, checked against your own ledger. Fees and the reserve here are exact."
         actions={canImport ? (
           <>
             <input ref={fileRef} type="file" accept=".xlsx" className="sr-only" aria-label="Settlement report file"

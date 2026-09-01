@@ -1,12 +1,22 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
-import { PageHeader, Pill, DataTable, FilterBar, type Column } from '../../components/ui';
+import { PageHeader, Pill, DataTable, FilterBar, Select, ViewPicker, type Column, type SortState } from '../../components/ui';
+import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
+import { sortRows, type SortValues } from '../../lib/sortRows';
 import { ACCOUNT_STATUS_LABELS, type Account, type AccountStatus } from '../../api/endpoints';
 import { useAccountsData, useAccountDetail } from './useAccountsData';
+
+const SORT_VALUES: SortValues<Account> = {
+  name: (a) => a.name,
+  status: (a) => a.status,
+  share: (a) => a.revenueSplitPct ?? null,
+  agents: (a) => a.agentsAssigned ?? 0,
+  country: (a) => a.country,
+};
 
 const DEFAULT_SPLIT_PCT = 70;
 
@@ -38,7 +48,12 @@ export default function AccountsPage() {
   const [confirming, setConfirming] = useState<{ account: Account; status: 'paused' | 'archived' } | null>(null);
   const [isChangingStatus, setIsChangingStatus] = useState(false);
   const [search, setSearch] = useState('');
-  const [showArchived, setShowArchived] = useState(false);
+  // '' hides archived, which is what someone running the roster wants by
+  // default; picking "Archived" is how you go looking for one.
+  const [statusFilter, setStatusFilter] = useState<'' | 'all' | AccountStatus>('');
+  const [sort, setSort] = useState<SortState>({ key: 'name', dir: 'asc' });
+  const toggleSort = (key: string) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
 
   useUnsavedChanges('account-edit', editing !== null || createOpen);
 
@@ -56,14 +71,21 @@ export default function AccountsPage() {
   };
 
   const query = search.trim().toLowerCase();
-  const visible = accounts
-    .filter((a) => showArchived || a.status !== 'archived')
+  const matching = accounts
+    .filter((a) => {
+      if (statusFilter === 'all') return true;
+      if (statusFilter !== '') return a.status === statusFilter;
+      // The plain roster hides archived rows, but a search is a hunt for
+      // someone in particular — finding nothing there reads as data loss.
+      return query !== '' || a.status !== 'archived';
+    })
     .filter((a) => !query || `${a.name} ${a.handle ?? ''} ${a.ownerName} ${a.ownerEmail}`.toLowerCase().includes(query));
-  const archivedCount = accounts.filter((a) => a.status === 'archived').length;
+  // The server returns every account at once, so the order is decided here.
+  const visible = useMemo(() => sortRows(matching, sort, SORT_VALUES), [matching, sort]);
 
   const columns: Column<Account>[] = [
     {
-      key: 'account', header: labels.account,
+      key: 'account', header: labels.account, sortKey: 'name',
       render: (a) => (
         <>
           <div className="cname">{a.name}</div>
@@ -71,17 +93,35 @@ export default function AccountsPage() {
         </>
       ),
     },
-    { key: 'owner', header: 'Owner', render: (a) => <><div>{a.ownerName}</div><div className="cemail">{a.ownerEmail}</div></> },
-    { key: 'status', header: 'Status', render: (a) => <Pill tone={STATUS_TONE[a.status]}>{ACCOUNT_STATUS_LABELS[a.status]}</Pill> },
+    {
+      key: 'status', header: 'Status', sortKey: 'status',
+      render: (a) => <Pill tone={STATUS_TONE[a.status]}>{ACCOUNT_STATUS_LABELS[a.status]}</Pill>,
+      isFiltered: statusFilter !== '',
+      filter: (
+        <Select label="Status" hideLabel value={statusFilter} onChange={(v) => setStatusFilter(v as '' | 'all' | AccountStatus)}>
+          <option value="">Active and paused</option>
+          <option value="active">Active</option>
+          <option value="paused">Paused</option>
+          <option value="archived">Archived</option>
+          <option value="all">All statuses</option>
+        </Select>
+      ),
+    },
     ...(canViewSplits ? [{
-      key: 'share', header: `Share (${labels.account.toLowerCase()} / agency)`, align: 'right' as const,
+      key: 'share', header: `Share (${labels.account.toLowerCase()} / agency)`, sortKey: 'share',
       render: (a: Account) => a.revenueSplitPct === undefined ? '—' : <span className="mono">{a.revenueSplitPct}% / {100 - a.revenueSplitPct}%</span>,
     }] : []),
     ...(canManage ? [{
-      key: 'agents', header: labels.agents, align: 'right' as const,
+      key: 'agents', header: labels.agents, sortKey: 'agents',
       render: (a: Account) => <span className="mono">{a.agentsAssigned ?? 0}</span>,
     }] : []),
-    { key: 'country', header: 'Country', render: (a) => a.country ?? '—' },
+    { key: 'country', header: 'Country', sortKey: 'country', render: (a) => a.country ?? '—' },
+  ];
+
+  const columnsView = useViewLayout('accounts.columns', columns.map((c) => ({ key: c.key, label: c.header })));
+  const shownColumns: Column<Account>[] = [
+    ...orderBy(columns, columnsView.visibleKeys),
+    // The actions cell is a control, not data: it is never hidden or moved.
     ...(canManage ? [{
       key: 'actions', header: 'Actions', hideHeader: true, align: 'right' as const,
       render: (a: Account) => (
@@ -100,7 +140,6 @@ export default function AccountsPage() {
     <div>
       <PageHeader
         title={labels.accounts}
-        subtitle={`${labels.accounts} operating under this workspace. Each one has an owner who can sign in.`}
         actions={canManage ? <button className="btn" onClick={() => setCreateOpen(true)}>Add {labels.account.toLowerCase()}</button> : null}
       />
 
@@ -108,21 +147,18 @@ export default function AccountsPage() {
         <FilterBar>
           <input type="search" className="search-input" aria-label={`Search ${labels.accounts}`}
             placeholder="Search name, handle or owner" value={search} onChange={(e) => setSearch(e.target.value)} />
-          {archivedCount > 0 && (
-            <label className="check">
-              <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
-              Show archived ({archivedCount})
-            </label>
-          )}
           <span className="sub">{visible.length} of {accounts.length}</span>
+          <ViewPicker label="Edit columns" view={columnsView} />
         </FilterBar>
       )}
 
       <DataTable
-        columns={columns}
+        columns={shownColumns}
         rows={visible}
         rowKey={(a) => a.id}
         isLoading={isLoading}
+        sort={sort}
+        onSort={toggleSort}
         emptyTitle={isError ? `Couldn't load ${labels.accounts.toLowerCase()}.` : query ? 'Nothing matches that search.' : `No ${labels.accounts.toLowerCase()} yet.`}
         emptyHint={isError ? 'Try again in a moment.' : query ? 'Clear the search to see them all.' : canManage ? 'Add the first one to start generating links.' : 'Ask an admin to add one.'}
       />
@@ -186,14 +222,13 @@ export default function AccountsPage() {
 interface CreateAccountModalProps {
   agents: { id: string; name: string }[];
   onClose: () => void;
-  onSubmit: (input: { email: string; fullName: string; password: string; name: string; handle?: string; revenueSplitPct: number }, agentIds: string[]) => Promise<void>;
+  onSubmit: (input: { email: string; fullName: string; password: string; name: string; revenueSplitPct: number }, agentIds: string[]) => Promise<void>;
 }
 
 /** An account and the login of the person who owns it, in one form. */
 function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalProps) {
   const { labels } = useCurrentSession();
   const [name, setName] = useState('');
-  const [handle, setHandle] = useState('');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -207,13 +242,11 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
     if (!fullName.trim() || !email.trim()) { toast("The owner's name and email are required."); return; }
     if (password.length < 8) { toast('Password must be at least 8 characters.'); return; }
     if (Number.isNaN(split)) { toast('Share must be 0–100.'); return; }
-    const cleanHandle = handle.trim();
     setIsSaving(true);
     try {
       await onSubmit({
         email: email.trim(), fullName: fullName.trim(), password,
         name: name.trim(),
-        handle: cleanHandle ? (cleanHandle.startsWith('@') ? cleanHandle : `@${cleanHandle}`) : undefined,
         revenueSplitPct: split,
       }, assigned);
     } catch (err) {
@@ -225,17 +258,11 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
 
   return (
     <Modal open onClose={onClose} title={`Add ${labels.account.toLowerCase()}`} subtitle="Creates the account and the login of the person who owns it.">
-      <div className="form-row">
-        <div className="field">
-          <label htmlFor="account-name">{labels.account} name</label>
-          <input id="account-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div className="field">
-          <label htmlFor="account-handle">Handle</label>
-          <input id="account-handle" type="text" placeholder="@handle" value={handle} onChange={(e) => setHandle(e.target.value)} />
-        </div>
+      <div className="field">
+        <label htmlFor="account-name">{labels.account} name</label>
+        <input id="account-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
       </div>
-      <div className="sechead">Owner login</div>
+      <div className="sechead">Login details</div>
       <div className="form-row">
         <div className="field">
           <label htmlFor="owner-name">Full name</label>

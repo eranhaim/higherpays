@@ -163,7 +163,6 @@ export default function AnalyticsPage() {
     <>
       <PageHeader
         title="Analytics"
-        subtitle={canScope ? activeWorkspace?.name ?? '' : 'Your performance'}
         actions={<button className="btn ghost" onClick={exportCSV} disabled={!report}>Export CSV</button>}
       />
       <FilterBar>

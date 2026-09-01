@@ -12,11 +12,6 @@ export interface CreateLinkFormInput {
   description?: string;
 }
 
-export interface ReconcileSummary {
-  checked: number;
-  updated: number;
-}
-
 export interface UseLinksDataResult {
   links: PaymentLink[];
   accounts: Account[];
@@ -28,7 +23,6 @@ export interface UseLinksDataResult {
   loadMore: () => void;
   createLink: (input: CreateLinkFormInput) => Promise<PaymentLink>;
   cancelLink: (id: string) => Promise<void>;
-  reconcile: () => Promise<ReconcileSummary>;
 }
 
 export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
@@ -60,16 +54,6 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     onSuccess: invalidateLinks,
   });
   const cancel = useMutation({ mutationFn: (id: string) => linksApi.cancel(id), onSuccess: invalidateLinks });
-  const reconcile = useMutation({
-    // Grace 0: a manual click should check every unresolved link, including
-    // one paid seconds ago. The backend's default grace suits unattended callers.
-    mutationFn: () => linksApi.reconcile(0),
-    onSuccess: () => {
-      invalidateLinks();
-      queryClient.invalidateQueries({ queryKey: ['payments', activeWorkspaceId] });
-    },
-  });
-
   return {
     links: links.data?.pages.flatMap((p) => p.items) ?? [],
     accounts: accounts.data ?? [],
@@ -81,9 +65,5 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     loadMore: () => { void links.fetchNextPage(); },
     createLink: (input) => create.mutateAsync(input),
     cancelLink: async (id) => { await cancel.mutateAsync(id); },
-    reconcile: async () => {
-      const result = await reconcile.mutateAsync();
-      return { checked: result.checked, updated: result.updated.length };
-    },
   };
 }

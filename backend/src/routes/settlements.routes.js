@@ -102,7 +102,7 @@ router.get('/', requirePermission('revenue.view'), asyncHandler(async (req, res)
     `SELECT * FROM settlements
       WHERE workspace_id = $1 AND ($2::timestamptz IS NULL OR (period_end::timestamptz, id) < ($2::timestamptz, $3::uuid))
       ORDER BY period_end DESC, id DESC LIMIT $4`,
-    [wid(req), cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1])).rows;
+    [wid(req), cursor ? cursor.value : null, cursor ? cursor.id : null, limit + 1])).rows;
   const { items: settlements, nextCursor } = page(fetched, limit, (r) => r.period_end, (r) => r.id);
   if (!settlements.length) return res.json({ items: [], nextCursor });
 

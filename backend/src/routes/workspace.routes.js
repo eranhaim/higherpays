@@ -124,7 +124,7 @@ router.get('/audit', requirePermission('settings.view'), asyncHandler(async (req
       WHERE a.workspace_id = $1
         AND ($2::timestamptz IS NULL OR (a.created_at, a.id) < ($2::timestamptz, $3::bigint))
       ORDER BY a.created_at DESC, a.id DESC LIMIT $4`,
-    [wid(req), cursor ? cursor.ts : null, cursor ? cursor.id : null, limit + 1])).rows;
+    [wid(req), cursor ? cursor.value : null, cursor ? cursor.id : null, limit + 1])).rows;
   const result = page(rows, limit, (r) => r.created_at, (r) => r.id);
   res.json({
     items: result.items.map((r) => ({
