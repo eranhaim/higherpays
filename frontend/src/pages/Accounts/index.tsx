@@ -6,6 +6,7 @@ import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import { PageHeader, Pill, DataTable, FilterBar, Select, ViewPicker, type Column, type SortState } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
+import { COUNTRIES, countryName } from '../../lib/countries';
 import { sortRows, type SortValues } from '../../lib/sortRows';
 import {
   ACCOUNT_STATUS_LABELS,
@@ -169,7 +170,7 @@ export default function AccountsPage() {
       key: 'agents', header: labels.agents, sortKey: 'agents',
       render: (a: Account) => <span className="mono">{a.agentsAssigned ?? 0}</span>,
     }] : []),
-    { key: 'country', header: 'Country', sortKey: 'country', render: (a) => a.country ?? '—' },
+    { key: 'country', header: 'Country', sortKey: 'country', render: (a) => countryName(a.country) || '—' },
   ];
 
   const columnsView = useViewLayout('accounts.columns', columns.map((c) => ({ key: c.key, label: c.header })));
@@ -288,7 +289,6 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
     if (!fullName.trim() || !email.trim()) { toast("The owner's name and email are required."); return; }
     if (payModel === 'share' && Number.isNaN(split)) { toast('Share must be 0–100.'); return; }
     if (payModel === 'salary' && !(parseFloat(salaryText) >= 0)) { toast('Salary must be an amount of 0 or more.'); return; }
-    if (country && !/^[A-Za-z]{2}$/.test(country)) { toast('Country is a 2-letter code.'); return; }
     setIsSaving(true);
     try {
       await onSubmit({
@@ -313,11 +313,10 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
           <label htmlFor="account-name">{labels.account} name</label>
           <input id="account-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
-        <div className="field">
-          <label htmlFor="account-country">Country</label>
-          <input id="account-country" type="text" maxLength={2} placeholder="e.g. ES" value={country}
-            onChange={(e) => setCountry(e.target.value.toUpperCase())} />
-        </div>
+        <Select id="account-country" label="Country" value={country} onChange={setCountry}>
+          <option value="">Not set</option>
+          {COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+        </Select>
       </div>
       <div className="sechead">Login details</div>
       <p className="sub">They get an email and choose their own password. Nothing is sent if this address already has a login.</p>
@@ -418,7 +417,6 @@ function EditAccountForm({ account, agents, assigned: initialAssigned, canEditSp
     if (!name.trim()) { toast('Name is required.'); return; }
     if (splitInvalid) { toast('Share must be 0–100.'); return; }
     if (salaryInvalid) { toast('Salary must be an amount of 0 or more.'); return; }
-    if (country && !/^[A-Za-z]{2}$/.test(country)) { toast('Country is a 2-letter code.'); return; }
     setIsSaving(true);
     try {
       await onSubmit({
@@ -444,11 +442,10 @@ function EditAccountForm({ account, agents, assigned: initialAssigned, canEditSp
           <label htmlFor="edit-account-name">Name</label>
           <input id="edit-account-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
-        <div className="field">
-          <label htmlFor="edit-account-country">Country</label>
-          <input id="edit-account-country" type="text" maxLength={2} placeholder="e.g. ES" value={country}
-            onChange={(e) => setCountry(e.target.value.toUpperCase())} />
-        </div>
+        <Select id="edit-account-country" label="Country" value={country} onChange={setCountry}>
+          <option value="">Not set</option>
+          {COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+        </Select>
       </div>
       {/* Renaming is accounts.manage; changing what it is paid is a revenue
           decision, so without that permission the field is absent, not dead. */}

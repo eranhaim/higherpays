@@ -8,6 +8,7 @@ import { toast } from '../../lib/toast';
 import { PageHeader, DataTable, FilterBar, Pill, Select, ViewPicker, type Column, type SortState } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import { sortRows, type SortValues } from '../../lib/sortRows';
+import { COUNTRIES, countryName } from '../../lib/countries';
 import type { Agent } from '../../api/endpoints';
 import { useAgentsData } from './useAgentsData';
 
@@ -93,7 +94,7 @@ export default function AgentsPage() {
       key: 'commission', header: 'Commission', sortKey: 'commission',
       render: (a: Agent) => <span className="mono">{a.commissionPct}%</span>,
     }] : []),
-    { key: 'country', header: 'Country', sortKey: 'country', render: (a) => a.country ?? '—' },
+    { key: 'country', header: 'Country', sortKey: 'country', render: (a) => countryName(a.country) || '—' },
   ];
 
   const columnsView = useViewLayout('agents.columns', columns.map((c) => ({ key: c.key, label: c.header })));
@@ -216,7 +217,6 @@ function AgentFormModal({ title, subtitle, agent, canEditCommission, onClose, on
     if (creating && !email.trim()) { toast('Email is required.'); return; }
     if (creating && password.length < 8) { toast('Password must be at least 8 characters.'); return; }
     if (Number.isNaN(commission)) { toast('Commission must be 0–100.'); return; }
-    if (country && !/^[A-Za-z]{2}$/.test(country)) { toast('Country is a 2-letter code.'); return; }
     setIsSaving(true);
     try {
       await onSubmit({
@@ -253,10 +253,10 @@ function AgentFormModal({ title, subtitle, agent, canEditCommission, onClose, on
           </div>
         )}
         <div className="form-row">
-          <div className="field">
-            <label htmlFor="agent-country">Country</label>
-            <input id="agent-country" type="text" maxLength={2} placeholder="e.g. IL" value={country} onChange={(e) => setCountry(e.target.value.toUpperCase())} />
-          </div>
+          <Select id="agent-country" label="Country" value={country} onChange={setCountry}>
+            <option value="">Not set</option>
+            {COUNTRIES.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
+          </Select>
           {/* What someone earns is a revenue decision; without that permission
               the field is absent rather than shown greyed out. */}
           {canEditCommission && (
