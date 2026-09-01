@@ -47,15 +47,15 @@ Answers from the 1 Sep review are folded in below. ✅ = shipped, ◐ = partly d
 
 | id | p | type | item |
 |----|---|------|------|
-| D1 | 5 | feature | Status vocabulary: keep Active, Paid, Expired/Cancelled (combined), Refunded. Drops "Paid — details needed" and "Done" as separate states. |
+| D1 — | 5 | answered | Decided: leave the six statuses as they are. Nothing to build. |
 | D2 ✅ | 6 | bug | The amount boxes are debounced like the search box, so a nudge of the spinner no longer refetches per click. They now live in the Amount column header. |
 | D3 ✅ | 9 | visual | Revenue stat card sizing is off next to its neighbours. |
 | D4 ✅ | 9, 12 | copy | Remove the "Expires" column and the "Expires" row in link details — Type and Status already say it. |
 | D5 ✅ | 10 | feature | Button removed. Reconciliation now runs on a 10-minute timer in the API for every workspace (`services/links.service.js`); the endpoint stays for support. |
 | D6 ✅ | 12 | visual | "Cancel link" button should be red; "Active" badge should be green. |
-| D7 | 13 | feature | Workspace admin can reassign the Creator and the Agent on an existing link, via dropdown + confirmation. |
-| D8 | 7, 8 | feature | New link modal: min/max from workspace settings, not constants; remove the "Fees on this link" line; "Fixed per transaction" → "Transaction Fee" (from settings); "Net to workspace" → "Net Profit", rendered larger. |
-| D9 | 8 | feature | The €2 checkout fee is a workspace setting. Add it to workspace settings, show it to the customer on the hosted page, keep it out of the workspace's own views, and count it into platform gross. |
+| D7 | 13 | feature | Reassign the Creator and the Agent on an existing link, dropdown + double confirmation. Decided: **the history is rewritten** — past payments are re-attributed and their splits recomputed, so payout totals for closed periods can change after the fact. The dialog must say exactly what it will move, and it is audited. |
+| D8 | 7, 8 | copy | New link modal: remove the "Fees on this link" line, "Fixed per transaction" → "Transaction Fee", "Net to workspace" → "Net Profit" and larger. No decision needed — the limits and the transaction fee are already per-workspace settings (Settings → Workspace, and the rate card); the modal already reads them. |
+| D9 | 8 | feature | Decided: per workspace, on the rate card, editable only in the Platform console. The agency never sees it. The checkout link is created for amount + fee so the customer pays it, and it counts into platform gross. |
 | D10 ✅ | 14, 15 | bug | A click on the overlay no longer closes any dialog — Escape and Cancel still do. Half of them are forms, and losing a half-filled one to a stray click is worse than the extra click. |
 
 D1 - keep only the omne thaty actualy work aginst mantapay + "Paid — details needed"
@@ -72,17 +72,17 @@ D1 - keep only the omne thaty actualy work aginst mantapay + "Paid — details n
 | id | p | type | item |
 |----|---|------|------|
 | F1 ✅ | 15 | copy | Add creator: drop the "Handle" field. |
-| F2 | 15 | feature | Replace the password field with an email invite — the creator sets their own password and lands in the inviting workspace. |
-| F3 | 15 | feature | Creator share: choose percentage or fixed salary. Touches the revenue engine. |
+| F2 | 15 | feature | Decided: reuse the existing invite flow. Adding a creator emails them; they set their own password on the accept page. The password field goes. |
+| F3 | 15 | feature | Decided: salary is a fixed amount per payout period. A salaried creator takes no cut of a sale — the agency keeps that share — and the salary shows on Payouts as its own obligation. Migration + revenue engine + Payouts. |
 | F4 ✅ | 15 | copy | Rename the "Owner login" section. |
-| F5 | 15 | copy | Rename the "Creator share of distributable" wording alongside F3. |
+| F5 | 15 | copy | Wording for the pay model, alongside F3. |
 | F6 ✅ | 15 | bug | Fixed with D10 — it was one behaviour in the shared Modal. |
 | F7 ✅ | 15 | feature | Country is a field on both the add and the edit dialog. The API already took it; only the form was missing. |
 | F8 ✅ | 15 | feature | One Edit dialog now holds the details, the share and the agent roster. The second button and its modal are gone. |
 | F9 ✅ | 15 | copy | Remove the "Owner" column. |
 | F10 ✅ | 15 | visual | Gone with F11 — the checkbox is now the Status header filter. |
 | F11 ✅ | 15 | bug | A search now reaches archived creators; the plain roster still hides them. The "Show archived" checkbox became a Status filter in the header (Active and paused / Active / Paused / Archived / All). |
-| F12 | 15 | feature | No way to delete a creator. |
+| F12 — | 15 | answered | Decided: no delete. Archiving already hides a creator and blocks new links, and it keeps the ledger whole. |
 | F13 ✅ | 16 | visual | The right-aligned numeric columns (share, agent count) now align left like the rest, same as C7 on Payments. |
 | F14 ✅ | 16 | visual | Row action buttons need spacing. |
 | F15 | 13 | answered | What the code does today: pausing sets `accounts.status = 'paused'`, which blocks creating new links and nothing else. A payment on an existing link is recorded and split exactly as if the creator were active — the payment path never reads the account status, payouts don't filter on it, and the creator's own login still sees the money. That is what "nothing changes in the ledger" means. Open decision: leave it, or make a paused creator's income hold somewhere. |
@@ -92,7 +92,7 @@ D1 - keep only the omne thaty actualy work aginst mantapay + "Paid — details n
 | id | p | type | item |
 |----|---|------|------|
 | G1 ✅ | 18 | bug | The field was disabled on edit and the API had no field for it. Both fixed — note the name lives on the login, so it changes in every workspace that person works in. The email stays fixed: it is how they sign in. |
-| G2 | 10 | feature | Archive the "Settlements" tab for now. |
+| G2 | 10 | feature | Decided: delete the page, its route and its nav entry. Git keeps the code; the settlement import and reserve API stay on the backend. |
 
 ---
 
