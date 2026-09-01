@@ -134,7 +134,7 @@ export default function CustomersPage() {
       <FilterBar>
         <input type="search" className="search-input" aria-label="Search customers"
           placeholder="Search name, Telegram, email or phone" value={search} onChange={(e) => setSearch(e.target.value)} />
-        <button className="btn ghost" onClick={() => { setSegment(''); setSearch(''); }}>Clear</button>
+        <button className="btn ghost" onClick={() => { setSegment(''); setSearch(''); }}>Clear filters</button>
         <ViewPicker label="Edit columns" view={columnsView} />
       </FilterBar>
 

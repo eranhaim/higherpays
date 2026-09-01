@@ -125,7 +125,7 @@ export default function AgentsPage() {
         <FilterBar>
           <input type="search" className="search-input" aria-label={`Search ${labels.agents}`}
             placeholder="Search name or email" value={search} onChange={(e) => setSearch(e.target.value)} />
-          <button className="btn ghost" onClick={() => { setSearch(''); setAccess(''); }}>Clear</button>
+          <button className="btn ghost" onClick={() => { setSearch(''); setAccess(''); }}>Clear filters</button>
           <span className="sub">{visible.length} of {agents.length}</span>
           <ViewPicker label="Edit columns" view={columnsView} />
         </FilterBar>

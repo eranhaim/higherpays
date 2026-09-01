@@ -179,7 +179,7 @@ export default function AnalyticsPage() {
             </select>
           </>
         )}
-        <button className="btn ghost" onClick={() => setFilters(defaultFilters())}>Clear</button>
+        <button className="btn ghost" onClick={() => setFilters(defaultFilters())}>Clear filters</button>
       </FilterBar>
     </>
   );

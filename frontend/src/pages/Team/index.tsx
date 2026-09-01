@@ -201,7 +201,7 @@ export default function TeamPage() {
         <FilterBar>
           <input type="search" className="search-input" aria-label="Search members" placeholder="Search name or email"
             value={search} onChange={(e) => setSearch(e.target.value)} />
-          <button className="btn ghost" onClick={() => { setSearch(''); setRole(''); setAccess(''); }}>Clear</button>
+          <button className="btn ghost" onClick={() => { setSearch(''); setRole(''); setAccess(''); }}>Clear filters</button>
           <span className="sub">{visibleMembers.length} of {members.length}</span>
           <ViewPicker label="Edit columns" view={columnsView} />
         </FilterBar>

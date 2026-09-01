@@ -241,7 +241,7 @@ export default function LinksPage() {
       <FilterBar>
         <input type="search" className="search-input" aria-label="Search links" placeholder="Search ref, agent"
           value={filters.search} onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))} />
-        <button className="btn ghost" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear</button>
+        <button className="btn ghost" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear filters</button>
         <ViewPicker label="Edit columns" view={columnsView} />
       </FilterBar>
 
