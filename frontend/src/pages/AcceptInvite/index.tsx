@@ -87,7 +87,9 @@ export default function AcceptInvitePage() {
     <div className="auth-shell">
       <div className="auth-card">
         <div className="auth-brand">
-          <img src="/logo-wordmark.png" alt="HigherPays" />
+          <img className="brand-logo" src="/logo-mark.png" alt="" />
+          <span className="brand-sep" aria-hidden="true" />
+          <span className="auth-wordmark">HigherPays</span>
         </div>
         <div className="card">{body}</div>
       </div>

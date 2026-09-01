@@ -15,11 +15,11 @@ Answers from the 1 Sep review are folded in below. ✅ = shipped, ◐ = partly d
 
 | id | p | type | item |
 |----|---|------|------|
-| A1 | 4 | visual | App wordmark font — client wants a different typeface. Needs a direction from them. |
+| A1 ✅ | 4 | visual | The login and invite pages showed a bitmap wordmark in a different face. It is type now — the app's own font and weight, next to the mark, like the sidebar. logo-wordmark.png deleted. |
 | A2 ✅ | 4 | visual | You dropped the real mark into frontend/public/favicon.svg. |
 | A3 ✅ | 4, 8 | copy | Drop the explainer subtitle under page titles and modal titles ("Hosted checkout links…", "The customer pays on MantaPay's hosted page…"). Same treatment already applied to Payments. |
 | A4 ◐ | 13, 15 | copy | Terminology: "Chatter" → "Agent" everywhere, "Account" → "Creator". Seed now labels agents "Agent"; the live workspace still says "Chatter" until someone changes it in Settings → Workspace (or we run one UPDATE). Export headers now say Creator/Agent. |
-| A5 | 17 | bug | Layout ratio breaks at other window sizes — nav grid and table overflow. |
+| A5 ✅ | 17 | bug | Two causes. The mobile nav rule assumed nav's children were the items, but they are the groups, so each group became a column — they are  now and the strip works. And both shell columns sized to their content, so a wide table or the nav strip stretched the page;  on each keeps the scrolling inside the table. Also stacked the stat cards, page header and paired form fields on phones. |
 | A6 ✅ | 9 | feature | Sort and filters live in the column headers on Payments, Payment links, Customers, Creators, Agents and Team, each with an "Edit columns" chooser (and "Edit cards" where the page has stat cards). Payments, links and customers sort on the server; the three lists the server returns whole sort in the browser (`lib/sortRows.ts`). |
 
 ## B. Date range filter (shared component)
@@ -57,6 +57,8 @@ Answers from the 1 Sep review are folded in below. ✅ = shipped, ◐ = partly d
 | D8 | 7, 8 | feature | New link modal: min/max from workspace settings, not constants; remove the "Fees on this link" line; "Fixed per transaction" → "Transaction Fee" (from settings); "Net to workspace" → "Net Profit", rendered larger. |
 | D9 | 8 | feature | The €2 checkout fee is a workspace setting. Add it to workspace settings, show it to the customer on the hosted page, keep it out of the workspace's own views, and count it into platform gross. |
 | D10 ✅ | 14, 15 | bug | A click on the overlay no longer closes any dialog — Escape and Cancel still do. Half of them are forms, and losing a half-filled one to a stray click is worse than the extra click. |
+
+D1 - keep only the omne thaty actualy work aginst mantapay + "Paid — details needed"
 
 ## E. Payouts
 
