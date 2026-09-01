@@ -13,7 +13,8 @@
     "retention": "node src/util/redact.js",
     "setup": "node src/util/migrate.js && node src/util/seed.js",
     "test": "node --test test/*.test.js",
-    "test:integration": "node --test test/integration/*.test.js"
+    "test:integration": "node --test test/integration/*.test.js",
+    "dev": "node --watch src/server.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

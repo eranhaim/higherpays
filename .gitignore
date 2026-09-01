@@ -27,6 +27,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+!frontend/.env.development
 
 # Deploy target (host + key path) - machine-local, never committed
 deploy/deploy.env
