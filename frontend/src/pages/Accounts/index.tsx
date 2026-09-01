@@ -201,6 +201,7 @@ export default function AccountsPage() {
         <FilterBar>
           <input type="search" className="search-input" aria-label={`Search ${labels.accounts}`}
             placeholder="Search name, handle or owner" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <button className="btn ghost" onClick={() => { setSearch(''); setStatusFilter(''); }}>Clear</button>
           <span className="sub">{visible.length} of {accounts.length}</span>
           <ViewPicker label="Edit columns" view={columnsView} />
         </FilterBar>
