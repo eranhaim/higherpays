@@ -26,6 +26,7 @@ export function usePlatformData(): UsePlatformDataResult {
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['platform-workspaces'] });
+    queryClient.invalidateQueries({ queryKey: ['platform-workspace'] });
     queryClient.invalidateQueries({ queryKey: ['platform-overview'] });
     queryClient.invalidateQueries({ queryKey: ['auth-me'] });
   };

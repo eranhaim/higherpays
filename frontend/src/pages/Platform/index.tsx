@@ -1,10 +1,11 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   PageHeader, Pill, DataTable, Money, DateCell, EmptyState, LoadingCard, ErrorCard, StatCard, StatGrid,
   Select, type Column,
 } from '../../components/ui';
-import type { PlatformWorkspace, OnboardAgencyInput, PlatformFeeRate } from '../../api/endpoints';
+import { platformApi, type PlatformWorkspace, type OnboardAgencyInput, type PlatformFeeRate } from '../../api/endpoints';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import { usePlatformData } from './usePlatformData';
@@ -245,6 +246,49 @@ function OnboardAgencyModal({ onClose, onSubmit }: {
 
 /** A new versioned rate row for one agency. */
 function RatesModal({ workspace, onClose, onSubmit }: {
+  workspace: PlatformWorkspace;
+  onClose: () => void;
+  onSubmit: (input: PlatformFeeRate) => Promise<void>;
+}) {
+  const detail = useQuery({
+    queryKey: ['platform-workspace', workspace.id],
+    queryFn: () => platformApi.getWorkspace(workspace.id),
+  });
+  const current = detail.data?.feeHistory[0];
+
+  if (detail.isLoading) {
+    return (
+      <Modal open onClose={onClose} title={`Rates for ${workspace.name}`}>
+        <p className="sub">Loading current rates…</p>
+      </Modal>
+    );
+  }
+  if (!current) {
+    return (
+      <Modal open onClose={onClose} title={`Rates for ${workspace.name}`}>
+        <p className="sub">This agency has no rate card yet.</p>
+      </Modal>
+    );
+  }
+
+  return (
+    <RatesForm
+      key={current.effectiveFrom}
+      workspace={{
+        ...workspace,
+        pspRatePct: current.pspRatePct,
+        settlementPct: current.settlementPct ?? 0,
+        marginRatePct: current.marginRatePct,
+        pspFixedFee: current.pspFixedFee,
+        checkoutFee: current.checkoutFee,
+      }}
+      onClose={onClose}
+      onSubmit={onSubmit}
+    />
+  );
+}
+
+function RatesForm({ workspace, onClose, onSubmit }: {
   workspace: PlatformWorkspace;
   onClose: () => void;
   onSubmit: (input: PlatformFeeRate) => Promise<void>;

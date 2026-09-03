@@ -54,6 +54,7 @@ export interface PlatformFeeRate {
   pspFixedFee: number;
   /** Paid by the customer at checkout, on top of the price. Ours, not theirs. */
   checkoutFee: number;
+  effectiveFrom?: string;
 }
 
 /** The reversal fees and the rolling reserve, also versioned. */
