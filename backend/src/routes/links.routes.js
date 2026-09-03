@@ -12,7 +12,7 @@ const { status: vocab } = require('../schema/entities');
 const config = require('../config');
 const provider = require('../providers/mantapay');
 const linksService = require('../services/links.service');
-const { resolveAttribution, repostSales } = require('../services/attribution');
+const { resolveAttribution } = require('../services/attribution');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -235,8 +235,8 @@ router.post('/:id/cancel', requirePermission('links.create'), asyncHandler(async
   res.json(publicLink(out));
 }));
 
-// GET /:id/impact — what reassigning this link would move. Read before the
-// confirmation, so the dialog can say it in numbers rather than in general.
+// GET /:id/impact — how many past payments will remain unchanged. Read before
+// the confirmation, so the dialog can describe the future-only change.
 router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
   const row = (await query(`
     SELECT count(*)::int AS payments,
@@ -250,10 +250,8 @@ router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(asyn
 }));
 
 // PATCH /:id/attribution  { accountId?, agentId? }
-// Moves a link, and everything already taken on it, to another creator or
-// agent. The ledger is rewritten: each sale is re-posted against the new
-// attribution, so a payout that already paid the old creator for one of these
-// payments is left overpaid — /impact says how many before confirming.
+// Changes the attribution used for future payments on this link. Existing
+// payments keep their original attribution and ledger entries.
 router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
   const { accountId, agentId } = req.body || {};
   if (accountId === undefined && agentId === undefined) {
@@ -265,12 +263,6 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
       'SELECT * FROM payment_links WHERE workspace_id = $1 AND id = $2', [wid(req), req.params.id])).rows[0];
     if (!link) return { notFound: true };
 
-    // A reversed sale cannot be moved: only its sale entry would be re-posted,
-    // leaving the refund that mirrors it against the old creator.
-    const reversed = (await c.query(
-      "SELECT 1 FROM payments WHERE payment_link_id = $1 AND status = 'refunded'", [link.id])).rows[0];
-    if (reversed) return { err: 'payment_reversed', fields: [] };
-
     const next = await resolveAttribution(c, wid(req), {
       accountId: accountId === undefined ? link.account_id : accountId,
       agentId: agentId === undefined ? link.created_by_agent_id : (agentId || null),
@@ -279,9 +271,6 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
 
     await c.query(
       'UPDATE payment_links SET account_id = $2, created_by_agent_id = $3 WHERE id = $1',
-      [link.id, next.accountId, next.agentId]);
-    const moved = await c.query(
-      'UPDATE payments SET account_id = $2, agent_id = $3 WHERE payment_link_id = $1 RETURNING id',
       [link.id, next.accountId, next.agentId]);
 
     return {
@@ -292,8 +281,7 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
           LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
           LEFT JOIN users u ON u.id = ag.user_id
          WHERE pl.id = $1`, [link.id])).rows[0],
-      moved: moved.rowCount,
-      reposted: await repostSales(c, moved.rows.map((r) => r.id)),
+      futureOnly: true,
       from: { accountId: link.account_id, agentId: link.created_by_agent_id },
     };
   });
@@ -306,10 +294,10 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
     metadata: {
       from: out.from,
       to: { accountId: out.link.account_id, agentId: out.link.created_by_agent_id },
-      payments: out.moved, reposted: out.reposted,
+      futureOnly: out.futureOnly,
     },
   });
-  res.json({ ...publicLink(out.link), moved: out.moved, reposted: out.reposted });
+  res.json({ ...publicLink(out.link), futureOnly: out.futureOnly });
 }));
 
 // POST /reconcile — the same reconciliation the server runs on a timer, on

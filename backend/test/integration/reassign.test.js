@@ -1,6 +1,6 @@
 'use strict';
-// Reassigning a link moves everything already taken on it. The ledger is
-// rewritten rather than adjusted, which is what makes the warning necessary.
+// Reassigning a link changes only future payments. Existing payments and their
+// ledger entries remain attributed to the original creator and agent.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const request = require('supertest');
@@ -8,7 +8,7 @@ const { app, pool } = require('../helpers/setup');
 const { createTenant, createAccount, createAgent, assignAgent } = require('../helpers/tenant');
 const { paySale, postWebhook, buildPaidPayload, endpointFor, newTransId } = require('../helpers/webhook');
 
-test('a reassigned link takes its past payments and their splits with it', async () => {
+test('a reassigned link leaves past payments and their splits unchanged', async () => {
   const t = await createTenant(app);
   const from = await createAccount(app, t);
   const to = await createAccount(app, t);
@@ -23,17 +23,20 @@ test('a reassigned link takes its past payments and their splits with it', async
   const moved = (await request(app).patch(`/workspaces/${t.workspaceId}/links/${link.id}/attribution`)
     .set(t.authHeaders).send({ accountId: to.id }).expect(200)).body;
   assert.equal(moved.accountId, to.id);
-  assert.equal(moved.moved, 1);
-  assert.equal(moved.reposted, 1);
+  assert.equal(moved.futureOnly, true);
 
   const payment = (await pool.query(
     'SELECT account_id FROM payments WHERE payment_link_id = $1', [link.id])).rows[0];
-  assert.equal(payment.account_id, to.id, 'the payment moved too');
+  assert.equal(payment.account_id, from.id, 'the past payment stayed with its creator');
 
   const entry = (await pool.query(
     `SELECT re.account_id FROM revenue_entries re JOIN transactions t ON t.id = re.transaction_id
       WHERE t.provider_transaction_id = $1 AND re.entry_type = 'sale'`, [transId])).rows[0];
-  assert.equal(entry.account_id, to.id, 'the split was re-posted against the new creator');
+  assert.equal(entry.account_id, from.id, 'the past split stayed with its creator');
+
+  const updatedLink = (await pool.query(
+    'SELECT account_id FROM payment_links WHERE id = $1', [link.id])).rows[0];
+  assert.equal(updatedLink.account_id, to.id, 'future payments use the new creator');
 });
 
 test('an agent must be assigned to the creator the link now belongs to', async () => {
@@ -102,7 +105,7 @@ test('one payment on a reusable link moves without the link or its siblings', as
   assert.equal(sibling.account_id, from.id, 'the other payment on the link did not move');
 });
 
-test('a reversed sale cannot be reassigned, as a payment or as its link', async () => {
+test('a reversed sale cannot be reassigned as a payment', async () => {
   const t = await createTenant(app);
   const from = await createAccount(app, t);
   const to = await createAccount(app, t);
@@ -110,7 +113,5 @@ test('a reversed sale cannot be reassigned, as a payment or as its link', async 
   await request(app).post(`/workspaces/${t.workspaceId}/payments/${paymentId}/refund`).set(t.authHeaders).expect(200);
 
   await request(app).patch(`/workspaces/${t.workspaceId}/payments/${paymentId}/attribution`)
-    .set(t.authHeaders).send({ accountId: to.id }).expect(400);
-  await request(app).patch(`/workspaces/${t.workspaceId}/links/${link.id}/attribution`)
     .set(t.authHeaders).send({ accountId: to.id }).expect(400);
 });

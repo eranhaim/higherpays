@@ -1,5 +1,6 @@
 import { Fragment, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useDebounced } from '../../hooks/useDebounced';
 import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
@@ -16,7 +17,7 @@ import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import { formatMoney, sum } from '../../lib/format';
 import {
   isReversed, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, PAYMENT_EXPORT_COLUMNS,
-  type Payment, type PaymentStatus, type PaymentSort, type ListPaymentsQuery,
+  paymentsApi, type Payment, type PaymentFlow, type PaymentStatus, type PaymentSort, type ListPaymentsQuery,
 } from '../../api/endpoints';
 import { usePaymentsData, type ExportInput } from './usePaymentsData';
 
@@ -47,7 +48,7 @@ type ReversalKind = 'refund' | 'chargeback';
 
 export default function PaymentsPage() {
   const can = useCan();
-  const { labels } = useCurrentSession();
+  const { labels, user, activeWorkspaceId } = useCurrentSession();
   const { rateCard } = useRateCard();
   const canScope = can('data.view_all');
   const canComplete = can('payments.complete');
@@ -86,9 +87,16 @@ export default function PaymentsPage() {
   } = usePaymentsData(query, canScope);
 
   const [detail, setDetail] = useState<Payment | null>(null);
+  const [flowPayment, setFlowPayment] = useState<Payment | null>(null);
   const [completing, setCompleting] = useState<Payment | null>(null);
   const [reversing, setReversing] = useState<{ payment: Payment; kind: ReversalKind } | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const canViewFlow = Boolean(user?.isPlatformAdmin);
+  const flow = useQuery<PaymentFlow>({
+    queryKey: ['payment-flow', activeWorkspaceId, flowPayment?.id],
+    queryFn: () => paymentsApi.flow(flowPayment!.id),
+    enabled: flowPayment !== null,
+  });
 
   const paid = payments.filter((p) => p.status === 'paid');
   const failed = payments.filter((p) => p.status === 'failed');
@@ -213,6 +221,14 @@ export default function PaymentsPage() {
         ? <button className="btn ghost small" onClick={() => setCompleting(p)}>Complete</button>
         : null,
     }] : []),
+    ...(canViewFlow ? [{
+      key: 'flow', header: 'Flow', hideHeader: true, align: 'right' as const,
+      render: (p: Payment) => (
+        <button className="btn ghost small" onClick={() => setFlowPayment(p)}>
+          View flow
+        </button>
+      ),
+    }] : []),
   ];
 
   return (
@@ -328,6 +344,20 @@ export default function PaymentsPage() {
         )}
       </Modal>
 
+      <Modal
+        open={flowPayment !== null}
+        onClose={() => setFlowPayment(null)}
+        title="Payment flow"
+        subtitle={flowPayment ? `${flowPayment.providerTransactionId ?? flowPayment.id} · recorded waterfall` : undefined}
+      >
+        {flow.isPending && <p className="sub">Loading the payment flow…</p>}
+        {flow.isError && <div className="warnbar" role="alert">Couldn't load the payment flow. Try again.</div>}
+        {flow.data && <PaymentFlowContent flow={flow.data} />}
+        <div className="modal-actions">
+          <button className="btn ghost" onClick={() => setFlowPayment(null)}>Close</button>
+        </div>
+      </Modal>
+
       {completing && (
         <CompleteDetailsModal
           payment={completing}
@@ -370,6 +400,86 @@ export default function PaymentsPage() {
             toast(`Recorded ${reversing.kind} of ${formatMoney(reversing.payment.amount, reversing.payment.currency)}.`);
           }}
         />
+      )}
+    </div>
+  );
+}
+
+function PaymentFlowContent({ flow }: { flow: PaymentFlow }) {
+  const providerItems = [
+    ['MDR', flow.fees.mdr],
+    ['Transaction fee', flow.fees.fixed],
+    ['Settlement fee', flow.fees.settlement],
+  ] as const;
+
+  return (
+    <div className="payment-flow">
+      <div className="flow-node flow-total">
+        <span className="field-label">{flow.status === 'failed' ? 'Customer attempted' : 'Customer paid'}</span>
+        <Money amount={flow.customerTotal} currency={flow.currency} direction="in" emphasis />
+      </div>
+
+      <div className="flow-connector" aria-hidden="true">↓</div>
+
+      <div className="flow-card">
+        <DetailRow label="Payment amount">
+          <Money amount={flow.saleAmount} currency={flow.currency} direction="in" />
+        </DetailRow>
+        <DetailRow label="Checkout fee · HigherPays">
+          <Money amount={flow.checkoutFee} currency={flow.currency} direction="in" />
+        </DetailRow>
+      </div>
+
+      {!flow.settled ? (
+        <div className="warnbar" role="status">
+          This attempt did not post a sale, so no provider fee or payout split was recorded.
+        </div>
+      ) : (
+        <>
+          <div className="flow-connector" aria-hidden="true">↓</div>
+
+          <div className="flow-card">
+            <div className="flow-card-head">
+              <span className="field-label">Platform deductions</span>
+              <Money amount={flow.fees.platform} currency={flow.currency} direction="out" emphasis />
+            </div>
+            <DetailRow label="MantaPay costs">
+              <Money amount={flow.fees.provider} currency={flow.currency} direction="out" />
+            </DetailRow>
+            <div className="flow-breakdown">
+              {providerItems.map(([label, amount]) => (
+                <DetailRow key={label} label={`MantaPay · ${label}`}>
+                  <Money amount={amount} currency={flow.currency} direction="out" />
+                </DetailRow>
+              ))}
+              <DetailRow label="HigherPays margin">
+                <Money amount={flow.fees.higherPaysMargin} currency={flow.currency} direction="out" />
+              </DetailRow>
+            </div>
+          </div>
+
+          <div className="flow-connector" aria-hidden="true">↓</div>
+
+          <div className="flow-node flow-total">
+            <span className="field-label">Available to distribute</span>
+            <Money amount={flow.distributable} currency={flow.currency} direction="in" emphasis />
+          </div>
+
+          <div className="flow-branches">
+            <div className="flow-branch">
+              <span>{flow.distribution.account.name || 'Creator share'}</span>
+              <Money amount={flow.distribution.account.amount} currency={flow.currency} direction="in" />
+            </div>
+            <div className="flow-branch">
+              <span>{flow.distribution.agent.name || 'Agent commission'}</span>
+              <Money amount={flow.distribution.agent.amount} currency={flow.currency} direction="in" />
+            </div>
+            <div className="flow-branch">
+              <span>Agency keep</span>
+              <Money amount={flow.distribution.agency.amount} currency={flow.currency} direction="in" />
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

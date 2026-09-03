@@ -3,7 +3,7 @@
 // reconciler, completed by the agent (customer + category), reversed here.
 const express = require('express');
 const { query, withTransaction } = require('../db');
-const { requirePermission } = require('../middleware');
+const { requirePermission, requirePlatformAdmin } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { isStr, isOptStr, badRequest, toCSV } = require('../util/validate');
@@ -156,6 +156,58 @@ router.get('/:id', requirePermission('payments.view'), asyncHandler(async (req, 
   const row = await withTransaction((c) => loadScoped(c, req, req.params.id));
   if (!row) return res.status(404).json({ error: 'not_found' });
   res.json(publicPayment(row, { seesFees: hasPermission(req.access, 'data.view_all') }));
+}));
+
+// GET /:id/flow — the immutable sale waterfall for HigherPays operators.
+// This is intentionally separate from the payment list: workspace members see
+// the payment they need to operate, while only the platform can inspect every
+// fee and allocation that produced the result.
+router.get('/:id/flow', requirePermission('payments.view'), requirePlatformAdmin, asyncHandler(async (req, res) => {
+  const row = (await query(
+    `SELECT p.id, p.status, p.amount, p.currency,
+            t.provider_transaction_id, t.gross AS transaction_gross, t.surcharge,
+            re.id AS sale_entry_id, re.gross AS sale_gross,
+            re.fee_mdr, re.fee_fixed, re.fee_settlement, re.psp_fee,
+            re.platform_fee, re.platform_margin, re.distributable,
+            re.account_amount, re.agent_amount, re.agency_amount,
+            a.name AS account, u.full_name AS agent
+       FROM payments p
+       LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
+       LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
+       LEFT JOIN accounts a ON a.id = re.account_id
+       LEFT JOIN agents ag ON ag.id = re.agent_id
+       LEFT JOIN users u ON u.id = ag.user_id
+      WHERE p.workspace_id = $1 AND p.id = $2`,
+    [wid(req), req.params.id])).rows[0];
+  if (!row) return res.status(404).json({ error: 'not_found' });
+
+  const saleAmount = Number(row.sale_gross ?? row.transaction_gross ?? row.amount);
+  const checkoutFee = Number(row.surcharge || 0);
+  const providerItemised = Number(row.fee_mdr || 0) + Number(row.fee_fixed || 0) + Number(row.fee_settlement || 0);
+  res.json({
+    paymentId: row.id,
+    status: row.status,
+    currency: row.currency,
+    providerTransactionId: row.provider_transaction_id,
+    customerTotal: saleAmount + checkoutFee,
+    saleAmount,
+    checkoutFee,
+    settled: Boolean(row.sale_entry_id),
+    fees: {
+      mdr: Number(row.fee_mdr || 0),
+      fixed: Number(row.fee_fixed || 0),
+      settlement: Number(row.fee_settlement || 0),
+      provider: Number(row.psp_fee || providerItemised),
+      platform: Number(row.platform_fee || 0),
+      higherPaysMargin: Number(row.platform_margin || 0),
+    },
+    distributable: Number(row.distributable || 0),
+    distribution: {
+      account: { name: row.account, amount: Number(row.account_amount || 0) },
+      agent: { name: row.agent, amount: Number(row.agent_amount || 0) },
+      agency: { amount: Number(row.agency_amount || 0) },
+    },
+  });
 }));
 
 // PATCH /:id/details  { categoryId, customerId? | customer?: { name, telegramName? } }

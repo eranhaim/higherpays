@@ -1,6 +1,6 @@
 'use strict';
-// Moving a link or a payment to another creator or agent. Both routes ask the
-// same two things: is the new pair legal, and rewrite the ledger for it.
+// Resolving attribution is shared by link and payment changes. A link change
+// affects future payments; the payment route may also repost one sale.
 
 // The account must be in the workspace and not archived; the agent, when there
 // is one, must be in the workspace and assigned to that account. Returns the

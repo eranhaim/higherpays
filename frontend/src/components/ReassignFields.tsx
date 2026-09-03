@@ -10,7 +10,7 @@ import {
   type Account, type ReassignInput,
 } from '../api/endpoints';
 
-/** What is being moved: a whole link with its payments, or one payment. */
+/** What is being changed: a link's future attribution, or one payment. */
 export type ReassignKind = 'link' | 'payment';
 
 // The server answers a refused move with a code. Only the reversal is
@@ -37,8 +37,8 @@ interface ReassignFieldsProps {
 
 /**
  * The creator and agent rows of a detail dialog, as dropdowns. Changing one
- * says what it would move and offers to save it; nothing is written until
- * then, because the ledger is re-posted from the new owner's terms.
+ * says what it would change and offers to save it; nothing is written until
+ * then. Link changes apply only to future payments.
  *
  * The agent has to be one assigned to the creator — the server refuses any
  * other pair — so the roster is read for whichever creator is picked.
@@ -110,11 +110,15 @@ export default function ReassignFields({ kind, id, accountId, agentId, accounts,
           ) : (
             <>
               <p className="sub">
-                {impact.data.payments === 0
-                  ? 'Nothing has been paid on this yet, so only the attribution changes.'
-                  : `${impact.data.payments} payment${impact.data.payments === 1 ? '' : 's'} — ${formatMoney(impact.data.amount)} — move, and the split is recalculated from the new terms.`}
+                {kind === 'link'
+                  ? impact.data.payments === 0
+                    ? 'Nothing has been paid on this yet. Future payments will use the new attribution.'
+                    : `${impact.data.payments} past payment${impact.data.payments === 1 ? '' : 's'} — ${formatMoney(impact.data.amount)} — stay unchanged. Only future payments use the new attribution.`
+                  : impact.data.payments === 0
+                    ? 'Nothing has been paid on this yet, so only the attribution changes.'
+                    : `${impact.data.payments} payment${impact.data.payments === 1 ? '' : 's'} — ${formatMoney(impact.data.amount)} — move, and the split is recalculated from the new terms.`}
               </p>
-              {impact.data.paidOut > 0 && (
+              {kind === 'payment' && impact.data.paidOut > 0 && (
                 <p className="sub text-neg">
                   {impact.data.paidOut} of them {impact.data.paidOut === 1 ? 'is' : 'are'} in a payout that has already
                   been paid. Saving does not take that money back — the old payee stays overpaid.

@@ -545,6 +545,16 @@ label.setrow { cursor: pointer; }
 /* A detail row whose value can be changed in place. The control takes the
    value column rather than the full row width a form field would claim. */
 .detail-row select { width: 200px; padding-top: 5px; padding-bottom: 5px; }
+.payment-flow { display: flex; flex-direction: column; gap: 0; }
+.flow-node, .flow-card { border: 1px solid var(--rule); border-radius: var(--radius-lg); padding: 12px 14px; }
+.flow-total { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; background: var(--surface-2); }
+.flow-connector { color: var(--brand); text-align: center; line-height: 1; padding: 7px 0; }
+.flow-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding-bottom: 4px; }
+.flow-breakdown { border-top: 1px solid var(--rule-soft); }
+.flow-branches { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+.flow-branch { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 10px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface-2); }
+.flow-branch > span:first-child { color: var(--muted); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.payment-flow .warnbar { margin: 12px 0 0; }
 
 /* ── Toast ──────────────────────────────────────────────────────────────── */
 .toast {
@@ -778,6 +788,7 @@ label.setrow { cursor: pointer; }
 }
 @media (max-width: 760px) {
   .grid2 { grid-template-columns: 1fr; }
+  .flow-branches { grid-template-columns: 1fr; }
 }
 @media (max-width: 430px) {
   .stats { grid-template-columns: 1fr; }

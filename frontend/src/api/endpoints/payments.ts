@@ -46,6 +46,36 @@ export interface Payment {
   platformFee?: number | null;
 }
 
+export interface PaymentFlowParty {
+  name?: string | null;
+  amount: number;
+}
+
+export interface PaymentFlow {
+  paymentId: string;
+  status: PaymentStatus;
+  currency: string;
+  providerTransactionId: string | null;
+  customerTotal: number;
+  saleAmount: number;
+  checkoutFee: number;
+  settled: boolean;
+  fees: {
+    mdr: number;
+    fixed: number;
+    settlement: number;
+    provider: number;
+    platform: number;
+    higherPaysMargin: number;
+  };
+  distributable: number;
+  distribution: {
+    account: PaymentFlowParty;
+    agent: PaymentFlowParty;
+    agency: PaymentFlowParty;
+  };
+}
+
 /** Mirrors PAYMENT_SORTS in backend/src/routes/payments.routes.js. */
 export type PaymentSort = 'date' | 'amount' | 'status';
 
@@ -149,6 +179,9 @@ export const paymentsApi = {
 
   /** What reassigning this payment would move, read before confirming it. */
   impact: (id: string) => api.get<ReassignImpact>(workspacePath(`/payments/${id}/impact`)),
+
+  /** The platform-only waterfall explaining how a payment was distributed. */
+  flow: (id: string) => api.get<PaymentFlow>(workspacePath(`/payments/${id}/flow`)),
 
   reassign: (id: string, input: ReassignInput) =>
     api.patch<Payment>(workspacePath(`/payments/${id}/attribution`), input),

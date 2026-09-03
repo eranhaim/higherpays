@@ -6,7 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const request = require('supertest');
 const { app, pool } = require('../helpers/setup');
-const { createTenant, createAccount, createAgent, assignAgent, PASSWORD, tag } = require('../helpers/tenant');
+const { createTenant, createAccount, createAgent, assignAgent, getPlatformAdmin, PASSWORD, tag } = require('../helpers/tenant');
 const { paySale, endpointFor, buildPaidPayload, postWebhook } = require('../helpers/webhook');
 const n = (v) => Number(v);
 
@@ -33,6 +33,33 @@ test('a €100 cascade deal splits to the documented figures', async () => {
   assert.equal(n(e.account_amount), 60.6, '70% of 86.57, rounded');
   assert.equal(n(e.agent_amount), 8.66, '10% of 86.57, rounded');
   assert.equal(n(e.agency_amount), 17.31, 'the agency takes the remainder');
+});
+
+test('the platform admin can inspect the payment waterfall', async () => {
+  const t = await createTenant(app, { pspRatePct: 8, pspFixedFee: 0.5, marginRatePct: 5 });
+  const account = await createAccount(app, t, { revenueSplitPct: 70 });
+  const { paymentId } = await paySale(app, t, account, 100);
+  const platform = await getPlatformAdmin(app);
+
+  const flow = (await request(app)
+    .get(`/workspaces/${t.workspaceId}/payments/${paymentId}/flow`)
+    .set({ ...platform.headers, 'X-Workspace-Id': t.workspaceId })
+    .expect(200)).body;
+
+  assert.equal(flow.customerTotal, 100);
+  assert.equal(flow.saleAmount, 100);
+  assert.equal(flow.fees.provider, 8.5);
+  assert.equal(flow.fees.higherPaysMargin, 5);
+  assert.equal(flow.fees.platform, 13.5);
+  assert.equal(flow.distributable, 86.5);
+  assert.equal(flow.distribution.account.amount, 60.55);
+  assert.equal(flow.distribution.agent.amount, 0);
+  assert.equal(flow.distribution.agency.amount, 25.95);
+
+  await request(app)
+    .get(`/workspaces/${t.workspaceId}/payments/${paymentId}/flow`)
+    .set(t.authHeaders)
+    .expect(403);
 });
 
 test('a posted sale is split to cents and the parts sum to the distributable amount', async () => {

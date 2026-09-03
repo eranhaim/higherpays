@@ -59,15 +59,10 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     onSuccess: invalidateLinks,
   });
   const cancel = useMutation({ mutationFn: (id: string) => linksApi.cancel(id), onSuccess: invalidateLinks });
-  // Reassigning rewrites payments and their splits, so the pages that show
-  // them have to be re-read as well.
+  // Link reassignment changes only the attribution for future payments.
   const reassign = useMutation({
     mutationFn: ({ id, input }: { id: string; input: ReassignInput }) => linksApi.reassign(id, input),
-    onSuccess: () => {
-      invalidateLinks();
-      queryClient.invalidateQueries({ queryKey: ['payments', activeWorkspaceId] });
-      queryClient.invalidateQueries({ queryKey: ['payouts-breakdown', activeWorkspaceId] });
-    },
+    onSuccess: invalidateLinks,
   });
   return {
     links: links.data?.pages.flatMap((p) => p.items) ?? [],
