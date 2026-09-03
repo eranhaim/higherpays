@@ -5,7 +5,7 @@ import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useRateCard } from '../../hooks/useRateCard';
 import Modal from '../../components/Modal';
-import ReassignModal from '../../components/ReassignModal';
+import ReassignFields from '../../components/ReassignFields';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DateCell,
@@ -88,7 +88,6 @@ export default function PaymentsPage() {
   const [detail, setDetail] = useState<Payment | null>(null);
   const [completing, setCompleting] = useState<Payment | null>(null);
   const [reversing, setReversing] = useState<{ payment: Payment; kind: ReversalKind } | null>(null);
-  const [reassigning, setReassigning] = useState<Payment | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
 
   const paid = payments.filter((p) => p.status === 'paid');
@@ -273,7 +272,7 @@ export default function PaymentsPage() {
         }
       />
 
-      <Modal open={!!detail && !reversing && !completing && !reassigning} onClose={() => setDetail(null)} title="Payment">
+      <Modal open={!!detail && !reversing && !completing} onClose={() => setDetail(null)} title="Payment">
         {detail && (
           <>
             <div className="modal-topline">
@@ -282,8 +281,26 @@ export default function PaymentsPage() {
             </div>
             <DetailRow label="Customer">{detail.customer ?? '—'}{detail.customerTelegram ? <span className="sub inline"> · {detail.customerTelegram}</span> : null}</DetailRow>
             <DetailRow label="Category">{detail.category ?? '—'}</DetailRow>
-            <DetailRow label={labels.account}>{detail.account}</DetailRow>
-            <DetailRow label={labels.agent}>{detail.agent ?? '—'}</DetailRow>
+            {canReverse && !isReversed(detail.status) ? (
+              <ReassignFields
+                key={detail.id}
+                kind="payment"
+                id={detail.id}
+                accountId={detail.accountId}
+                agentId={detail.agentId}
+                accounts={accounts.filter((a) => a.status !== 'archived')}
+                onSave={async (input) => {
+                  await reassign(detail.id, input);
+                  setDetail(null);
+                  toast('Payment reassigned.');
+                }}
+              />
+            ) : (
+              <>
+                <DetailRow label={labels.account}>{detail.account}</DetailRow>
+                <DetailRow label={labels.agent}>{detail.agent ?? '—'}</DetailRow>
+              </>
+            )}
             <DetailRow label="Link">{detail.linkReference ?? '—'}</DetailRow>
             <DetailRow label="Amount"><Money amount={detail.amount} currency={detail.currency} direction="in" /></DetailRow>
             {detail.platformFee != null && (
@@ -297,9 +314,6 @@ export default function PaymentsPage() {
             <div className="modal-actions">
               {detail.needsDetails && canComplete && (
                 <button className="btn" onClick={() => setCompleting(detail)}>Complete details</button>
-              )}
-              {canReverse && !isReversed(detail.status) && (
-                <button className="btn ghost" onClick={() => setReassigning(detail)}>Reassign</button>
               )}
               {detail.status === 'paid' && canReverse && (
                 <>
@@ -325,25 +339,6 @@ export default function PaymentsPage() {
             setCompleting(null);
             setDetail(null);
             toast('Payment details saved.');
-          }}
-        />
-      )}
-
-      {reassigning && (
-        <ReassignModal
-          kind="payment"
-          id={reassigning.id}
-          reference={reassigning.providerTransactionId ?? reassigning.linkReference ?? ''}
-          accountId={reassigning.accountId}
-          agentId={reassigning.agentId}
-          agentName={reassigning.agent}
-          accounts={accounts.filter((a) => a.status !== 'archived')}
-          onClose={() => setReassigning(null)}
-          onSubmit={async (input) => {
-            await reassign(reassigning.id, input);
-            setReassigning(null);
-            setDetail(null);
-            toast('Payment reassigned.');
           }}
         />
       )}

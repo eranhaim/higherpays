@@ -7,7 +7,7 @@ import { useRateCard } from '../../hooks/useRateCard';
 import { feeBreakdown } from '../../business/feeBreakdown';
 import { formatMoney, sum } from '../../lib/format';
 import Modal from '../../components/Modal';
-import ReassignModal from '../../components/ReassignModal';
+import ReassignFields from '../../components/ReassignFields';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DateCell, CopyButton, DetailRow, Select,
@@ -76,7 +76,6 @@ export default function LinksPage() {
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
   const [detail, setDetail] = useState<PaymentLink | null>(null);
   const [cancelling, setCancelling] = useState<PaymentLink | null>(null);
-  const [reassigning, setReassigning] = useState<PaymentLink | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
 
   const paid = links.filter((l) => l.status === 'pending' || l.status === 'done');
@@ -273,7 +272,7 @@ export default function LinksPage() {
         }
       />
 
-      <Modal open={detail !== null && cancelling === null && reassigning === null} onClose={() => setDetail(null)} title="Payment link">
+      <Modal open={detail !== null && cancelling === null} onClose={() => setDetail(null)} title="Payment link">
         {detail && (
           <>
             <div className="modal-topline">
@@ -281,8 +280,26 @@ export default function LinksPage() {
               <Pill tone={STATUS_TONE[detail.status]}>{LINK_STATUS_LABELS[detail.status]}</Pill>
             </div>
             <DetailRow label="Type">{LINK_TYPE_LABELS[detail.type]}</DetailRow>
-            <DetailRow label={labels.account}>{detail.account}</DetailRow>
-            <DetailRow label={labels.agent}>{detail.agent ?? '—'}</DetailRow>
+            {canReassign && detail.status !== 'refunded' ? (
+              <ReassignFields
+                key={detail.id}
+                kind="link"
+                id={detail.id}
+                accountId={detail.accountId}
+                agentId={detail.agentId}
+                accounts={reassignableAccounts}
+                onSave={async (input) => {
+                  await reassignLink(detail.id, input);
+                  setDetail(null);
+                  toast('Link reassigned.');
+                }}
+              />
+            ) : (
+              <>
+                <DetailRow label={labels.account}>{detail.account}</DetailRow>
+                <DetailRow label={labels.agent}>{detail.agent ?? '—'}</DetailRow>
+              </>
+            )}
             <DetailRow label="Amount">{detail.amount == null ? '—' : <Money amount={detail.amount} currency={detail.currency} emphasis />}</DetailRow>
             <DetailRow label="Created"><DateCell ts={detail.createdAt} /></DetailRow>
             {detail.paidAt && <DetailRow label="Paid"><DateCell ts={detail.paidAt} /></DetailRow>}
@@ -304,9 +321,6 @@ export default function LinksPage() {
               {detail.status === 'pending' && canComplete && (
                 <Link className="btn" to={`/payments?needs_details=1&q=${encodeURIComponent(detail.referenceId)}`}>Complete on Payments</Link>
               )}
-              {canReassign && detail.status !== 'refunded' && (
-                <button className="btn ghost" onClick={() => setReassigning(detail)}>Reassign</button>
-              )}
               {isShareable(detail.status) && canCreate && (
                 <button className="btn danger" onClick={() => setCancelling(detail)}>Cancel link</button>
               )}
@@ -316,25 +330,6 @@ export default function LinksPage() {
           </>
         )}
       </Modal>
-
-      {reassigning && (
-        <ReassignModal
-          kind="link"
-          id={reassigning.id}
-          reference={reassigning.referenceId}
-          accountId={reassigning.accountId}
-          agentId={reassigning.agentId}
-          agentName={reassigning.agent}
-          accounts={reassignableAccounts}
-          onClose={() => setReassigning(null)}
-          onSubmit={async (input) => {
-            await reassignLink(reassigning.id, input);
-            setReassigning(null);
-            setDetail(null);
-            toast('Link reassigned.');
-          }}
-        />
-      )}
 
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New payment link">
         <Select id="link-account" label={labels.account} value={accountId} onChange={setAccountId}>
