@@ -27,13 +27,13 @@ export function usePlatformData(): UsePlatformDataResult {
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['platform-workspaces'] });
     queryClient.invalidateQueries({ queryKey: ['platform-overview'] });
+    queryClient.invalidateQueries({ queryKey: ['auth-me'] });
   };
   const onboard = useMutation({ mutationFn: (input: OnboardAgencyInput) => platformApi.onboardAgency(input), onSuccess: invalidate });
   const status = useMutation({
     mutationFn: ({ id, status }: { id: string; status: 'active' | 'suspended' }) => platformApi.setStatus(id, status),
     onSuccess: () => {
       invalidate();
-      queryClient.invalidateQueries({ queryKey: ['auth-me'] });
     },
   });
   const fee = useMutation({
