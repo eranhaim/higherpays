@@ -22,8 +22,6 @@ const SORT_VALUES: SortValues<Account> = {
   country: (a) => a.country,
 };
 
-const DEFAULT_SPLIT_PCT = 70;
-
 const STATUS_TONE: Record<AccountStatus, 'ok' | 'warn' | 'muted'> = {
   active: 'ok',
   paused: 'warn',
@@ -278,7 +276,7 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
   const [country, setCountry] = useState('');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
-  const [splitText, setSplitText] = useState(String(DEFAULT_SPLIT_PCT));
+  const [splitText, setSplitText] = useState('');
   const [payModel, setPayModel] = useState<PayModel>('share');
   const [salaryText, setSalaryText] = useState('0');
   const [assigned, setAssigned] = useState<string[]>([]);

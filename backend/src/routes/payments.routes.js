@@ -170,19 +170,31 @@ router.get('/:id/flow', requirePermission('payments.view'), requirePlatformAdmin
             re.fee_mdr, re.fee_fixed, re.fee_settlement, re.psp_fee,
             re.platform_fee, re.platform_margin, re.distributable,
             re.account_amount, re.agent_amount, re.agency_amount,
-            a.name AS account, u.full_name AS agent
+            a.name AS account, u.full_name AS agent,
+            pf.fee_model, pf.mdr_pct, pf.psp_rate_pct, pf.settlement_pct,
+            pf.margin_rate_pct
        FROM payments p
        LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
        LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
        LEFT JOIN accounts a ON a.id = re.account_id
        LEFT JOIN agents ag ON ag.id = re.agent_id
        LEFT JOIN users u ON u.id = ag.user_id
+       LEFT JOIN LATERAL effective_platform_fee(p.workspace_id, COALESCE(t.occurred_at, p.occurred_at)) pf ON true
       WHERE p.workspace_id = $1 AND p.id = $2`,
     [wid(req), req.params.id])).rows[0];
   if (!row) return res.status(404).json({ error: 'not_found' });
 
   const saleAmount = Number(row.sale_gross ?? row.transaction_gross ?? row.amount);
   const checkoutFee = Number(row.surcharge || 0);
+  const mdrAmount = Number(row.fee_mdr || 0);
+  const fixedAmount = Number(row.fee_fixed || 0);
+  const settlementBase = row.fee_model === 'cascade'
+    ? saleAmount - mdrAmount - fixedAmount
+    : saleAmount;
+  const percentage = (amount, base) => base > 0 ? Math.round((amount / base) * 10000) / 100 : 0;
+  const mdrRate = row.mdr_pct == null ? Number(row.psp_rate_pct || 0) : Number(row.mdr_pct);
+  const settlementRate = row.mdr_pct == null ? 0 : Number(row.settlement_pct || 0);
+  const marginRate = Number(row.margin_rate_pct || 0);
   const providerItemised = Number(row.fee_mdr || 0) + Number(row.fee_fixed || 0) + Number(row.fee_settlement || 0);
   res.json({
     paymentId: row.id,
@@ -203,9 +215,30 @@ router.get('/:id/flow', requirePermission('payments.view'), requirePlatformAdmin
     },
     distributable: Number(row.distributable || 0),
     distribution: {
-      account: { name: row.account, amount: Number(row.account_amount || 0) },
-      agent: { name: row.agent, amount: Number(row.agent_amount || 0) },
-      agency: { amount: Number(row.agency_amount || 0) },
+      account: {
+        name: row.account,
+        amount: Number(row.account_amount || 0),
+        percentage: percentage(Number(row.account_amount || 0), Number(row.distributable || 0)),
+        base: Number(row.distributable || 0),
+      },
+      agent: {
+        name: row.agent,
+        amount: Number(row.agent_amount || 0),
+        percentage: percentage(Number(row.agent_amount || 0), Number(row.distributable || 0)),
+        base: Number(row.distributable || 0),
+      },
+      agency: {
+        amount: Number(row.agency_amount || 0),
+        percentage: percentage(Number(row.agency_amount || 0), Number(row.distributable || 0)),
+        base: Number(row.distributable || 0),
+      },
+    },
+    rates: {
+      mdr: { percentage: mdrRate, base: saleAmount },
+      settlement: row.settlement_pct == null || row.mdr_pct == null
+        ? null
+        : { percentage: settlementRate, base: settlementBase },
+      higherPaysMargin: { percentage: marginRate, base: saleAmount },
     },
   });
 }));

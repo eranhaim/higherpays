@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  authApi, notificationsApi, workspacesApi, categoriesApi, revenueApi, platformApi,
+  authApi, notificationsApi, workspacesApi, categoriesApi, platformApi,
   type NotificationEvent, type UpdateWorkspaceInput,
 } from '../../api/endpoints';
 import { useAuthStore } from '../../store/auth';
@@ -20,12 +20,6 @@ export function useGeneralSettings() {
     queryFn: () => workspacesApi.getLinkLimits(),
     enabled: Boolean(activeWorkspaceId),
   });
-  const revenue = useQuery({
-    queryKey: ['revenue-rule', activeWorkspaceId],
-    queryFn: () => revenueApi.get(),
-    enabled: Boolean(activeWorkspaceId),
-  });
-
   const update = useMutation({
     mutationFn: (input: UpdateWorkspaceInput) => workspacesApi.update(input),
     onSuccess: (updated) => {
@@ -42,12 +36,7 @@ export function useGeneralSettings() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['link-limits', activeWorkspaceId] }),
   });
 
-  const saveRevenue = useMutation({
-    mutationFn: (input: { accountSplitPct: number; agentPct: number }) => revenueApi.set(input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['revenue-rule', activeWorkspaceId] }),
-  });
-
-  return { workspace, linkLimits, revenue, update, saveLinkLimits, saveRevenue };
+  return { workspace, linkLimits, update, saveLinkLimits };
 }
 
 export interface FeeAmounts {
@@ -82,7 +71,8 @@ export function usePlatformFees() {
 
       if (input.fixedFee !== rate.pspFixedFee) {
         await platformApi.setPlatformFee(id, {
-          pspRatePct: rate.pspRatePct, marginRatePct: rate.marginRatePct, pspFixedFee: input.fixedFee,
+          pspRatePct: rate.pspRatePct, settlementPct: rate.settlementPct ?? 0,
+          marginRatePct: rate.marginRatePct, pspFixedFee: input.fixedFee,
           checkoutFee: rate.checkoutFee,
         });
       }

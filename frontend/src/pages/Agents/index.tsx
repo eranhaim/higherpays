@@ -9,7 +9,7 @@ import { PageHeader, DataTable, FilterBar, Pill, Select, ViewPicker, type Column
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import { sortRows, type SortValues } from '../../lib/sortRows';
 import { COUNTRIES, countryName } from '../../lib/countries';
-import type { Agent } from '../../api/endpoints';
+import type { Account, Agent } from '../../api/endpoints';
 import { useAgentsData } from './useAgentsData';
 
 const SORT_VALUES: SortValues<Agent> = {
@@ -31,7 +31,7 @@ export default function AgentsPage() {
   const { labels } = useCurrentSession();
   const canManage = can('agents.manage');
   const canViewCommission = can('revenue.view');
-  const { agents, isLoading, isError, createAgent, updateAgent, setStatus } = useAgentsData();
+  const { agents, accounts, isLoading, isError, createAgent, updateAgent, setStatus, setAssignedAccounts } = useAgentsData();
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Agent | null>(null);
@@ -146,10 +146,12 @@ export default function AgentsPage() {
         <AgentFormModal
           title={`Add ${labels.agent.toLowerCase()}`}
           subtitle={`Creates the ${labels.agent.toLowerCase()} and their login in one go.`}
+          accounts={accounts}
           canEditCommission={can('revenue.manage')}
           onClose={() => setCreateOpen(false)}
-          onSubmit={async (values) => {
-            await createAgent(values);
+          onSubmit={async (values, accountIds) => {
+            const created = await createAgent(values);
+            await setAssignedAccounts(created.id, [], accountIds);
             setCreateOpen(false);
             toast(`${labels.agent} added.`);
           }}
@@ -160,10 +162,12 @@ export default function AgentsPage() {
         <AgentFormModal
           title={`Edit ${editing.name}`}
           agent={editing}
+          accounts={accounts}
           canEditCommission={can('revenue.manage')}
           onClose={() => setEditing(null)}
-          onSubmit={async (values) => {
+          onSubmit={async (values, accountIds) => {
             await updateAgent(editing.id, { fullName: values.fullName, commissionPct: values.commissionPct, country: values.country });
+            await setAssignedAccounts(editing.id, editing.accounts.map((account) => account.id), accountIds);
             setEditing(null);
             toast('Saved.');
           }}
@@ -197,18 +201,20 @@ interface AgentFormModalProps {
   title: string;
   subtitle?: string;
   agent?: Agent;
+  accounts: Account[];
   canEditCommission: boolean;
   onClose: () => void;
-  onSubmit: (values: AgentFormValues) => Promise<void>;
+  onSubmit: (values: AgentFormValues, accountIds: string[]) => Promise<void>;
 }
 
-function AgentFormModal({ title, subtitle, agent, canEditCommission, onClose, onSubmit }: AgentFormModalProps) {
+function AgentFormModal({ title, subtitle, agent, accounts, canEditCommission, onClose, onSubmit }: AgentFormModalProps) {
   const { labels } = useCurrentSession();
   const [fullName, setFullName] = useState(agent?.name ?? '');
   const [email, setEmail] = useState(agent?.email ?? '');
   const [password, setPassword] = useState('');
   const [country, setCountry] = useState(agent?.country ?? '');
-  const [commissionText, setCommissionText] = useState(String(agent?.commissionPct ?? 0));
+  const [commissionText, setCommissionText] = useState(agent ? String(agent.commissionPct) : '');
+  const [assigned, setAssigned] = useState<string[]>(agent?.accounts.map((account) => account.id) ?? []);
   const [isSaving, setIsSaving] = useState(false);
   const commission = parsePct(commissionText);
   const creating = !agent;
@@ -225,7 +231,7 @@ function AgentFormModal({ title, subtitle, agent, canEditCommission, onClose, on
         ...(creating ? { password } : {}),
         country: country.trim() || undefined,
         commissionPct: commission,
-      });
+      }, assigned);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not save.');
     } finally {
@@ -272,6 +278,20 @@ function AgentFormModal({ title, subtitle, agent, canEditCommission, onClose, on
               <p className="sub">Share of the distributable amount, after fees. Together with the {labels.account.toLowerCase()} share it must fit in 100%.</p>
             </div>
           )}
+        </div>
+        <div className="field" role="group" aria-labelledby="assign-accounts-label">
+          <div className="field-label" id="assign-accounts-label">Assigned {labels.accounts.toLowerCase()}</div>
+          <p className="sub">An assigned {labels.agent.toLowerCase()} can create links for these {labels.accounts.toLowerCase()}.</p>
+          <div className="check-list">
+            {accounts.length === 0 ? <span className="sub">No {labels.accounts.toLowerCase()} in this workspace yet.</span>
+              : accounts.map((account) => (
+                <label key={account.id} className="check-row">
+                  <input type="checkbox" checked={assigned.includes(account.id)}
+                    onChange={(e) => setAssigned((prev) => e.target.checked ? [...prev, account.id] : prev.filter((id) => id !== account.id))} />
+                  <span>{account.name}</span>
+                </label>
+              ))}
+          </div>
         </div>
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>

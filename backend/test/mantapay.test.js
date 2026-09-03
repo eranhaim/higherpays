@@ -17,6 +17,7 @@ const sig = require('../src/providers/mantapay-signature');
 const checkout = require('../src/providers/mantapay-checkout');
 const status = require('../src/providers/mantapay-status');
 const search = require('../src/providers/mantapay-search');
+const apm = require('../src/providers/mantapay-apm');
 const provider = require('../src/providers/mantapay');
 
 // ── Signature ────────────────────────────────────────────────────────────────
@@ -201,6 +202,18 @@ test('ExpiredOn is epoch SECONDS', () => {
 test('checkout refuses invalid input', () => {
   assert.throws(() => checkout.buildCheckout({ ...baseCheckout, amount: 0 }), /invalid_amount/);
   assert.throws(() => checkout.buildCheckout({ ...baseCheckout, hashKey: '' }), /hash_key_missing/);
+});
+
+test('direct APM links use the provider currency id and signed request', () => {
+  const url = apm.buildApmUrl({
+    merchantId: '3771097', hashKey: KEY, amount: 20, currency: 'EUR', order: 'ord-1',
+    notificationUrl: 'https://api.example.com/webhooks/payment/abc', cpm: '743',
+  });
+  const params = new URL(url).searchParams;
+  assert.equal(params.get('Currency'), '2');
+  assert.equal(params.get('CPM'), '743');
+  assert.equal(params.get('Amount'), '20.00');
+  assert.equal(params.get('signature'), sig.digest('37710970120.002' + KEY));
 });
 
 // ── Status check ─────────────────────────────────────────────────────────────

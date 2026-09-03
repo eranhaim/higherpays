@@ -9,7 +9,7 @@ import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import { usePlatformData } from './usePlatformData';
 
-const CURRENCIES = ['EUR'];
+const CURRENCIES = ['EUR', 'USD', 'GBP'];
 
 /** NaN for anything that isn't a usable percentage, so callers can flag it. */
 function parsePct(text: string): number {
@@ -155,18 +155,13 @@ function OnboardAgencyModal({ onClose, onSubmit }: {
   const [pspRate, setPspRate] = useState('8');
   const [margin, setMargin] = useState('5');
   const [fixedFee, setFixedFee] = useState('0.50');
-  const [chargebackFee, setChargebackFee] = useState('15');
-  const [refundFee, setRefundFee] = useState('1');
-  const [declineFee, setDeclineFee] = useState('0.25');
+  const [settlementPct, setSettlementPct] = useState('0');
   const [checkoutFee, setCheckoutFee] = useState('2.00');
-  const [accountSplit, setAccountSplit] = useState('70');
-  const [agentPct, setAgentPct] = useState('0');
   const [isSaving, setIsSaving] = useState(false);
 
-  const pct = { psp: parsePct(pspRate), margin: parsePct(margin), account: parsePct(accountSplit), agent: parsePct(agentPct) };
+  const pct = { psp: parsePct(pspRate), margin: parsePct(margin), settlement: parsePct(settlementPct) };
   const fees = {
-    fixed: parseAmount(fixedFee), chargeback: parseAmount(chargebackFee),
-    refund: parseAmount(refundFee), decline: parseAmount(declineFee), checkout: parseAmount(checkoutFee),
+    fixed: parseAmount(fixedFee), checkout: parseAmount(checkoutFee),
   };
   const blended = Number.isNaN(pct.psp) || Number.isNaN(pct.margin) ? null : pct.psp + pct.margin;
 
@@ -174,15 +169,14 @@ function OnboardAgencyModal({ onClose, onSubmit }: {
     if (!name.trim()) { toast('Agency name is required.'); return; }
     if (!adminEmail.includes('@')) { toast('A valid admin email is required.'); return; }
     if (Object.values(pct).some(Number.isNaN)) { toast('Percentages must be 0–100.'); return; }
-    if (pct.account + pct.agent > 100) { toast('Account share plus agent commission cannot exceed 100%.'); return; }
+    if (pct.settlement > pct.psp) { toast('Settlement fee cannot exceed the PSP rate.'); return; }
     if (Object.values(fees).some(Number.isNaN)) { toast('Fees must be amounts of 0 or more.'); return; }
     setIsSaving(true);
     try {
       await onSubmit({
         name: name.trim(), currency, merchantId: merchantId.trim() || undefined, adminEmail: adminEmail.trim(),
-        pspRatePct: pct.psp, marginRatePct: pct.margin, pspFixedFee: fees.fixed, checkoutFee: fees.checkout,
-        chargebackFee: fees.chargeback, refundFee: fees.refund, declineFee: fees.decline,
-        accountSplitPct: pct.account, agentPct: pct.agent,
+        pspRatePct: pct.psp, settlementPct: pct.settlement, marginRatePct: pct.margin,
+        pspFixedFee: fees.fixed, checkoutFee: fees.checkout,
       });
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not create the agency.');
@@ -233,24 +227,12 @@ function OnboardAgencyModal({ onClose, onSubmit }: {
         <div className="sechead">Rate card</div>
         <div className="form-row">
           {pctField('agency-psp', 'PSP rate', pspRate, setPspRate)}
+          {pctField('agency-settlement', 'Settlement fee', settlementPct, setSettlementPct)}
           {pctField('agency-margin', 'HigherPays margin', margin, setMargin)}
           {amountField('agency-fixed', 'Fixed fee per transaction', fixedFee, setFixedFee)}
           {amountField('agency-checkout', 'Checkout fee (paid by the customer)', checkoutFee, setCheckoutFee)}
         </div>
         <p className="sub">Blended rate the agency sees: {blended === null ? '—' : `${blended}%`}.</p>
-
-        <div className="sechead">Settlement fees</div>
-        <div className="form-row">
-          {amountField('agency-cb', 'Chargeback', chargebackFee, setChargebackFee)}
-          {amountField('agency-refund', 'Refund', refundFee, setRefundFee)}
-          {amountField('agency-decline', 'Decline', declineFee, setDeclineFee)}
-        </div>
-
-        <div className="sechead">Default split for new people</div>
-        <div className="form-row">
-          {pctField('agency-account-split', 'Account share', accountSplit, setAccountSplit)}
-          {pctField('agency-agent-pct', 'Agent commission', agentPct, setAgentPct)}
-        </div>
 
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
@@ -267,21 +249,24 @@ function RatesModal({ workspace, onClose, onSubmit }: {
   onClose: () => void;
   onSubmit: (input: PlatformFeeRate) => Promise<void>;
 }) {
-  const [pspRate, setPspRate] = useState('');
-  const [margin, setMargin] = useState('');
-  const [fixedFee, setFixedFee] = useState('');
-  const [checkoutFee, setCheckoutFee] = useState('');
+  const [pspRate, setPspRate] = useState(String(workspace.pspRatePct));
+  const [settlementPct, setSettlementPct] = useState(String(workspace.settlementPct));
+  const [margin, setMargin] = useState(String(workspace.marginRatePct));
+  const [fixedFee, setFixedFee] = useState(String(workspace.pspFixedFee));
+  const [checkoutFee, setCheckoutFee] = useState(String(workspace.checkoutFee));
   const [isSaving, setIsSaving] = useState(false);
   const psp = parsePct(pspRate);
+  const settlement = parsePct(settlementPct);
   const mrg = parsePct(margin);
   const fixed = parseAmount(fixedFee);
   const checkout = parseAmount(checkoutFee);
-  const valid = !Number.isNaN(psp) && !Number.isNaN(mrg) && !Number.isNaN(fixed) && !Number.isNaN(checkout);
+  const valid = !Number.isNaN(psp) && !Number.isNaN(settlement) && !Number.isNaN(mrg)
+    && !Number.isNaN(fixed) && !Number.isNaN(checkout) && settlement <= psp;
 
   const submit = async () => {
-    if (!valid) { toast('Enter the PSP rate, margin, fixed fee and checkout fee.'); return; }
+    if (!valid) { toast('Enter valid rates and fees. Settlement fee cannot exceed the PSP rate.'); return; }
     setIsSaving(true);
-    try { await onSubmit({ pspRatePct: psp, marginRatePct: mrg, pspFixedFee: fixed, checkoutFee: checkout }); }
+    try { await onSubmit({ pspRatePct: psp, settlementPct: settlement, marginRatePct: mrg, pspFixedFee: fixed, checkoutFee: checkout }); }
     catch (err) { toast(err instanceof Error ? err.message : 'Could not save the rates.'); }
     finally { setIsSaving(false); }
   };
@@ -295,6 +280,13 @@ function RatesModal({ workspace, onClose, onSubmit }: {
             <label htmlFor="rates-psp">PSP rate</label>
             <div className="pct-input">
               <input id="rates-psp" type="number" min={0} max={100} step={0.01} value={pspRate} onChange={(e) => setPspRate(e.target.value)} />
+              <span className="sub">%</span>
+            </div>
+          </div>
+          <div className="field">
+            <label htmlFor="rates-settlement">Settlement fee</label>
+            <div className="pct-input">
+              <input id="rates-settlement" type="number" min={0} max={100} step={0.01} value={settlementPct} onChange={(e) => setSettlementPct(e.target.value)} />
               <span className="sub">%</span>
             </div>
           </div>

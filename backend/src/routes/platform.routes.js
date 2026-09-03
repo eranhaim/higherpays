@@ -70,7 +70,8 @@ router.get('/workspaces', asyncHandler(async (req, res) => {
            (SELECT count(*) FROM payments p WHERE p.workspace_id = w.id AND p.status='paid') AS paid_payments,
            (SELECT COALESCE(SUM(amount),0) FROM payments p WHERE p.workspace_id = w.id AND p.status='paid') AS gross_volume,
            (SELECT max(created_at) FROM audit_log a WHERE a.workspace_id = w.id) AS last_activity,
-           f.blended_rate_pct
+           f.blended_rate_pct, f.psp_rate_pct, f.settlement_pct, f.margin_rate_pct,
+           f.psp_fixed_fee, f.checkout_fee
       FROM workspaces w
       LEFT JOIN LATERAL effective_platform_fee(w.id, now()) f ON true
      ORDER BY w.name`)).rows;
@@ -79,7 +80,9 @@ router.get('/workspaces', asyncHandler(async (req, res) => {
       id: w.id, name: w.name, currency: w.currency, status: w.status, merchantId: w.merchant_id, createdAt: w.created_at,
       accounts: n(w.accounts), agents: n(w.agents), members: n(w.members),
       paidPayments: n(w.paid_payments), grossVolume: n(w.gross_volume), lastActivity: w.last_activity,
-      blendedRatePct: n(w.blended_rate_pct),
+      blendedRatePct: n(w.blended_rate_pct), pspRatePct: n(w.psp_rate_pct),
+      settlementPct: w.settlement_pct == null ? 0 : n(w.settlement_pct),
+      marginRatePct: n(w.margin_rate_pct), pspFixedFee: n(w.psp_fixed_fee), checkoutFee: n(w.checkout_fee),
     })),
   });
 }));
@@ -103,10 +106,12 @@ router.put('/workspaces/:id/platform-fee', asyncHandler(async (req, res) => {
   const b = req.body || {};
   const feeModel = b.feeModel || 'flat';
   const pspFixedFee = Number(b.pspFixedFee || 0);
+  const settlementPct = b.settlementPct == null ? 0 : Number(b.settlementPct);
   if (!vocab.FEE_MODEL.includes(feeModel)) return badRequest(res, 'invalid feeModel', ['feeModel']);
   if (!pct(b.pspRatePct) || !pct(b.marginRatePct)) return badRequest(res, 'pspRatePct/marginRatePct must be 0..100', ['pspRatePct', 'marginRatePct']);
   if (b.mdrPct != null && !pct(b.mdrPct)) return badRequest(res, 'mdrPct must be 0..100', ['mdrPct']);
-  if (b.settlementPct != null && !pct(b.settlementPct)) return badRequest(res, 'settlementPct must be 0..100', ['settlementPct']);
+  if (!pct(settlementPct)) return badRequest(res, 'settlementPct must be 0..100', ['settlementPct']);
+  if (settlementPct > Number(b.pspRatePct)) return badRequest(res, 'settlementPct cannot exceed pspRatePct', ['settlementPct']);
   if (!(pspFixedFee >= 0)) return badRequest(res, 'pspFixedFee must be >= 0', ['pspFixedFee']);
   const checkoutFee = Number(b.checkoutFee || 0);
   if (!(checkoutFee >= 0)) return badRequest(res, 'checkoutFee must be >= 0', ['checkoutFee']);
@@ -116,7 +121,9 @@ router.put('/workspaces/:id/platform-fee', asyncHandler(async (req, res) => {
   const fee = (await query(
     `INSERT INTO platform_fee_rates (workspace_id, fee_model, psp_rate_pct, mdr_pct, settlement_pct, psp_fixed_fee, margin_rate_pct, checkout_fee, created_by_user_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-    [req.params.id, feeModel, b.pspRatePct, b.mdrPct ?? null, b.settlementPct ?? null, pspFixedFee, b.marginRatePct, checkoutFee, uid(req)])).rows[0];
+    [req.params.id, settlementPct > 0 ? 'cascade' : feeModel, b.pspRatePct,
+      settlementPct > 0 ? Number(b.pspRatePct) - settlementPct : b.mdrPct ?? null,
+      settlementPct, pspFixedFee, b.marginRatePct, checkoutFee, uid(req)])).rows[0];
   await audit({ workspaceId: req.params.id, actorUserId: uid(req), action: 'platform.fee.update', entityType: 'workspace', entityId: req.params.id, metadata: b });
   res.status(201).json(publicFee(fee));
 }));
@@ -159,13 +166,12 @@ router.patch('/workspaces/:id/status', asyncHandler(async (req, res) => {
 router.post('/agencies', asyncHandler(async (req, res) => {
   const b = req.body || {};
   const currency = (b.currency || 'EUR').toUpperCase();
-  const accountSplitPct = b.accountSplitPct == null ? 70 : Number(b.accountSplitPct);
-  const agentPct = b.agentPct == null ? 0 : Number(b.agentPct);
+  const settlementPct = b.settlementPct == null ? 0 : Number(b.settlementPct);
   if (!isStr(b.name, 120)) return badRequest(res, 'name is required', ['name']);
   if (!isStr(b.adminEmail, 120) || !b.adminEmail.includes('@')) return badRequest(res, 'a valid adminEmail is required', ['adminEmail']);
   if (!config.supportedCurrencies.includes(currency)) return badRequest(res, `currency ${currency} is not enabled`, ['currency']);
   if (!pct(b.pspRatePct) || !pct(b.marginRatePct)) return badRequest(res, 'pspRatePct/marginRatePct must be 0..100', ['pspRatePct', 'marginRatePct']);
-  if (!pct(accountSplitPct) || !pct(agentPct) || accountSplitPct + agentPct > 100) return badRequest(res, 'splits must be 0..100 and fit together', ['accountSplitPct', 'agentPct']);
+  if (!pct(settlementPct) || settlementPct > Number(b.pspRatePct)) return badRequest(res, 'settlementPct must be 0..100 and cannot exceed pspRatePct', ['settlementPct']);
 
   const token = crypto.randomBytes(32).toString('base64url');
   const out = await withTransaction(async (c) => {
@@ -176,14 +182,16 @@ router.post('/agencies', asyncHandler(async (req, res) => {
     await c.query(
       `INSERT INTO platform_fee_rates (workspace_id, fee_model, psp_rate_pct, mdr_pct, settlement_pct, psp_fixed_fee, margin_rate_pct, checkout_fee, effective_from, created_by_user_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'-infinity',$9)`,
-      [ws.id, vocab.FEE_MODEL.includes(b.feeModel) ? b.feeModel : 'flat', b.pspRatePct, b.mdrPct ?? null, b.settlementPct ?? null, Number(b.pspFixedFee || 0), b.marginRatePct, Number(b.checkoutFee || 0), uid(req)]);
+      [ws.id, settlementPct > 0 ? 'cascade' : vocab.FEE_MODEL.includes(b.feeModel) ? b.feeModel : 'flat',
+        b.pspRatePct, settlementPct > 0 ? Number(b.pspRatePct) - settlementPct : b.mdrPct ?? null,
+        settlementPct, Number(b.pspFixedFee || 0), b.marginRatePct, Number(b.checkoutFee || 0), uid(req)]);
     await c.query(
       `INSERT INTO settlement_fee_config (workspace_id, chargeback_fee, refund_fee, decline_fee, effective_from, created_by_user_id)
        VALUES ($1,$2,$3,$4,'-infinity',$5)`,
       [ws.id, Number(b.chargebackFee || 0), Number(b.refundFee || 0), Number(b.declineFee || 0), uid(req)]);
     await c.query(
       `INSERT INTO revenue_rules (workspace_id, account_split_pct, agency_split_pct, agent_pct, effective_from, created_by_user_id)
-       VALUES ($1,$2,$3,$4,'-infinity',$5)`, [ws.id, accountSplitPct, 100 - accountSplitPct, agentPct, uid(req)]);
+       VALUES ($1,0,100,0,'-infinity',$2)`, [ws.id, uid(req)]);
     await grantPlatformAdminsAccess(c, ws.id);
     await c.query(
       'INSERT INTO invites (workspace_id, email, role, token_hash, invited_by_user_id, expires_at) VALUES ($1,$2,$3,$4,$5,$6)',

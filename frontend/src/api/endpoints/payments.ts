@@ -49,6 +49,13 @@ export interface Payment {
 export interface PaymentFlowParty {
   name?: string | null;
   amount: number;
+  percentage: number;
+  base: number;
+}
+
+export interface PaymentFlowRate {
+  percentage: number;
+  base: number;
 }
 
 export interface PaymentFlow {
@@ -67,6 +74,11 @@ export interface PaymentFlow {
     provider: number;
     platform: number;
     higherPaysMargin: number;
+  };
+  rates: {
+    mdr: PaymentFlowRate;
+    settlement: PaymentFlowRate | null;
+    higherPaysMargin: PaymentFlowRate;
   };
   distributable: number;
   distribution: {

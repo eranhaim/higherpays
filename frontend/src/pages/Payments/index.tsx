@@ -407,9 +407,9 @@ export default function PaymentsPage() {
 
 function PaymentFlowContent({ flow }: { flow: PaymentFlow }) {
   const providerItems = [
-    ['MDR', flow.fees.mdr],
-    ['Transaction fee', flow.fees.fixed],
-    ['Settlement fee', flow.fees.settlement],
+    ['MDR', flow.fees.mdr, flow.rates.mdr],
+    ['Transaction fee', flow.fees.fixed, null],
+    ['Settlement fee', flow.fees.settlement, flow.rates.settlement],
   ] as const;
 
   return (
@@ -447,12 +447,12 @@ function PaymentFlowContent({ flow }: { flow: PaymentFlow }) {
               <Money amount={flow.fees.provider} currency={flow.currency} direction="out" />
             </DetailRow>
             <div className="flow-breakdown">
-              {providerItems.map(([label, amount]) => (
-                <DetailRow key={label} label={`MantaPay · ${label}`}>
+              {providerItems.map(([label, amount, rate]) => (
+                <DetailRow key={label} label={`MantaPay · ${rate ? rateLabel(label, rate, flow.currency) : label}`}>
                   <Money amount={amount} currency={flow.currency} direction="out" />
                 </DetailRow>
               ))}
-              <DetailRow label="HigherPays margin">
+              <DetailRow label={rateLabel('HigherPays margin', flow.rates.higherPaysMargin, flow.currency)}>
                 <Money amount={flow.fees.higherPaysMargin} currency={flow.currency} direction="out" />
               </DetailRow>
             </div>
@@ -467,15 +467,15 @@ function PaymentFlowContent({ flow }: { flow: PaymentFlow }) {
 
           <div className="flow-branches">
             <div className="flow-branch">
-              <span>{flow.distribution.account.name || 'Creator share'}</span>
+              <span>{rateLabel(flow.distribution.account.name || 'Creator share', flow.distribution.account, flow.currency)}</span>
               <Money amount={flow.distribution.account.amount} currency={flow.currency} direction="in" />
             </div>
             <div className="flow-branch">
-              <span>{flow.distribution.agent.name || 'Agent commission'}</span>
+              <span>{rateLabel(flow.distribution.agent.name || 'Agent commission', flow.distribution.agent, flow.currency)}</span>
               <Money amount={flow.distribution.agent.amount} currency={flow.currency} direction="in" />
             </div>
             <div className="flow-branch">
-              <span>Agency keep</span>
+              <span>{rateLabel('Agency keep', flow.distribution.agency, flow.currency)}</span>
               <Money amount={flow.distribution.agency.amount} currency={flow.currency} direction="in" />
             </div>
           </div>
@@ -483,6 +483,11 @@ function PaymentFlowContent({ flow }: { flow: PaymentFlow }) {
       )}
     </div>
   );
+}
+
+function rateLabel(label: string, rate: { percentage: number; base: number }, currency: string): string {
+  const percentage = Number.isInteger(rate.percentage) ? rate.percentage : rate.percentage.toFixed(2);
+  return `${label} (${percentage}% of ${formatMoney(rate.base, currency)})`;
 }
 
 /** What goes in the file: the period, how many rows, and which columns. */

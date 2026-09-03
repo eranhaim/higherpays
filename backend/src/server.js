@@ -22,6 +22,7 @@ const settlementsRoutes = require('./routes/settlements.routes');
 const feesRoutes = require('./routes/fees.routes');
 const meRoutes = require('./routes/me.routes');
 const webhooksRoutes = require('./routes/webhooks.routes');
+const publicPaymentRoutes = require('./routes/public-payment.routes');
 const { wsRouter: invitesWsRoutes, publicRouter: invitesPublicRoutes } = require('./routes/invites.routes');
 const { startReconcileLoop } = require('./services/links.service');
 const { requireAuth, requireWorkspace, requirePlatformAdmin, errorHandler } = require('./middleware');
@@ -69,6 +70,8 @@ app.use('/webhooks', express.raw({ type: '*/*', limit: '1mb' }), webhooksRoutes)
 app.use(express.json({ limit: '8mb' }));
 
 app.use(express.static(path.join(__dirname, '..', 'public')));
+
+app.use('/pay', publicPaymentRoutes);
 
 // Health reports on the database too: a green health check with Postgres down
 // hides the only failure that matters. Unprocessed webhooks older than an hour

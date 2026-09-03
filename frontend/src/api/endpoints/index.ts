@@ -24,7 +24,7 @@ export {
 } from './links';
 export {
   paymentsApi, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, PAYMENT_EXPORT_COLUMNS, isReversed,
-  type Payment, type PaymentFlow, type PaymentFlowParty, type PaymentStatus, type ListPaymentsQuery, type CompletePaymentInput, type ReversalResult,
+  type Payment, type PaymentFlow, type PaymentFlowParty, type PaymentFlowRate, type PaymentStatus, type ListPaymentsQuery, type CompletePaymentInput, type ReversalResult,
   type ExportColumn, type ExportOptions, type PaymentSort,
 } from './payments';
 export { payoutsApi, type PayoutBreakdown, type RunPayoutInput, type PayoutRecord } from './payouts';

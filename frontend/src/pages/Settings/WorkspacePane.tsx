@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { type LinkLimits, type WorkspaceSettings, type RevenueRule } from '../../api/endpoints';
+import { type LinkLimits, type WorkspaceSettings } from '../../api/endpoints';
 import { feeBreakdown, type RateCard } from '../../business/feeBreakdown';
 import { useCan } from '../../hooks/usePermission';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
@@ -14,7 +14,7 @@ export function WorkspacePane() {
   const editable = can('settings.edit');
   const { activeWorkspaceId } = useCurrentSession();
   const { rateCard, isLoading: rateCardLoading, isError: rateCardError } = useRateCard();
-  const { workspace, linkLimits, revenue, update, saveLinkLimits, saveRevenue } = useGeneralSettings();
+  const { workspace, linkLimits, update, saveLinkLimits } = useGeneralSettings();
   const platformFees = usePlatformFees();
 
   if (rateCardLoading || linkLimits.isLoading || workspace.isLoading) return <LoadingCard />;
@@ -26,10 +26,6 @@ export function WorkspacePane() {
           so switching workspace must give them a fresh mount. */}
       <WorkspaceCard key={`ws-${activeWorkspaceId}`} editable={editable} workspace={workspace.data}
         onSave={(input) => update.mutateAsync(input)} />
-      {can('revenue.view') && revenue.data && (
-        <RevenueDefaultsCard key={`rev-${activeWorkspaceId}`} editable={can('revenue.manage')} rule={revenue.data.rule}
-          onSave={(input) => saveRevenue.mutateAsync(input)} />
-      )}
       <FeesCard key={`fees-${activeWorkspaceId}`} rateCard={rateCard}
         editable={platformFees.canEdit && platformFees.detail.isSuccess}
         onSave={(input) => platformFees.save.mutateAsync(input)} />
@@ -165,73 +161,6 @@ function WorkspaceCard({ editable, workspace, onSave }: {
       {editable && (
         <div className="actions-right">
           <button className="btn" onClick={save} disabled={isSaving || !dirty}>{isSaving ? 'Saving…' : 'Save'}</button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RevenueDefaultsCard({ editable, rule, onSave }: {
-  editable: boolean;
-  rule: RevenueRule;
-  onSave: (input: { accountSplitPct: number; agentPct: number }) => Promise<unknown>;
-}) {
-  const { labels } = useCurrentSession();
-  const [accountText, setAccountText] = useState(String(rule.accountSplitPct));
-  const [agentText, setAgentText] = useState(String(rule.agentPct));
-  const [isSaving, setIsSaving] = useState(false);
-  const accountPct = parseFloat(accountText);
-  const agentPct = parseFloat(agentText);
-  const valid = accountPct >= 0 && accountPct <= 100 && agentPct >= 0 && agentPct <= 100 && agentPct <= 100 - accountPct;
-  const dirty = accountText !== String(rule.accountSplitPct) || agentText !== String(rule.agentPct);
-  useUnsavedChanges('revenue-defaults', dirty);
-
-  const save = async () => {
-    if (!valid) { toast('Shares must be 0–100 and fit together.'); return; }
-    setIsSaving(true);
-    try { await onSave({ accountSplitPct: accountPct, agentPct }); toast('Defaults saved.'); }
-    catch (err) { toast(err instanceof Error ? err.message : 'Could not save the defaults.'); }
-    finally { setIsSaving(false); }
-  };
-
-  return (
-    <div className="card">
-      <div className="sechead">Revenue defaults</div>
-      <p className="sub">
-        What a new {labels.account.toLowerCase()} and a new {labels.agent.toLowerCase()} start on. Each one's own rate is set on its page;
-        changing these never re-prices anyone already set up.
-      </p>
-      <div className="setrow">
-        <div>
-          <div className="k">{editable ? <label htmlFor="default-account-split">{labels.account} share</label> : `${labels.account} share`}</div>
-          <div className="d">Of the distributable amount, after fees.</div>
-        </div>
-        {editable ? (
-          <div className="pct-input">
-            <input id="default-account-split" type="number" min={0} max={100} value={accountText} onChange={(e) => setAccountText(e.target.value)} />
-            <span className="sub">%</span>
-          </div>
-        ) : <span className="mono-val">{accountText}%</span>}
-      </div>
-      <div className="setrow">
-        <div>
-          <div className="k">{editable ? <label htmlFor="default-agent-pct">{labels.agent} commission</label> : `${labels.agent} commission`}</div>
-          <div className="d">Comes out of the agency's share.</div>
-        </div>
-        {editable ? (
-          <div className="pct-input">
-            <input id="default-agent-pct" type="number" min={0} max={100} value={agentText} onChange={(e) => setAgentText(e.target.value)} />
-            <span className="sub">%</span>
-          </div>
-        ) : <span className="mono-val">{agentText}%</span>}
-      </div>
-      <div className="setrow">
-        <div><div className="k">Agency keeps</div><div className="d">The remainder after both shares.</div></div>
-        <span className="mono-val">{valid ? `${Math.round((100 - accountPct - agentPct) * 100) / 100}%` : '—'}</span>
-      </div>
-      {editable && (
-        <div className="actions-right">
-          <button className="btn" onClick={save} disabled={isSaving || !dirty || !valid}>{isSaving ? 'Saving…' : 'Save defaults'}</button>
         </div>
       )}
     </div>

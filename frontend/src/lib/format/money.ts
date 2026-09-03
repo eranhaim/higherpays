@@ -1,10 +1,8 @@
 /**
  * Money formatting.
  *
- * The whole app uses EUR today (see `SUPPORTED_CURRENCIES` in the backend
- * `.env.example`), but every call passes the currency explicitly so that
- * adding a second currency later is a matter of threading it through, not
- * a search-and-replace.
+ * Agencies use EUR, USD, or GBP. Every call passes the currency explicitly so
+ * values never depend on the active browser locale or workspace.
  */
 
 const DEFAULT_CURRENCY = 'EUR';

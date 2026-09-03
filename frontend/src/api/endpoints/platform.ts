@@ -20,6 +20,11 @@ export interface PlatformWorkspace {
   grossVolume: number;
   lastActivity: string | null;
   blendedRatePct: number;
+  pspRatePct: number;
+  settlementPct: number;
+  marginRatePct: number;
+  pspFixedFee: number;
+  checkoutFee: number;
 }
 
 export interface PlatformOverview {
@@ -34,20 +39,17 @@ export interface OnboardAgencyInput {
   merchantId?: string;
   adminEmail: string;
   pspRatePct: number;
+  settlementPct: number;
   marginRatePct: number;
   pspFixedFee: number;
   /** Paid by the customer at checkout, on top of the price. Ours, not theirs. */
   checkoutFee: number;
-  chargebackFee: number;
-  refundFee: number;
-  declineFee: number;
-  accountSplitPct: number;
-  agentPct: number;
 }
 
 /** One versioned rate row: what the agency pays on every sale. */
 export interface PlatformFeeRate {
   pspRatePct: number;
+  settlementPct: number;
   marginRatePct: number;
   pspFixedFee: number;
   /** Paid by the customer at checkout, on top of the price. Ours, not theirs. */

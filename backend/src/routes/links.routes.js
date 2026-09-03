@@ -10,7 +10,6 @@ const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const { resolveDataScope, scopeParams } = require('../auth/dataScope');
 const { status: vocab } = require('../schema/entities');
 const config = require('../config');
-const provider = require('../providers/mantapay');
 const linksService = require('../services/links.service');
 const { resolveAttribution } = require('../services/attribution');
 
@@ -34,18 +33,10 @@ const publicLink = (l) => ({
   agentId: l.created_by_agent_id, agent: l.agent,
 });
 
-// -----------------------------------------------------------------------------
-// MantaPay hosted checkout. Card data never touches this server; the customer
-// pays on MantaPay's page. The amount is baked into the signed URL.
-// -----------------------------------------------------------------------------
-async function generateProviderLink({ ws, currency, amount, referenceId, description, expiresAt }) {
-  const notificationUrl = config.webhookPublicBase
-    ? `${config.webhookPublicBase.replace(/\/$/, '')}/webhooks/payment/${ws.webhook_endpoint_id}`
-    : undefined;
-  const { checkoutUrl } = await provider.createCheckout(ws, {
-    amount, currency, reference: referenceId, description, notificationUrl, expiresAt: expiresAt || undefined,
-  });
-  return checkoutUrl;
+// The public endpoint starts MantaPay's APM page and redirects the payer to
+// the returned CentroBill URL. No card data touches this server.
+function generateProviderLink(referenceId) {
+  return `${config.appPublicBase}/api/pay/${encodeURIComponent(referenceId)}`;
 }
 
 // What a caller may sort by. Not free text: the key picks the expression and
@@ -192,9 +183,7 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
     const card = (await c.query('SELECT checkout_fee FROM effective_platform_fee($1, now())', [wid(req)])).rows[0];
     const checkoutFee = Number(card?.checkout_fee || 0);
 
-    const checkoutUrl = await generateProviderLink({
-      ws, currency: cur, amount: amt + checkoutFee, referenceId, description, expiresAt,
-    });
+    const checkoutUrl = generateProviderLink(referenceId);
 
     const link = (await c.query(
       `INSERT INTO payment_links

@@ -26,10 +26,9 @@ const config = {
   accessTokenTtl: process.env.ACCESS_TOKEN_TTL || '15m',
   refreshTokenDays: parseInt(process.env.REFRESH_TOKEN_DAYS || '30', 10),
 
-  // Currencies. EUR-only for now. FX (closing-date cross-rates, per-currency
-  // reserves, EUR-denominated fixed fees converted into the transaction
-  // currency) is deliberately out of scope. Add a currency here to re-enable.
-  supportedCurrencies: (process.env.SUPPORTED_CURRENCIES || 'EUR').split(',').map((c) => c.trim().toUpperCase()),
+  // Supported agency and link currencies. FX is deliberately out of scope:
+  // every workspace keeps its own currency and all amounts stay in it.
+  supportedCurrencies: (process.env.SUPPORTED_CURRENCIES || 'EUR,USD,GBP').split(',').map((c) => c.trim().toUpperCase()),
 
   // ── MantaPay (payment provider) ─────────────────────────────────────────
   // Hosted-page base URL. The per-merchant hash key is resolved per workspace
@@ -39,6 +38,7 @@ const config = {
   // Status check / server-to-server; different host from the hosted page.
   mantapaySearchBase: process.env.MANTAPAY_SEARCH_BASE || 'https://webservices.mantapay.biz',
   mantapayProcessBase: process.env.MANTAPAY_PROCESS_BASE || 'https://process.mantapay.biz',
+  mantapayCpm: process.env.MANTAPAY_CPM || '743',
   // Webservices login credentials (Search API + payouts). Use their API-user
   // role so a human rotating their portal password doesn't break the link.
   mantapayApiEmail: process.env.MANTAPAY_API_EMAIL || null,

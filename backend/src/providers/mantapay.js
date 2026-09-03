@@ -19,6 +19,7 @@ const checkout = require('./mantapay-checkout');
 const status = require('./mantapay-status');
 const search = require('./mantapay-search');
 const auth = require('./mantapay-auth');
+const apm = require('./mantapay-apm');
 
 // MantaPay signs notifications in the body, not a header — but the routes read a
 // header name, so expose the field name they use. verifyWebhookSignature below
@@ -195,4 +196,5 @@ module.exports = {
   getPaymentStatus, mapPaymentStatus, isAmbiguousStatus, refundPayment,
   // richer surfaces, used directly by reconciliation
   status, search, auth, signature: sig, checkout,
+  apm,
 };

@@ -201,7 +201,7 @@ const Account = entity('accounts', {
     country:           char(2),
     status:            enumOf(ACCOUNT_STATUS).notNull().default("'active'"),
     payModel:          enumOf(PAY_MODEL).notNull().default("'share'"),
-    revenueSplitPct:   percent().notNull().default('70'),   // ignored while payModel is 'salary'
+    revenueSplitPct:   percent().notNull(),                 // ignored while payModel is 'salary'
     salaryAmount:      money().notNull().default('0'),      // owed once per payout period
   },
   foreignKeys: [
@@ -226,7 +226,7 @@ const Agent = entity('agents', {
     // Same device as accounts.role: the user must hold role 'agent' here.
     role:          enumOf(['agent']).notNull().default("'agent'"),
     country:       char(2),
-    commissionPct: percent().notNull().default('0'),  // overrides revenue_rules.agentPct
+    commissionPct: percent().notNull(),                     // set for each agent
   },
   foreignKeys: [
     { columns: ['workspaceId', 'userId', 'role'], table: 'workspace_users',

@@ -36,7 +36,10 @@ test('a €100 cascade deal splits to the documented figures', async () => {
 });
 
 test('the platform admin can inspect the payment waterfall', async () => {
-  const t = await createTenant(app, { pspRatePct: 8, pspFixedFee: 0.5, marginRatePct: 5 });
+  const t = await createTenant(app, {
+    feeModel: 'cascade', mdrPct: 7, settlementPct: 1,
+    pspRatePct: 8, pspFixedFee: 0.5, marginRatePct: 5,
+  });
   const account = await createAccount(app, t, { revenueSplitPct: 70 });
   const { paymentId } = await paySale(app, t, account, 100);
   const platform = await getPlatformAdmin(app);
@@ -48,13 +51,20 @@ test('the platform admin can inspect the payment waterfall', async () => {
 
   assert.equal(flow.customerTotal, 100);
   assert.equal(flow.saleAmount, 100);
-  assert.equal(flow.fees.provider, 8.5);
+  assert.equal(flow.fees.provider, 8.425);
   assert.equal(flow.fees.higherPaysMargin, 5);
-  assert.equal(flow.fees.platform, 13.5);
-  assert.equal(flow.distributable, 86.5);
-  assert.equal(flow.distribution.account.amount, 60.55);
+  assert.equal(flow.fees.platform, 13.43);
+  assert.equal(flow.distributable, 86.57);
+  assert.equal(flow.distribution.account.amount, 60.6);
   assert.equal(flow.distribution.agent.amount, 0);
-  assert.equal(flow.distribution.agency.amount, 25.95);
+  assert.equal(flow.distribution.agency.amount, 25.97);
+  assert.equal(flow.rates.mdr.percentage, 7);
+  assert.equal(flow.rates.mdr.base, 100);
+  assert.equal(flow.rates.settlement.percentage, 1);
+  assert.equal(flow.rates.settlement.base, 92.5);
+  assert.equal(flow.rates.higherPaysMargin.percentage, 5);
+  assert.equal(flow.distribution.account.percentage, 70);
+  assert.equal(flow.distribution.account.base, 86.57);
 
   await request(app)
     .get(`/workspaces/${t.workspaceId}/payments/${paymentId}/flow`)

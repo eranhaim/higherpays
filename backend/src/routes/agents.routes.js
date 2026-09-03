@@ -14,13 +14,21 @@ const { wid, uid } = require('../lib/scope');
 const publicAgent = (r) => ({
   id: r.id, userId: r.user_id, name: r.name, email: r.email, status: r.status,
   country: r.country, commissionPct: Number(r.commission_pct),
-  accountsAssigned: Number(r.accounts_assigned || 0), createdAt: r.created_at,
+  accountsAssigned: Number(r.accounts_assigned || 0),
+  accounts: r.assigned_accounts || [],
+  createdAt: r.created_at,
 });
 
 const SELECT = `
   SELECT ag.id, ag.user_id, ag.country, ag.commission_pct, ag.created_at,
          u.full_name AS name, u.email, wu.status,
-         (SELECT count(*) FROM account_agents aa WHERE aa.agent_id = ag.id) AS accounts_assigned
+         (SELECT count(*) FROM account_agents aa WHERE aa.agent_id = ag.id) AS accounts_assigned,
+         COALESCE((
+           SELECT json_agg(json_build_object('id', a.id, 'name', a.name) ORDER BY a.name)
+             FROM account_agents aa
+             JOIN accounts a ON a.id = aa.account_id
+            WHERE aa.agent_id = ag.id
+         ), '[]'::json) AS assigned_accounts
     FROM agents ag
     JOIN users u ON u.id = ag.user_id
     JOIN workspace_users wu ON wu.workspace_id = ag.workspace_id AND wu.user_id = ag.user_id`;
@@ -44,7 +52,8 @@ router.post('/', requirePermission('agents.manage'), asyncHandler(async (req, re
   if (!isStr(email, 100) || !email.includes('@')) return badRequest(res, 'a valid email is required', ['email']);
   if (!isStr(fullName, 120)) return badRequest(res, 'fullName is required', ['fullName']);
   if (country != null && !/^[A-Za-z]{2}$/.test(country)) return badRequest(res, 'country must be 2 letters', ['country']);
-  const pct = commissionPct == null ? 0 : Number(commissionPct);
+  if (commissionPct == null) return badRequest(res, 'commissionPct is required', ['commissionPct']);
+  const pct = Number(commissionPct);
   if (!(pct >= 0 && pct <= 100)) return badRequest(res, 'commissionPct must be 0..100', ['commissionPct']);
 
   const out = await withTransaction(async (c) => {

@@ -101,10 +101,11 @@ router.post('/', requirePermission('accounts.manage'), asyncHandler(async (req, 
   if (!isStr(name, 100)) return badRequest(res, 'name is required', ['name']);
   if (!isOptStr(handle, 100)) return badRequest(res, 'invalid handle', ['handle']);
   if (country != null && !/^[A-Za-z]{2}$/.test(country)) return badRequest(res, 'country must be 2 letters', ['country']);
-  const split = revenueSplitPct == null ? 70 : Number(revenueSplitPct);
-  if (!(split >= 0 && split <= 100)) return badRequest(res, 'revenueSplitPct must be 0..100', ['revenueSplitPct']);
   const pay = payModel == null ? 'share' : payModel;
   if (!vocab.PAY_MODEL.includes(pay)) return badRequest(res, `payModel must be one of ${vocab.PAY_MODEL.join(', ')}`, ['payModel']);
+  if (pay === 'share' && revenueSplitPct == null) return badRequest(res, 'revenueSplitPct is required for share pay', ['revenueSplitPct']);
+  const split = revenueSplitPct == null ? 0 : Number(revenueSplitPct);
+  if (!(split >= 0 && split <= 100)) return badRequest(res, 'revenueSplitPct must be 0..100', ['revenueSplitPct']);
   const salary = salaryAmount == null ? 0 : Number(salaryAmount);
   if (!(salary >= 0)) return badRequest(res, 'salaryAmount must be 0 or more', ['salaryAmount']);
 

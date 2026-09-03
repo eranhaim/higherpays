@@ -12,6 +12,7 @@ export interface Agent {
   country: string | null;
   commissionPct: number;
   accountsAssigned: number;
+  accounts: Array<{ id: string; name: string }>;
   createdAt: string;
 }
 
