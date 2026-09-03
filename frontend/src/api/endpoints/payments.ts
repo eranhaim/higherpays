@@ -1,7 +1,7 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
 import type { Page } from '../types';
-import type { LinkType } from './links';
+import type { LinkType, ReassignImpact, ReassignInput } from './links';
 
 /** Mirrors PAYMENT_STATUS in the schema. */
 export type PaymentStatus = 'paid' | 'failed' | 'refunded';
@@ -146,4 +146,10 @@ export const paymentsApi = {
   refund: (id: string) => api.post<ReversalResult>(workspacePath(`/payments/${id}/refund`), {}),
 
   chargeback: (id: string) => api.post<ReversalResult>(workspacePath(`/payments/${id}/chargeback`), {}),
+
+  /** What reassigning this payment would move, read before confirming it. */
+  impact: (id: string) => api.get<ReassignImpact>(workspacePath(`/payments/${id}/impact`)),
+
+  reassign: (id: string, input: ReassignInput) =>
+    api.patch<Payment>(workspacePath(`/payments/${id}/attribution`), input),
 };

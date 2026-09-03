@@ -3,6 +3,7 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
   paymentsApi, categoriesApi, customersApi, accountsApi, agentsApi,
   type Payment, type ListPaymentsQuery, type CompletePaymentInput, type Category, type Customer, type Account, type Agent,
+  type ReassignInput,
 } from '../../api/endpoints';
 
 /** What the export dialog collects. Range strings are yyyy-mm-dd, '' for open. */
@@ -27,6 +28,8 @@ export interface UsePaymentsDataResult {
   complete: (id: string, input: CompletePaymentInput) => Promise<Payment>;
   /** Records a reversal already issued in the provider dashboard. */
   recordReversal: (id: string, kind: 'refund' | 'chargeback') => Promise<void>;
+  /** Moves one payment to another creator or agent. */
+  reassign: (id: string, input: ReassignInput) => Promise<void>;
   exportCsv: (input: ExportInput) => Promise<void>;
 }
 
@@ -77,6 +80,10 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     mutationFn: ({ id, input }: { id: string; input: CompletePaymentInput }) => paymentsApi.complete(id, input),
     onSuccess: invalidate,
   });
+  const reassign = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: ReassignInput }) => paymentsApi.reassign(id, input),
+    onSuccess: invalidate,
+  });
   const reverse = useMutation({
     mutationFn: ({ id, kind }: { id: string; kind: 'refund' | 'chargeback' }) =>
       kind === 'refund' ? paymentsApi.refund(id) : paymentsApi.chargeback(id),
@@ -96,6 +103,7 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     loadMore: () => { void payments.fetchNextPage(); },
     complete: (id, input) => complete.mutateAsync({ id, input }),
     recordReversal: async (id, kind) => { await reverse.mutateAsync({ id, kind }); },
+    reassign: async (id, input) => { await reassign.mutateAsync({ id, input }); },
     exportCsv: (input) => paymentsApi.exportCsv(
       { ...filters, from: input.from || undefined, to: input.to || undefined },
       { columns: input.columns, limit: input.limit },

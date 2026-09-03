@@ -76,6 +76,13 @@ export interface ReassignImpact {
   amount: number;
 }
 
+/** Who a link or a payment should belong to from now on. */
+export interface ReassignInput {
+  accountId?: string;
+  /** null clears the agent; omitted leaves it as it is. */
+  agentId?: string | null;
+}
+
 export interface ListLinksQuery {
   status?: string;
   type?: string;
@@ -113,6 +120,6 @@ export const linksApi = {
   /** What reassigning this link would move, read before confirming it. */
   impact: (id: string) => api.get<ReassignImpact>(workspacePath(`/links/${id}/impact`)),
 
-  reassign: (id: string, input: { accountId?: string; agentId?: string | null }) =>
+  reassign: (id: string, input: ReassignInput) =>
     api.patch<PaymentLink>(workspacePath(`/links/${id}/attribution`), input),
 };

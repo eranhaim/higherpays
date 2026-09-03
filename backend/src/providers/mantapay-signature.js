@@ -13,8 +13,8 @@
 // Scheme: urlencode( base64( SHA256_raw( concat(values) + hashKey ) ) )
 //  * base64 is of the RAW 32 digest bytes, NOT of the hex string.
 //  * Values are concatenated with NO delimiter; empty values contribute nothing.
-//  * Each value is URL-encoded BEFORE hashing (their step 2), so the string that
-//    is hashed matches the string that is transmitted.
+//  * Values are hashed VERBATIM. The wire is .NET-encoded, so the hashed string
+//    and the transmitted string DIFFER — see the note above signHosted.
 //  * POST: send Base64Signature (skip the urlencode) — their note under step 1.
 const crypto = require('crypto');
 const config = require('../config');
@@ -74,32 +74,34 @@ function digest(payload) {
  * @param {object} opts    { order, urlEncodeResult }
  * @returns {{ base64: string, encoded: string, signedString: string }}
  */
-// HASH INPUT ENCODING — settled against their live Signature Validator.
+// HASH INPUT ENCODING — settled against the LIVE hosted page, which is the only
+// authority that matters: it is what rejects real links.
 //
-// Neither doc page states the real rule plainly:
-//   Signature page : hashes fully URL-ENCODED values (test%40test.com, %2b972...)
-//   Validator page : says "raw (un-encoded) values"
-// Both are wrong as written. The validator's own field-by-field output shows the
-// truth: "%XX -> char, + kept as +". That is a HYBRID.
+//   hash input = the raw value, VERBATIM. Nothing escaped, spaces left as spaces.
 //
-//   hash input = the raw value, with SPACES replaced by "+". Nothing else escaped.
+// Their three sources contradict each other and two of them are wrong:
+//   Signature page  : hashes fully URL-ENCODED values (test%40test.com, %2b972...)
+//   Validator page  : says "raw (un-encoded) values"
+//   Validator output: shows "%XX -> char, + kept as +", i.e. spaces become "+"
 //
-// Equivalently: encode for the wire, then decode the %XX escapes back, keeping +.
-// Verified: this reproduces their expected concat (168 chars) and their expected
-// signature /o+QnAtvuyRHFRntTEtq879sWXq1oXl2P3I59ksTUkQ= byte-for-byte.
+// We followed the validator's output and it produced links the hosted page
+// refused with "Cannot proceed, missing or invalid signature." Isolated against
+// the live page (Sep 2026), one field at a time:
+//   disp_payFor "PPV bundle"  space -> "+"  REJECTED   verbatim  ACCEPTED
+//   client_fullName "Test Payer"  same result
+//   client_email "test@example.com"  ACCEPTED either way (no space)
+//   client_phoneNum "+35799123456"   ACCEPTED verbatim (a real "+" is kept)
+// So the wire still uses .NET encoding (space -> "+"), and the hash does not.
+// The two DIVERGE, which is why this is easy to get wrong.
 //
 // Empty parameters contribute nothing but still occupy their position in the order.
-function hashValue(v) {
-  return String(v).replace(/ /g, '+');
-}
-
 function signHosted(params, hashKey, opts = {}) {
   if (!hashKey) throw new Error('mantapay_hash_key_missing');
   const order = opts.order || HOSTED_FIELD_ORDER_REQUEST;
   const signedString = order
     .map((k) => {
       const v = params[k];
-      return v == null || v === '' ? '' : hashValue(v);
+      return v == null || v === '' ? '' : String(v);
     })
     .join('') + hashKey;
   const base64 = digest(signedString);
@@ -130,7 +132,7 @@ function safeEqual(a, b) {
 // test/mantapay.test.js — if their scheme ever changes, that suite fails.
 
 module.exports = {
-  digest, urlEncodeDotNet, hashValue, signHosted, signServerToServer, safeEqual,
+  digest, urlEncodeDotNet, signHosted, signServerToServer, safeEqual,
   HOSTED_FIELD_ORDER_REQUEST, HOSTED_FIELD_ORDER_JS, S2S_FIELD_ORDER,
 };
 

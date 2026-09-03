@@ -88,7 +88,7 @@ Fields sent (`mantapay-checkout.js`):
 | `notification_url` | our webhook endpoint |
 | `url_redirect` | thank-you page |
 | `Brand` | attribution tag |
-| `ExpiredOn` | **epoch seconds**, GMT |
+| `ExpiredOn` | **epoch seconds**, GMT — omitted entirely when the link has no expiry; sending it empty is rejected |
 | `EC` | optional surcharge, `price\|Name\|Description`, 50-char cap |
 
 ### Signature
@@ -105,25 +105,33 @@ urlencode( base64( SHA256_raw( concat(values) + hashKey ) ) )
 
 Two traps, both fatal because the hash is byte-exact, both handled:
 
-* **Hash input** is the raw value with **spaces replaced by `+`**, nothing else
-  escaped. Neither doc page says this — the Signature page shows fully
-  URL-encoded values, the Validator page says raw values, and both are wrong as
-  written. The truth came from the Validator's field-by-field output.
+* **Hash input** is the raw value, **verbatim** — spaces stay spaces, nothing is
+  escaped. All three of MantaPay's sources disagree here and two are wrong: the
+  Signature page shows fully URL-encoded values, the Validator page says raw
+  values, and the Validator's field-by-field output shows spaces as `+`. We
+  followed the Validator's output and the live hosted page rejected the links
+  with *"Cannot proceed, missing or invalid signature."* Isolated field by field
+  against the live page (Sep 2026); the live page is the authority.
 * **Wire encoding** is .NET `HttpUtility.UrlEncode`, not `encodeURIComponent`:
   space → `+`, hex escapes lowercase (`%2b`, not `%2B`).
+
+So the hashed string and the transmitted string **differ**, on purpose.
 
 `buildCheckout` derives the query string and the signature from **one ordered
 array**, so they cannot drift.
 
 ### Verified vectors
 
-Both captured from MantaPay's own tools and asserted in the test suite:
+Asserted in the test suite:
 
 ```
-Generator : 377109718015EURProduct-name0en-gbjohn+smith...
-            -> uaPyTpm63hyv0bdYfkfLspPXxr2lW6KOlfy4CExuRnQ=
-Validator : 168-char concat -> /o+QnAtvuyRHFRntTEtq879sWXq1oXl2P3I59ksTUkQ=
+Generator  : 377109718015EURProduct-name0en-gbjohn+smith...
+             -> uaPyTpm63hyv0bdYfkfLspPXxr2lW6KOlfy4CExuRnQ=
+Hosted page: 168-char concat -> GaioKE8QDXXb2Oal10o09GQYDz8ouymFCCqmWfgqd84=
 ```
+
+The Generator vector only exercises `digest()`. The second is the one that
+matters: it is the concatenation the live hosted page accepts.
 
 If MantaPay ever changes the scheme, `npm test` fails instead of production
 silently emitting links that get reply 500.

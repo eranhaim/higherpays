@@ -12,6 +12,7 @@ const { status: vocab } = require('../schema/entities');
 const config = require('../config');
 const provider = require('../providers/mantapay');
 const linksService = require('../services/links.service');
+const { resolveAttribution, repostSales } = require('../services/attribution');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -264,40 +265,24 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
       'SELECT * FROM payment_links WHERE workspace_id = $1 AND id = $2', [wid(req), req.params.id])).rows[0];
     if (!link) return { notFound: true };
 
-    const nextAccountId = accountId === undefined ? link.account_id : accountId;
-    const nextAgentId = agentId === undefined ? link.created_by_agent_id : (agentId || null);
+    // A reversed sale cannot be moved: only its sale entry would be re-posted,
+    // leaving the refund that mirrors it against the old creator.
+    const reversed = (await c.query(
+      "SELECT 1 FROM payments WHERE payment_link_id = $1 AND status = 'refunded'", [link.id])).rows[0];
+    if (reversed) return { err: 'payment_reversed', fields: [] };
 
-    const account = (await c.query(
-      "SELECT id FROM accounts WHERE id = $1 AND workspace_id = $2 AND status <> 'archived'",
-      [nextAccountId, wid(req)])).rows[0];
-    if (!account) return { err: 'account_not_found', fields: ['accountId'] };
-
-    if (nextAgentId) {
-      const agent = (await c.query(
-        'SELECT id FROM agents WHERE id = $1 AND workspace_id = $2', [nextAgentId, wid(req)])).rows[0];
-      if (!agent) return { err: 'agent_not_found', fields: ['agentId'] };
-      const assigned = (await c.query(
-        'SELECT 1 FROM account_agents WHERE account_id = $1 AND agent_id = $2', [nextAccountId, nextAgentId])).rows[0];
-      if (!assigned) return { err: 'agent_not_assigned_to_account', fields: ['agentId'] };
-    }
+    const next = await resolveAttribution(c, wid(req), {
+      accountId: accountId === undefined ? link.account_id : accountId,
+      agentId: agentId === undefined ? link.created_by_agent_id : (agentId || null),
+    });
+    if (next.err) return next;
 
     await c.query(
       'UPDATE payment_links SET account_id = $2, created_by_agent_id = $3 WHERE id = $1',
-      [link.id, nextAccountId, nextAgentId]);
+      [link.id, next.accountId, next.agentId]);
     const moved = await c.query(
-      'UPDATE payments SET account_id = $2, agent_id = $3 WHERE payment_link_id = $1',
-      [link.id, nextAccountId, nextAgentId]);
-
-    // Re-post every sale on this link. Deleting first is what makes it a
-    // rewrite: the new entries are unpaid, whatever the old ones had settled.
-    const sales = (await c.query(`
-      SELECT t.id FROM transactions t
-       WHERE t.payment_id IN (SELECT id FROM payments WHERE payment_link_id = $1)
-         AND t.type = 'payment' AND t.status = 'approved'`, [link.id])).rows;
-    for (const t of sales) {
-      await c.query("DELETE FROM revenue_entries WHERE transaction_id = $1 AND entry_type = 'sale'", [t.id]);
-      await c.query('SELECT fn_post_sale($1)', [t.id]);
-    }
+      'UPDATE payments SET account_id = $2, agent_id = $3 WHERE payment_link_id = $1 RETURNING id',
+      [link.id, next.accountId, next.agentId]);
 
     return {
       link: (await c.query(`
@@ -308,7 +293,7 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
           LEFT JOIN users u ON u.id = ag.user_id
          WHERE pl.id = $1`, [link.id])).rows[0],
       moved: moved.rowCount,
-      reposted: sales.length,
+      reposted: await repostSales(c, moved.rows.map((r) => r.id)),
       from: { accountId: link.account_id, agentId: link.created_by_agent_id },
     };
   });

@@ -2,7 +2,7 @@ import { useQuery, useInfiniteQuery, useMutation, useQueryClient, keepPreviousDa
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
   linksApi, accountsApi, workspacesApi,
-  type ListLinksQuery, type PaymentLink, type Account, type LinkLimits, type LinkType,
+  type ListLinksQuery, type PaymentLink, type Account, type LinkLimits, type LinkType, type ReassignInput,
 } from '../../api/endpoints';
 
 export interface CreateLinkFormInput {
@@ -23,6 +23,8 @@ export interface UseLinksDataResult {
   loadMore: () => void;
   createLink: (input: CreateLinkFormInput) => Promise<PaymentLink>;
   cancelLink: (id: string) => Promise<void>;
+  /** Moves the link and every payment on it to another creator or agent. */
+  reassignLink: (id: string, input: ReassignInput) => Promise<void>;
 }
 
 export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
@@ -57,6 +59,16 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     onSuccess: invalidateLinks,
   });
   const cancel = useMutation({ mutationFn: (id: string) => linksApi.cancel(id), onSuccess: invalidateLinks });
+  // Reassigning rewrites payments and their splits, so the pages that show
+  // them have to be re-read as well.
+  const reassign = useMutation({
+    mutationFn: ({ id, input }: { id: string; input: ReassignInput }) => linksApi.reassign(id, input),
+    onSuccess: () => {
+      invalidateLinks();
+      queryClient.invalidateQueries({ queryKey: ['payments', activeWorkspaceId] });
+      queryClient.invalidateQueries({ queryKey: ['payouts-breakdown', activeWorkspaceId] });
+    },
+  });
   return {
     links: links.data?.pages.flatMap((p) => p.items) ?? [],
     accounts: accounts.data ?? [],
@@ -68,5 +80,6 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     loadMore: () => { void links.fetchNextPage(); },
     createLink: (input) => create.mutateAsync(input),
     cancelLink: async (id) => { await cancel.mutateAsync(id); },
+    reassignLink: async (id, input) => { await reassign.mutateAsync({ id, input }); },
   };
 }

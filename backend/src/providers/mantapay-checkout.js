@@ -74,6 +74,11 @@ function buildCheckout(o) {
 
   // ExpiredOn is EPOCH SECONDS in GMT (their note). This replaces the manual
   // 10-minute expiry we had to run ourselves with the previous provider.
+  //
+  // Reusable links never expire, and the hosted page rejects an EMPTY ExpiredOn
+  // with "Input string was not in a correct format." — it parses the field
+  // whenever it is present. So the field is omitted entirely when there is no
+  // deadline, rather than sent blank.
   let expiredOn = '';
   if (o.expiresAt) {
     const ms = o.expiresAt instanceof Date ? o.expiresAt.getTime() : Number(o.expiresAt);
@@ -98,8 +103,8 @@ function buildCheckout(o) {
     ['notification_url', clip(o.notificationUrl, MAX_LEN.notification_url)],
     ['url_redirect', clip(o.redirectUrl, MAX_LEN.url_redirect)],
     ['Brand', clip(o.brand)],                         // source/attribution tag
-    ['ExpiredOn', expiredOn],
   ];
+  if (expiredOn) fields.push(['ExpiredOn', expiredOn]);
 
   // Surcharge shown to the payer as a separate line, when configured.
   //

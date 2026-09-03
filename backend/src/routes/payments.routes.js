@@ -2,7 +2,7 @@
 // Payments: one row per checkout attempt. Created by the webhook or the
 // reconciler, completed by the agent (customer + category), reversed here.
 const express = require('express');
-const { withTransaction } = require('../db');
+const { query, withTransaction } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
@@ -10,6 +10,7 @@ const { isStr, isOptStr, badRequest, toCSV } = require('../util/validate');
 const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const { resolveDataScope, scopeParams } = require('../auth/dataScope');
 const { hasPermission } = require('../auth/permissions');
+const { resolveAttribution, repostSales } = require('../services/attribution');
 const notifier = require('../notify');
 const config = require('../config');
 
@@ -207,6 +208,77 @@ router.patch('/:id/details', requirePermission('payments.complete'), asyncHandle
   if (out.err) return res.status(out.code).json({ error: out.err });
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'payment.complete', entityType: 'payment', entityId: out.row.id, metadata: { categoryId } });
   res.json(publicPayment(out.row, { seesFees: hasPermission(req.access, 'data.view_all') }));
+}));
+
+// GET /:id/impact — whether this payment has already been paid out. Read
+// before the confirmation, so the dialog can say it in numbers rather than in
+// general. Same shape as a link's impact, over the one payment.
+router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
+  const row = (await query(`
+    SELECT count(*)::int AS payments,
+           count(*) FILTER (WHERE re.account_payout_id IS NOT NULL OR re.agent_payout_id IS NOT NULL)::int AS paid_out,
+           COALESCE(SUM(p.amount), 0) AS amount
+      FROM payments p
+      LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
+      LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
+     WHERE p.workspace_id = $1 AND p.id = $2`, [wid(req), req.params.id])).rows[0];
+  res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount) });
+}));
+
+// PATCH /:id/attribution  { accountId?, agentId? }
+// Moves one payment to another creator or agent. The sale is re-posted against
+// the new attribution, so a payout that already paid the old creator for it is
+// left overpaid — /impact says so before confirming.
+router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
+  const { accountId, agentId } = req.body || {};
+  if (accountId === undefined && agentId === undefined) {
+    return badRequest(res, 'accountId or agentId is required', ['accountId', 'agentId']);
+  }
+
+  const out = await withTransaction(async (c) => {
+    const payment = (await c.query(
+      'SELECT * FROM payments WHERE workspace_id = $1 AND id = $2', [wid(req), req.params.id])).rows[0];
+    if (!payment) return { notFound: true };
+    // A reversed sale cannot be moved: only its sale entry would be re-posted,
+    // leaving the refund that mirrors it against the old creator.
+    if (payment.status === 'refunded') return { err: 'payment_reversed', fields: [] };
+
+    const next = await resolveAttribution(c, wid(req), {
+      accountId: accountId === undefined ? payment.account_id : accountId,
+      agentId: agentId === undefined ? payment.agent_id : (agentId || null),
+    });
+    if (next.err) return next;
+
+    await c.query(
+      'UPDATE payments SET account_id = $2, agent_id = $3 WHERE id = $1',
+      [payment.id, next.accountId, next.agentId]);
+    // A single-use link carries exactly this payment, so it follows it. A
+    // reusable link stays where it is: its other payments have not moved.
+    if (payment.payment_link_id) {
+      await c.query(
+        "UPDATE payment_links SET account_id = $2, created_by_agent_id = $3 WHERE id = $1 AND type = 'single_use'",
+        [payment.payment_link_id, next.accountId, next.agentId]);
+    }
+    const reposted = await repostSales(c, [payment.id]);
+    return {
+      row: await loadScoped(c, req, payment.id),
+      reposted,
+      from: { accountId: payment.account_id, agentId: payment.agent_id },
+    };
+  });
+
+  if (out.notFound) return res.status(404).json({ error: 'not_found' });
+  if (out.err) return badRequest(res, out.err, out.fields);
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'payment.reassign',
+    entityType: 'payment', entityId: req.params.id,
+    metadata: {
+      from: out.from,
+      to: { accountId: out.row.account_id, agentId: out.row.agent_id },
+      reposted: out.reposted,
+    },
+  });
+  res.json({ ...publicPayment(out.row, { seesFees: hasPermission(req.access, 'data.view_all') }), reposted: out.reposted });
 }));
 
 // A refund or chargeback reverses the sale in the ledger and records a second

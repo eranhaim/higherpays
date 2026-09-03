@@ -32,8 +32,10 @@ test('hashing matches MantaPay Signature Generator output', () => {
   assert.equal(encodeURIComponent(b64), 'uaPyTpm63hyv0bdYfkfLspPXxr2lW6KOlfy4CExuRnQ%3D', 'url-encoded form');
 });
 
-// Vector captured from MantaPay's live Signature Validator.
-test('request signature matches MantaPay Signature Validator, byte for byte', () => {
+// Vector captured from the LIVE hosted page (Sep 2026). MantaPay's own Signature
+// Validator disagrees with it — the validator wants spaces as "+", the hosted
+// page rejects that. The hosted page wins: it is what payers actually load.
+test('request signature hashes values verbatim, as the live hosted page requires', () => {
   const order = ['merchantID', 'trans_type', 'trans_installments', 'trans_amount', 'trans_currency',
     'trans_refNum', 'disp_payFor', 'disp_lng', 'client_fullName', 'client_email', 'client_phoneNum',
     'notification_url', 'url_redirect', 'Brand', 'ExpiredOn'];
@@ -45,18 +47,18 @@ test('request signature matches MantaPay Signature Validator, byte for byte', ()
     url_redirect: 'https://app.higherpays.com/thanks', Brand: '', ExpiredOn: '' };
   const r = sig.signHosted(params, '999999', { order });
   assert.equal(r.signedString,
-    '37710970120.00EURord-test-001PPV+bundleen-USJohn+Smithjohn@example.com'
+    '37710970120.00EURord-test-001PPV bundleen-USJohn Smithjohn@example.com'
     + '+35799123456https://api.higherpays.com/webhooks/payment/abc'
     + 'https://app.higherpays.com/thanks999999', 'concatenation string (168 chars)');
-  assert.equal(r.base64, '/o+QnAtvuyRHFRntTEtq879sWXq1oXl2P3I59ksTUkQ=', 'signature /o+QnAtvuy...');
+  assert.equal(r.base64, 'GaioKE8QDXXb2Oal10o09GQYDz8ouymFCCqmWfgqd84=', 'signature GaioKE8QDX...');
 });
 
-test('hash input keeps + for spaces and does NOT escape anything else', () => {
-  // Neither doc page states this; it came from the Validator's field-by-field output.
-  assert.equal(sig.hashValue('PPV bundle'), 'PPV+bundle');
-  assert.equal(sig.hashValue('john@example.com'), 'john@example.com');
-  assert.equal(sig.hashValue('+35799123456'), '+35799123456');
-  assert.equal(sig.hashValue('https://a.com/b?c=d'), 'https://a.com/b?c=d');
+// A description with a space is the common case, and the "+" rule made the
+// hosted page reject every one of them. Pin the divergence in both directions.
+test('hash input keeps spaces while the wire turns them into +', () => {
+  const order = ['disp_payFor'];
+  assert.equal(sig.signHosted({ disp_payFor: 'PPV bundle' }, 'k', { order }).signedString, 'PPV bundlek');
+  assert.equal(sig.urlEncodeDotNet('PPV bundle'), 'PPV+bundle');
 });
 
 test('wire encoding is .NET style: space -> +, lowercase hex', () => {
@@ -155,10 +157,11 @@ test('the emitted URL and its signature can never disagree', () => {
   const r = checkout.buildCheckout({ ...baseCheckout,
     customer: { fullName: 'John Smith', email: 'john@example.com', phone: '+35799123456' },
     notificationUrl: 'https://api.example.com/webhooks/payment/abc' });
-  // recompute the signature from the wire exactly as MantaPay will
+  // recompute the signature from the wire exactly as MantaPay will: undo the
+  // .NET encoding and hash what comes back, verbatim
   const emitted = r.url.split('?')[1].split('&').map((p) => p.split('='));
   const values = emitted.filter(([k]) => k !== 'signature')
-    .map(([, v]) => sig.hashValue(decodeURIComponent(String(v).replace(/\+/g, '%20'))));
+    .map(([, v]) => decodeURIComponent(String(v).replace(/\+/g, '%20')));
   assert.equal(sig.digest(values.join('') + KEY), r.signature);
 });
 

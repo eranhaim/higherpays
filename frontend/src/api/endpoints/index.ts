@@ -20,7 +20,7 @@ export {
 export {
   linksApi, LINK_TYPES, LINK_TYPE_LABELS, LINK_STATUSES, LINK_STATUS_LABELS, isShareable,
   type ListLinksQuery, type PaymentLink, type LinkStatus, type LinkType, type LinkSort, type CreateLinkInput,
-  type ReassignImpact,
+  type ReassignImpact, type ReassignInput,
 } from './links';
 export {
   paymentsApi, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, PAYMENT_EXPORT_COLUMNS, isReversed,
