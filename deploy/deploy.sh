@@ -79,9 +79,10 @@ fi
 # Unquoted on purpose: empty $SERVICE means every service in the compose file.
 # The backend entrypoint applies pending migrations before the API starts, so
 # a schema change ships with the code that needs it.
-docker compose build $SERVICE
-docker compose up -d $SERVICE
-docker compose ps
+COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.rds.yml)
+"${COMPOSE[@]}" build $SERVICE
+"${COMPOSE[@]}" up -d $SERVICE
+"${COMPOSE[@]}" ps
 
 # The health route is served through the frontend nginx container, so a 200
 # proves nginx -> backend -> Postgres came back up, not just that a process
@@ -99,7 +100,7 @@ done
 
 echo "health check failed after 30s" >&2
 curl -sS -o /dev/stderr -w '\nhttp %{http_code}\n' http://localhost:8083/api/health >&2 || true
-docker compose logs --tail 40 backend >&2
-echo "roll back with: cd $REMOTE_DIR && git reset --hard $previous && docker compose up -d --build" >&2
+"${COMPOSE[@]}" logs --tail 40 backend >&2
+echo "roll back with: cd $REMOTE_DIR && git reset --hard $previous && docker compose -f docker-compose.yml -f docker-compose.rds.yml up -d --build" >&2
 exit 1
 REMOTE

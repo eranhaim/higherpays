@@ -1,10 +1,12 @@
-// Local dev stack: Postgres (docker) + backend + frontend. Ctrl+C stops all of it.
+// Local dev stack: Postgres (docker) + backend + frontend. Set both database
+// URLs in the root .env to use an external database instead. Ctrl+C stops all
+// local services.
 //
 // Postgres runs in the compose container, so there is one database for docker
 // and for local dev. The backend and frontend run on the host, so they reload
 // on file changes. Config comes from the root .env — the same file compose
-// reads — and this script computes the connection strings the way compose
-// does, so there is no second copy of the passwords.
+// reads — and this script computes the local connection strings the way
+// compose does, so there is no second copy of the passwords.
 const { spawn, spawnSync } = require('node:child_process');
 const path = require('node:path');
 
@@ -55,7 +57,11 @@ function postgresHostPort() {
 // ── Services ────────────────────────────────────────────────────────────────
 
 function backendEnv(port) {
-  for (const name of ['POSTGRES_PASSWORD', 'HP_APP_PASSWORD', 'JWT_SECRET']) {
+  const externalDatabase = process.env.DATABASE_URL && process.env.MIGRATIONS_DATABASE_URL;
+  const required = externalDatabase
+    ? ['JWT_SECRET']
+    : ['POSTGRES_PASSWORD', 'HP_APP_PASSWORD', 'JWT_SECRET'];
+  for (const name of required) {
     if (!process.env[name]) fail(`${name} is not set in the root .env`);
   }
   return {
@@ -63,9 +69,13 @@ function backendEnv(port) {
     // The root .env is written for the deployed stack; dev overrides what differs.
     NODE_ENV: 'development',
     PORT: '3000',
-    PGUSER: 'hp_app',
-    DATABASE_URL: `postgres://hp_app:${process.env.HP_APP_PASSWORD}@localhost:${port}/higherpays`,
-    MIGRATIONS_DATABASE_URL: `postgres://postgres:${process.env.POSTGRES_PASSWORD}@localhost:${port}/higherpays`,
+    ...(externalDatabase ? {} : { PGUSER: 'hp_app' }),
+    DATABASE_URL: externalDatabase
+      ? process.env.DATABASE_URL
+      : `postgres://hp_app:${process.env.HP_APP_PASSWORD}@localhost:${port}/higherpays`,
+    MIGRATIONS_DATABASE_URL: externalDatabase
+      ? process.env.MIGRATIONS_DATABASE_URL
+      : `postgres://postgres:${process.env.POSTGRES_PASSWORD}@localhost:${port}/higherpays`,
   };
 }
 
@@ -103,9 +113,14 @@ function start(name, dir, env) {
   });
 }
 
-startPostgres();
-waitForPostgres();
-const env = backendEnv(postgresHostPort());
+const useExternalDatabase = Boolean(process.env.DATABASE_URL && process.env.MIGRATIONS_DATABASE_URL);
+let port;
+if (!useExternalDatabase) {
+  startPostgres();
+  waitForPostgres();
+  port = postgresHostPort();
+}
+const env = backendEnv(port);
 start('backend', 'backend', env);
 start('frontend', 'frontend', process.env);
 

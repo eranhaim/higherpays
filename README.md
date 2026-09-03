@@ -51,6 +51,22 @@ DATABASE_URL=postgres://postgres:devpass@localhost:5432/higherpays npm run migra
 
 The seed script does the same. After the schema is created, `.env` should point `DATABASE_URL` at `hp_app`, the restricted runtime role. See [`backend/README.md`](backend/README.md) for the full setup, including the SQL to create `hp_app`.
 
+## Production database
+
+Production uses the encrypted `higherpays-prod` PostgreSQL 16 RDS instance in
+`us-east-1`. It is publicly reachable only from the EC2 security group and
+the allowlisted administrator IP. Automated backups are retained for seven
+days and deletion protection is enabled.
+The scheduled `deploy/backup-postgres.sh` dump uses the RDS owner URL.
+
+The root `.env` can set `DATABASE_URL` and `MIGRATIONS_DATABASE_URL` to use an
+external database. When both are empty, local development uses Docker
+Postgres. The provisioned development database is `higherpays_dev`, with its
+credentials stored in AWS Systems Manager Parameter Store under
+`/higherpays/development/database-password`. Use the RDS CA settings shown by
+the deployment environment when connecting locally. Do not run seed or
+destructive development work against production.
+
 ## Tests
 
 ```bash

@@ -43,9 +43,10 @@ services:
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: 3000
-      # Runtime uses the restricted role. Migrations use the owner role.
-      DATABASE_URL: postgres://hp_app:${HP_APP_PASSWORD:?HP_APP_PASSWORD must be set in .env}@postgres:5432/higherpays
-      MIGRATIONS_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@postgres:5432/higherpays
+      # Set these to RDS URLs for production or remote development. If they
+      # are empty, the local Postgres service remains the default.
+      DATABASE_URL: ${DATABASE_URL:-postgres://hp_app:${HP_APP_PASSWORD:?HP_APP_PASSWORD must be set in .env}@postgres:5432/higherpays}
+      MIGRATIONS_DATABASE_URL: ${MIGRATIONS_DATABASE_URL:-postgres://postgres:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}@postgres:5432/higherpays}
       PGUSER: hp_app
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
     # No ports exposed — the frontend nginx proxies /api/ to us over the

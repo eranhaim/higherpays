@@ -1,0 +1,10 @@
+# Production/remote-database override.
+#
+# The base compose file keeps local Postgres for offline development. This
+# file makes the backend use the external URLs from .env.
+
+services:
+  backend:
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set for RDS}
+      MIGRATIONS_DATABASE_URL: ${MIGRATIONS_DATABASE_URL:?MIGRATIONS_DATABASE_URL must be set for RDS}

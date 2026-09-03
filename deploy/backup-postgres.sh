@@ -1,9 +1,10 @@
 #!/bin/sh
-# Nightly Postgres backup for the Docker stack.
+# Nightly Postgres backup for the HigherPays database.
 #
-# Dumps the database from the postgres container, keeps 30 local copies, and
-# uploads to S3 when BACKUP_S3_BUCKET is set in .env (lifecycle rules on the
-# bucket keep 30 daily and 12 monthly). Run from the repo root via cron:
+# Dumps RDS when BACKUP_DATABASE_URL or MIGRATIONS_DATABASE_URL is set, and
+# otherwise falls back to the local postgres container. Keeps 30 local copies
+# and uploads to S3 when BACKUP_S3_BUCKET is set in .env (lifecycle rules on
+# the bucket keep 30 daily and 12 monthly). Run from the repo root via cron:
 #
 #   15 3 * * * cd /home/ubuntu/higherpays && sh deploy/backup-postgres.sh >> /var/log/higherpays-backup.log 2>&1
 #
@@ -15,13 +16,24 @@ CONTAINER="${PG_CONTAINER:-higherpays-pg}"
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/higherpays}"
 KEEP_LOCAL="${KEEP_LOCAL:-30}"
 BUCKET="${BACKUP_S3_BUCKET:-$(grep -E '^BACKUP_S3_BUCKET=' .env 2>/dev/null | cut -d= -f2- || true)}"
+BACKUP_URL="${BACKUP_DATABASE_URL:-}"
+if [ -z "$BACKUP_URL" ]; then
+  BACKUP_URL="$(grep -E '^MIGRATIONS_DATABASE_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d '\r' | sed 's/^"//; s/"$//' || true)"
+fi
+# This parameter is for node-postgres only; libpq rejects unknown URL options.
+BACKUP_URL="${BACKUP_URL/&uselibpqcompat=true/}"
 
 mkdir -p "$BACKUP_DIR"
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 FILE="$BACKUP_DIR/higherpays-$STAMP.dump"
 
 # Custom format: compressed, and restorable table-by-table with pg_restore.
-docker exec "$CONTAINER" pg_dump -U postgres -d higherpays --format=custom > "$FILE"
+if [ -n "$BACKUP_URL" ]; then
+  docker run --rm --network host postgres:16-alpine \
+    pg_dump "$BACKUP_URL" --format=custom > "$FILE"
+else
+  docker exec "$CONTAINER" pg_dump -U postgres -d higherpays --format=custom > "$FILE"
+fi
 SIZE=$(wc -c < "$FILE")
 if [ "$SIZE" -lt 1024 ]; then
   echo "[backup] dump is only ${SIZE} bytes — refusing to keep it" >&2
