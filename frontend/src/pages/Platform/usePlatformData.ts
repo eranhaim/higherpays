@@ -31,7 +31,10 @@ export function usePlatformData(): UsePlatformDataResult {
   const onboard = useMutation({ mutationFn: (input: OnboardAgencyInput) => platformApi.onboardAgency(input), onSuccess: invalidate });
   const status = useMutation({
     mutationFn: ({ id, status }: { id: string; status: 'active' | 'suspended' }) => platformApi.setStatus(id, status),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      invalidate();
+      queryClient.invalidateQueries({ queryKey: ['auth-me'] });
+    },
   });
   const fee = useMutation({
     mutationFn: ({ id, input }: { id: string; input: PlatformFeeRate }) => platformApi.setPlatformFee(id, input),
