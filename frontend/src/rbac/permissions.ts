@@ -15,7 +15,7 @@ export type Permission =
   | 'customers.view' | 'customers.manage' | 'customers.export'
   | 'revenue.view' | 'revenue.manage'
   | 'fees.view'
-  | 'team.view' | 'team.manage'
+  | 'team.view' | 'team.manage' | 'roles.manage'
   | 'settings.view' | 'settings.edit'
   | 'data.view_all';
 
@@ -28,7 +28,7 @@ const ALL: Permission[] = [
   'customers.view', 'customers.manage', 'customers.export',
   'revenue.view', 'revenue.manage',
   'fees.view',
-  'team.view', 'team.manage',
+  'team.view', 'team.manage', 'roles.manage',
   'settings.view', 'settings.edit',
   'data.view_all',
 ];
@@ -38,6 +38,7 @@ const ALL: Permission[] = [
  * loaded. Keep in sync with the backend.
  */
 export const ROLE_PERMISSIONS: Record<WorkspaceRole, Permission[]> = {
+  workspace_owner: ALL,
   workspace_admin: ALL,
   analyst: [
     'payments.view', 'payments.export', 'links.view', 'analytics.view',

@@ -8,8 +8,12 @@ import { toast } from '../../lib/toast';
 import { PageHeader, DateCell, DataTable, FilterBar, Pill, Select, ViewPicker, type Column, type SortState } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import { sortRows, type SortValues } from '../../lib/sortRows';
-import { WORKSPACE_ROLES, WORKSPACE_ROLE_LABELS, type WorkspaceRole } from '../../api/types';
-import { INVITABLE_ROLES, type Member, type Invite, type InvitableRole } from '../../api/endpoints';
+import { WORKSPACE_ROLE_LABELS } from '../../api/types';
+import {
+  INVITABLE_ROLES, ROLE_PERMISSION_GROUPS,
+  type Member, type Invite, type InvitableRole, type RoleDefinition,
+} from '../../api/endpoints';
+import type { Permission } from '../../rbac/permissions';
 import { useTeamData } from './useTeamData';
 
 const SORT_VALUES: SortValues<Member> = {
@@ -27,9 +31,13 @@ function isExpired(i: Invite): boolean {
 
 export default function TeamPage() {
   const can = useCan();
-  const { labels } = useCurrentSession();
-  const { members, pendingInvites, isLoading, isError, setStatus, removeMember, invite, cancelInvite } = useTeamData();
+  const { labels, role: currentRole } = useCurrentSession();
+  const {
+    members, roles, pendingInvites, isLoading, isError,
+    setStatus, setRole, removeMember, createRole, updateRole, removeRole, invite, cancelInvite,
+  } = useTeamData();
   const canManage = can('team.manage');
+  const canManageRoles = can('roles.manage');
 
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -40,15 +48,19 @@ export default function TeamPage() {
   const [isBusy, setIsBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [cancelling, setCancelling] = useState<Invite | null>(null);
-  const [role, setRole] = useState<'' | WorkspaceRole>('');
+  const [roleEditing, setRoleEditing] = useState<Member | null>(null);
+  const [roleCreating, setRoleCreating] = useState(false);
+  const [roleFilter, setRoleFilter] = useState('');
   const [access, setAccess] = useState<'' | 'active' | 'suspended'>('');
   const [sort, setSort] = useState<SortState>({ key: 'name', dir: 'asc' });
   const toggleSort = (key: string) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
 
   // The role names an agency uses for its own people.
-  const roleLabel = (role: WorkspaceRole) =>
-    role === 'agent' ? labels.agent : role === 'account_owner' ? `${labels.account} owner` : WORKSPACE_ROLE_LABELS[role];
+  const roleLabel = (key: string) =>
+    key === 'agent' ? labels.agent
+      : key === 'account_owner' ? labels.account
+        : roles.find((r) => r.key === key)?.name ?? WORKSPACE_ROLE_LABELS[key] ?? key;
 
   const changeStatus = async (m: Member, status: 'active' | 'suspended') => {
     setIsBusy(true);
@@ -58,6 +70,21 @@ export default function TeamPage() {
       toast(status === 'active' ? `${m.name} can sign in again.` : `${m.name} suspended.`);
     } catch (err) {
       toast(err instanceof HttpError && err.status === 409 ? 'That is the last admin. Add another first.' : err instanceof Error ? err.message : 'Could not change access.');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const changeRole = async (m: Member, nextRole: string) => {
+    setIsBusy(true);
+    try {
+      await setRole(m.userId, nextRole);
+      setRoleEditing(null);
+      toast(`${m.name} is now ${roleLabel(nextRole)}.`);
+    } catch (err) {
+      toast(err instanceof HttpError && err.status === 409
+        ? 'This member has a creator or agent profile. Change that profile from its own page.'
+        : err instanceof Error ? err.message : 'Could not change the role.');
     } finally {
       setIsBusy(false);
     }
@@ -131,11 +158,11 @@ export default function TeamPage() {
           {m.accountName ? <span className="sub inline"> · {m.accountName}</span> : null}
         </>
       ),
-      isFiltered: role !== '',
+      isFiltered: roleFilter !== '',
       filter: (
-        <Select label="Role" hideLabel value={role} onChange={(v) => setRole(v as '' | WorkspaceRole)}>
+        <Select label="Role" hideLabel value={roleFilter} onChange={setRoleFilter}>
           <option value="">All roles</option>
-          {WORKSPACE_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+          {roles.map((r) => <option key={r.key} value={r.key}>{roleLabel(r.key)}</option>)}
         </Select>
       ),
     },
@@ -158,15 +185,16 @@ export default function TeamPage() {
   const shownMemberColumns: Column<Member>[] = [
     ...orderBy(memberColumns, columnsView.visibleKeys),
     // The actions cell is a control, not data: it is never hidden or moved.
-    ...(canManage ? [{
+    ...(canManage || canManageRoles ? [{
       key: 'actions', header: 'Actions', hideHeader: true, align: 'right' as const,
       render: (m: Member) => m.isSelf ? null : (
         <div className="cell-actions">
+          {canManageRoles && <button className="btn ghost small" onClick={() => setRoleEditing(m)}>Edit role</button>}
           {m.status === 'active'
-            ? <button className="btn ghost small" onClick={() => setSuspending(m)}>Suspend</button>
-            : <button className="btn ghost small" disabled={isBusy} onClick={() => changeStatus(m, 'active')}>Reactivate</button>}
+            ? canManage && <button className="btn ghost small" onClick={() => setSuspending(m)}>Suspend</button>
+            : canManage && <button className="btn ghost small" disabled={isBusy} onClick={() => changeStatus(m, 'active')}>Reactivate</button>}
           {/* Only a plain seat can be removed; a profile keeps its login. */}
-          {!m.agentId && !m.accountId && <button className="btn ghost small" onClick={() => setRemoving(m)}>Remove</button>}
+          {canManage && !m.agentId && !m.accountId && <button className="btn ghost small" onClick={() => setRemoving(m)}>Remove</button>}
         </div>
       ),
     }] : []),
@@ -175,7 +203,7 @@ export default function TeamPage() {
   const query = search.trim().toLowerCase();
   const matchingMembers = members
     .filter((m) => !query || `${m.name} ${m.email}`.toLowerCase().includes(query))
-    .filter((m) => !role || m.role === role)
+    .filter((m) => !roleFilter || m.role === roleFilter)
     .filter((m) => !access || m.status === access);
   // The server returns the whole team at once, so the order is decided here.
   const visibleMembers = useMemo(() => sortRows(matchingMembers, sort, SORT_VALUES), [matchingMembers, sort]);
@@ -193,15 +221,20 @@ export default function TeamPage() {
   return (
     <div>
       <PageHeader
-        title="Team"
-        actions={canManage ? <button className="btn" onClick={() => setInviteOpen(true)}>Invite admin or analyst</button> : null}
+        title="Role management"
+        actions={canManage || canManageRoles ? (
+          <div className="page-actions">
+            {canManageRoles && <button className="btn ghost" onClick={() => setRoleCreating(true)}>Add new role</button>}
+            {canManage && <button className="btn" onClick={() => setInviteOpen(true)}>Invite admin or analyst</button>}
+          </div>
+        ) : null}
       />
 
       {members.length > 0 && (
         <FilterBar>
           <input type="search" className="search-input" aria-label="Search members" placeholder="Search name or email"
             value={search} onChange={(e) => setSearch(e.target.value)} />
-          <button className="btn ghost" onClick={() => { setSearch(''); setRole(''); setAccess(''); }}>Clear filters</button>
+          <button className="btn ghost" onClick={() => { setSearch(''); setRoleFilter(''); setAccess(''); }}>Clear filters</button>
           <span className="sub">{visibleMembers.length} of {members.length}</span>
           <ViewPicker label="Edit columns" view={columnsView} />
         </FilterBar>
@@ -224,6 +257,23 @@ export default function TeamPage() {
           <DataTable columns={inviteColumns} rows={pendingInvites} rowKey={(i) => i.id} />
         </div>
       )}
+
+      <RolePermissionsTable
+        roles={roles}
+        canEdit={canManageRoles}
+        onSave={updateRole}
+        onRemove={removeRole}
+      />
+
+      <RoleFormModal
+        open={roleCreating}
+        onClose={() => setRoleCreating(false)}
+        onSubmit={async (name, permissions) => {
+          await createRole(name, permissions);
+          setRoleCreating(false);
+          toast(`${name} role created.`);
+        }}
+      />
 
       <Modal open={inviteOpen} onClose={closeInvite} title="Invite a team member" subtitle="They receive an email with a link to set their password.">
         <div className="field">
@@ -274,6 +324,216 @@ export default function TeamPage() {
           </div>
         )}
       </Modal>
+
+      <RoleAssignmentModal
+        key={roleEditing?.userId ?? 'role-assignment'}
+        member={roleEditing}
+        roles={roles}
+        currentRoleLabel={roleEditing ? roleLabel(roleEditing.role) : ''}
+        canTransferOwnership={currentRole === 'workspace_owner'}
+        isBusy={isBusy}
+        onClose={() => setRoleEditing(null)}
+        onSubmit={(nextRole) => roleEditing ? changeRole(roleEditing, nextRole) : Promise.resolve()}
+        roleLabel={roleLabel}
+      />
     </div>
+  );
+}
+
+const PERMISSION_COLUMNS = ROLE_PERMISSION_GROUPS.flatMap((group) =>
+  group.permissions.map((permission) => ({ ...permission, group: group.label })),
+);
+
+function RolePermissionsTable({ roles, canEdit, onSave, onRemove }: {
+  roles: RoleDefinition[];
+  canEdit: boolean;
+  onSave: (key: string, input: { permissions: Permission[] }) => Promise<void>;
+  onRemove: (key: string) => Promise<void>;
+}) {
+  const [drafts, setDrafts] = useState<Record<string, Permission[]>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+
+  const toggle = (role: RoleDefinition, permission: Permission) => {
+    const current = drafts[role.key] ?? role.permissions;
+    const next = current.includes(permission)
+      ? current.filter((value) => value !== permission)
+      : [...current, permission];
+    setDrafts((previous) => ({ ...previous, [role.key]: next }));
+  };
+
+  const save = async (role: RoleDefinition) => {
+    setSaving(role.key);
+    try {
+      await onSave(role.key, { permissions: drafts[role.key] ?? role.permissions });
+      setDrafts((previous) => {
+        const next = { ...previous };
+        delete next[role.key];
+        return next;
+      });
+      toast(`${role.name} permissions saved.`);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not save permissions.');
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  return (
+    <section className="role-permissions card">
+      <div className="sechead">Role permissions</div>
+      <p className="sub">Choose what each role can do. Owner permissions are fixed and ownership can be transferred from the member list.</p>
+      <div className="role-matrix-scroll">
+        <table className="role-matrix">
+          <thead>
+            <tr>
+              <th scope="col">Role</th>
+              {PERMISSION_COLUMNS.map((permission) => (
+                <th scope="col" key={permission.key} title={permission.label}>{permission.label}</th>
+              ))}
+              {canEdit && <th scope="col">Save</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {roles.map((role) => {
+              const permissions = drafts[role.key] ?? role.permissions;
+              const changed = drafts[role.key] !== undefined;
+              const fixed = role.key === 'workspace_owner';
+              return (
+                <tr key={role.key}>
+                  <th scope="row">
+                    <span className="role-matrix-name">{role.name}</span>
+                    <span className="sub">{role.memberCount} member{role.memberCount === 1 ? '' : 's'}</span>
+                    {!role.isSystem && (
+                      <button className="btn ghost small" disabled={role.memberCount > 0}
+                        title={role.memberCount > 0 ? 'Reassign members before deleting this role.' : undefined}
+                        onClick={() => void onRemove(role.key)}>
+                        Delete
+                      </button>
+                    )}
+                  </th>
+                  {PERMISSION_COLUMNS.map((permission) => (
+                    <td key={permission.key}>
+                      <input
+                        type="checkbox"
+                        aria-label={`${role.name}: ${permission.label}`}
+                        checked={permissions.includes(permission.key)}
+                        disabled={!canEdit || fixed}
+                        onChange={() => toggle(role, permission.key)}
+                      />
+                    </td>
+                  ))}
+                  {canEdit && (
+                    <td>
+                      <button className="btn small" disabled={!changed || fixed || saving === role.key} onClick={() => void save(role)}>
+                        {saving === role.key ? 'Saving…' : 'Save'}
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function RoleFormModal({ open, onClose, onSubmit }: {
+  open: boolean;
+  onClose: () => void;
+  onSubmit: (name: string, permissions: Permission[]) => Promise<void>;
+}) {
+  const [name, setName] = useState('');
+  const [permissions, setPermissions] = useState<Permission[]>([]);
+  const [saving, setSaving] = useState(false);
+
+  const close = () => {
+    setName('');
+    setPermissions([]);
+    onClose();
+  };
+  const toggle = (permission: Permission) => setPermissions((current) =>
+    current.includes(permission) ? current.filter((value) => value !== permission) : [...current, permission]);
+  const submit = async () => {
+    if (!name.trim()) { toast('Role name is required.'); return; }
+    setSaving(true);
+    try {
+      await onSubmit(name.trim(), permissions);
+      setName('');
+      setPermissions([]);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not create the role.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal open={open} onClose={close} title="Add new role" subtitle="Create a role with only the access it needs.">
+      <div className="field">
+        <label htmlFor="new-role-name">Role name</label>
+        <input id="new-role-name" type="text" value={name} onChange={(event) => setName(event.target.value)} />
+      </div>
+      <div className="role-form-permissions">
+        {ROLE_PERMISSION_GROUPS.map((group) => (
+          <div key={group.label}>
+            <div className="sechead">{group.label}</div>
+            {group.permissions.map((permission) => (
+              <label className="check-row" key={permission.key}>
+                <input type="checkbox" checked={permissions.includes(permission.key)} onChange={() => toggle(permission.key)} />
+                <span>{permission.label}</span>
+              </label>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="modal-actions">
+        <button className="btn ghost" onClick={close}>Cancel</button>
+        <button className="btn" disabled={saving} onClick={() => void submit()}>{saving ? 'Creating…' : 'Create role'}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function RoleAssignmentModal({ member, roles, currentRoleLabel, canTransferOwnership, isBusy, onClose, onSubmit, roleLabel }: {
+  member: Member | null;
+  roles: RoleDefinition[];
+  currentRoleLabel: string;
+  canTransferOwnership: boolean;
+  isBusy: boolean;
+  onClose: () => void;
+  onSubmit: (role: string) => Promise<void>;
+  roleLabel: (key: string) => string;
+}) {
+  const [selected, setSelected] = useState('');
+
+  if (!member) return null;
+  const hasProfile = Boolean(member.agentId || member.accountId);
+  const selectable = (role: RoleDefinition) =>
+    !hasProfile || role.key === member.role;
+
+  return (
+    <Modal open onClose={onClose} title={`Edit ${member.name}'s role`} subtitle={hasProfile
+      ? `This member has a ${currentRoleLabel.toLowerCase()} profile. Change that profile from its own page.`
+      : 'Role changes take effect immediately.'}>
+      <div className="field">
+        <label htmlFor="member-role">Role</label>
+        <select id="member-role" value={selected || member.role} onChange={(event) => setSelected(event.target.value)}>
+          {roles.map((role) => (
+            <option key={role.key} value={role.key} disabled={!selectable(role) || (role.key === 'workspace_owner' && !canTransferOwnership)}>
+              {roleLabel(role.key)}
+            </option>
+          ))}
+        </select>
+      </div>
+      {selected === 'workspace_owner' && <p className="sub">This transfers the single workspace owner role to this member.</p>}
+      <div className="modal-actions">
+        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        <button className="btn" disabled={isBusy || (selected || member.role) === member.role} onClick={() => void onSubmit(selected || member.role)}>
+          {isBusy ? 'Saving…' : 'Save role'}
+        </button>
+      </div>
+    </Modal>
   );
 }

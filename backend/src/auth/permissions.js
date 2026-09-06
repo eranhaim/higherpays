@@ -14,6 +14,7 @@ const PERMISSIONS = [
   'revenue.view', 'revenue.manage',
   'fees.view',
   'team.view', 'team.manage',
+  'roles.manage',
   'settings.view', 'settings.edit',
   'data.view_all',
 ];
@@ -22,6 +23,7 @@ const PERMISSIONS = [
 // workspace. Without it a caller is narrowed to their own rows — an agent to
 // the accounts they work, an account owner to their own account.
 const ROLE_PERMISSIONS = {
+  workspace_owner: new Set(PERMISSIONS),
   workspace_admin: new Set(PERMISSIONS),
 
   analyst: new Set([

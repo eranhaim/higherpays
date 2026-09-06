@@ -187,7 +187,7 @@ async function seedAgency(c, agency, passwordHash, platformAdminId) {
   // A platform admin needs access in every workspace to see anything in it.
   await upsertAccess(c, workspace.id, platformAdminId, 'workspace_admin');
 
-  const adminId = await person('admin', `${agency.name} Admin`, 'workspace_admin');
+    const adminId = await person('admin', `${agency.name} Admin`, 'workspace_owner');
   await person('analyst', `${agency.name} Analyst`, 'analyst');
 
   const accountIds = {};

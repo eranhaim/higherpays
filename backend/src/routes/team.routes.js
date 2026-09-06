@@ -9,6 +9,7 @@ const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { revokeUserSessions } = require('../auth/sessions');
+const { ensureWorkspaceRoles } = require('../services/workspaceRoles');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -34,6 +35,59 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
   });
 }));
 
+// PATCH /:userId/role  { role }
+// Ownership is transferred in the same transaction that demotes the current
+// owner, so the workspace never has zero or two owners.
+router.patch('/:userId/role', requirePermission('roles.manage'), asyncHandler(async (req, res) => {
+  const nextRole = String((req.body || {}).role || '');
+  if (!nextRole) return res.status(400).json({ error: 'role is required', fields: ['role'] });
+  if (req.params.userId === uid(req)) return res.status(403).json({ error: 'cannot_edit_self' });
+  if (nextRole === 'workspace_owner' && req.access.role !== 'workspace_owner') {
+    return res.status(403).json({ error: 'owner_only' });
+  }
+
+  const out = await withTransaction(async (c) => {
+    await ensureWorkspaceRoles(c, wid(req));
+    const target = (await c.query(
+      `SELECT wu.role, wu.status,
+              EXISTS (SELECT 1 FROM agents ag WHERE ag.workspace_id=wu.workspace_id AND ag.user_id=wu.user_id) AS has_agent,
+              EXISTS (SELECT 1 FROM accounts ac WHERE ac.workspace_id=wu.workspace_id AND ac.user_id=wu.user_id) AS has_account
+         FROM workspace_users wu
+        WHERE wu.workspace_id=$1 AND wu.user_id=$2`,
+      [wid(req), req.params.userId])).rows[0];
+    if (!target) return { err: 'not_found', code: 404 };
+    const role = (await c.query(
+      'SELECT key FROM workspace_roles WHERE workspace_id=$1 AND key=$2', [wid(req), nextRole])).rows[0];
+    if (!role) return { err: 'unknown_role', code: 400 };
+    if (nextRole === 'workspace_owner' && target.status !== 'active') return { err: 'target_suspended', code: 409 };
+    if (target.role === 'workspace_owner') return { err: 'transfer_owner', code: 409 };
+    if (target.has_agent && nextRole !== 'agent') return { err: 'profile_role_locked', code: 409 };
+    if (target.has_account && nextRole !== 'account_owner') return { err: 'profile_role_locked', code: 409 };
+
+    if (nextRole === 'workspace_owner') {
+      const owner = (await c.query(
+        `SELECT user_id FROM workspace_users
+          WHERE workspace_id=$1 AND role='workspace_owner' AND status='active'`,
+        [wid(req)])).rows[0];
+      if (!owner) return { err: 'owner_not_found', code: 409 };
+      await c.query(
+        `UPDATE workspace_users SET role='workspace_admin'
+          WHERE workspace_id=$1 AND user_id=$2`,
+        [wid(req), owner.user_id]);
+    }
+    await c.query(
+      'UPDATE workspace_users SET role=$3 WHERE workspace_id=$1 AND user_id=$2',
+      [wid(req), req.params.userId, nextRole]);
+    return { role: nextRole, from: target.role };
+  });
+  if (out.err) return res.status(out.code).json({ error: out.err });
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'team.role',
+    entityType: 'user', entityId: req.params.userId, metadata: { from: out.from, to: out.role },
+  });
+  res.json({ userId: req.params.userId, role: out.role });
+}));
+
 async function isLastAdmin(c, workspaceId, userId) {
   const { rows } = await c.query(
     `SELECT count(*)::int AS admins FROM workspace_users
@@ -53,6 +107,7 @@ router.patch('/:userId/status', requirePermission('team.manage'), asyncHandler(a
     const target = (await c.query(
       'SELECT role, status FROM workspace_users WHERE workspace_id=$1 AND user_id=$2', [wid(req), req.params.userId])).rows[0];
     if (!target) return { err: 'not_found', code: 404 };
+    if (target.role === 'workspace_owner') return { err: 'transfer_owner', code: 409 };
     if (status === 'suspended' && target.role === 'workspace_admin' && await isLastAdmin(c, wid(req), req.params.userId)) {
       return { err: 'last_admin', code: 409 };
     }
@@ -77,6 +132,7 @@ router.delete('/:userId', requirePermission('team.manage'), asyncHandler(async (
     const target = (await c.query(
       'SELECT role FROM workspace_users WHERE workspace_id=$1 AND user_id=$2', [wid(req), req.params.userId])).rows[0];
     if (!target) return { err: 'not_found', code: 404 };
+    if (target.role === 'workspace_owner') return { err: 'transfer_owner', code: 409 };
     if (target.role === 'workspace_admin' && await isLastAdmin(c, wid(req), req.params.userId)) return { err: 'last_admin', code: 409 };
     const profile = (await c.query(
       `SELECT 1 FROM agents WHERE workspace_id=$1 AND user_id=$2

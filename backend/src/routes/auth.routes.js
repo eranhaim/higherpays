@@ -41,12 +41,14 @@ async function issueRefreshToken(userId, req, familyId = null) {
 // uses so the console can label itself before loading anything else.
 async function workspacesFor(userId) {
   return (await query(
-    `SELECT w.id, w.name, w.currency, wu.role, w.status,
+    `SELECT w.id, w.name, w.currency, wu.role, wr.name AS role_name, w.status,
             w.account_label, w.account_label_plural, w.agent_label, w.agent_label_plural
-       FROM workspace_users wu JOIN workspaces w ON w.id = wu.workspace_id
+       FROM workspace_users wu
+       JOIN workspaces w ON w.id = wu.workspace_id
+       LEFT JOIN workspace_roles wr ON wr.workspace_id = wu.workspace_id AND wr.key = wu.role
       WHERE wu.user_id = $1 AND wu.status = 'active' AND w.status = 'active'
       ORDER BY w.name`, [userId])).rows.map((w) => ({
-    id: w.id, name: w.name, currency: w.currency, role: w.role, status: w.status,
+    id: w.id, name: w.name, currency: w.currency, role: w.role, roleName: w.role_name, status: w.status,
     labels: { account: w.account_label, accounts: w.account_label_plural, agent: w.agent_label, agents: w.agent_label_plural },
   }));
 }

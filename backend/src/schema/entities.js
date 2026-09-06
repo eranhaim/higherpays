@@ -16,7 +16,7 @@ const {
 // ---------------------------------------------------------------------------
 const USER_STATUS = ['active', 'suspended', 'invited'];
 const WORKSPACE_STATUS = ['active', 'suspended', 'archived'];
-const WORKSPACE_ROLE = ['workspace_admin', 'analyst', 'agent', 'account_owner'];
+const WORKSPACE_ROLE = ['workspace_owner', 'workspace_admin', 'analyst', 'agent', 'account_owner'];
 const ACCESS_STATUS = ['active', 'suspended'];
 
 const ACCOUNT_STATUS = [ 'active', 'paused', 'archived'];
@@ -148,6 +148,21 @@ const PlatformFeeRate = entity('platform_fee_rates', {
 // Access — who may sign into a workspace
 // ===========================================================================
 
+// A workspace role is a named permission set. The five built-in keys keep
+// their existing meaning; other keys are workspace-specific custom roles.
+const WorkspaceRole = entity('workspace_roles', {
+  fields: {
+    workspaceId: uuid().references('workspaces').notNull(),
+    key:         text().notNull(),
+    name:        text().notNull(),
+    permissions: textArray().notNull().default("'{}'"),
+    isSystem:    bool().notNull().default('false'),
+  },
+  primaryKey: ['workspaceId', 'key'],
+  indexes: ['workspaceId'],
+  timestamps: 'both',
+});
+
 // Access only: who may sign into this workspace, and as what. It says nothing
 // about the business — an agent's rate lives on `agents`, an account's terms on
 // `accounts`. A platform admin holds a row in every workspace, so creating a
@@ -156,7 +171,10 @@ const WorkspaceUser = entity('workspace_users', {
   fields: {
     workspaceId: uuid().references('workspaces').notNull(),
     userId:      uuid().references('users').notNull(),
-    role:        enumOf(WORKSPACE_ROLE).notNull(),
+    // Built-in keys and workspace_roles keys are accepted here. The profile
+    // foreign keys below still restrict agents and account owners to their
+    // matching built-in role.
+    role:        text().notNull(),
     status:      enumOf(ACCESS_STATUS).notNull().default("'active'"),
   },
   primaryKey: ['workspaceId', 'userId'],
@@ -173,7 +191,7 @@ const Invite = entity('invites', {
     id:              uuid().primaryKey(),
     workspaceId:     uuid().references('workspaces').notNull(),
     email:           citext().notNull(),
-    role:            enumOf(WORKSPACE_ROLE).notNull(),
+    role:            text().notNull(),
     tokenHash:       text().unique().notNull(),
     invitedByUserId: uuid().references('users', 'SET NULL'),
     expiresAt:       timestamp().notNull(),
@@ -626,7 +644,7 @@ module.exports = {
   // global
   User, RefreshToken, Workspace, PlatformFeeRate,
   // access
-  WorkspaceUser, Invite,
+  WorkspaceRole, WorkspaceUser, Invite,
   // commercial
   Account, Agent, AccountAgent, Category, Customer,
   // payment flow

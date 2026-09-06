@@ -1,6 +1,5 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
-import type { WorkspaceRole } from '../types';
 
 export type MemberStatus = 'active' | 'suspended';
 
@@ -9,7 +8,7 @@ export interface Member {
   userId: string;
   name: string;
   email: string;
-  role: WorkspaceRole;
+  role: string;
   status: MemberStatus;
   agentId: string | null;
   accountId: string | null;
@@ -27,6 +26,9 @@ export const teamApi = {
   /** Suspending ends the sign-in but keeps the agent or account record. */
   setStatus: (userId: string, status: MemberStatus) =>
     api.patch<{ userId: string; status: MemberStatus }>(workspacePath(`/team/${userId}/status`), { status }),
+
+  setRole: (userId: string, role: string) =>
+    api.patch<{ userId: string; role: string }>(workspacePath(`/team/${userId}/role`), { role }),
 
   /** Removes access entirely. Refused while an agent or account record exists. */
   remove: (userId: string) => api.del<void>(workspacePath(`/team/${userId}`)),

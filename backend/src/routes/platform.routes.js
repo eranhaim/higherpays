@@ -10,6 +10,7 @@ const { audit } = require('../util/audit');
 const { isStr, badRequest } = require('../util/validate');
 const { sendEmail } = require('../util/email');
 const { status: vocab } = require('../schema/entities');
+const { ensureWorkspaceRoles } = require('../services/workspaceRoles');
 
 const hashToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
 const router = express.Router();
@@ -162,7 +163,7 @@ router.patch('/workspaces/:id/status', asyncHandler(async (req, res) => {
 
 // POST /platform/agencies — onboard a new agency in one step: workspace,
 // rate card, settlement fees, default split, and an invite for its first
-// admin (who sets their own password via the link).
+// owner (who sets their own password via the link).
 router.post('/agencies', asyncHandler(async (req, res) => {
   const b = req.body || {};
   const currency = (b.currency || 'EUR').toUpperCase();
@@ -178,6 +179,7 @@ router.post('/agencies', asyncHandler(async (req, res) => {
     const ws = (await c.query(
       'INSERT INTO workspaces (name, currency, merchant_id) VALUES ($1,$2,$3) RETURNING id, webhook_endpoint_id',
       [b.name.trim(), currency, b.merchantId || null])).rows[0];
+    await ensureWorkspaceRoles(c, ws.id);
     // Effective from the beginning of time so any backfilled history is priced.
     await c.query(
       `INSERT INTO platform_fee_rates (workspace_id, fee_model, psp_rate_pct, mdr_pct, settlement_pct, psp_fixed_fee, margin_rate_pct, checkout_fee, effective_from, created_by_user_id)
@@ -195,7 +197,7 @@ router.post('/agencies', asyncHandler(async (req, res) => {
     await grantPlatformAdminsAccess(c, ws.id);
     await c.query(
       'INSERT INTO invites (workspace_id, email, role, token_hash, invited_by_user_id, expires_at) VALUES ($1,$2,$3,$4,$5,$6)',
-      [ws.id, b.adminEmail, 'workspace_admin', hashToken(token), uid(req), new Date(Date.now() + 7 * 86400 * 1000)]);
+      [ws.id, b.adminEmail, 'workspace_owner', hashToken(token), uid(req), new Date(Date.now() + 7 * 86400 * 1000)]);
     return ws;
   });
 

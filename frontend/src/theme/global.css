@@ -232,6 +232,7 @@ input.amount-input { width: 110px; }
 .pagehead p { font-size: var(--text-base); color: var(--muted); margin-top: 3px; max-width: 70ch; }
 .pagehead-actions { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; justify-content: flex-end; }
 .pagehead-actions select, .pagehead-actions input { width: auto; }
+.page-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 
 /* ── Cards and sections ─────────────────────────────────────────────────── */
 .card {
@@ -241,6 +242,26 @@ input.amount-input { width: 110px; }
 }
 .section { margin-top: 16px; }
 .stack { display: flex; flex-direction: column; gap: 16px; }
+.role-permissions { margin-top: 16px; padding: 0; overflow: hidden; }
+.role-permissions > .sechead, .role-permissions > .sub { margin-left: 18px; margin-right: 18px; }
+.role-permissions > .sub { margin-bottom: 16px; }
+.role-matrix-scroll { overflow-x: auto; border-top: 1px solid var(--rule); }
+.role-matrix { min-width: 1320px; table-layout: fixed; }
+.role-matrix th, .role-matrix td { padding: 10px 8px; text-align: center; vertical-align: middle; }
+.role-matrix thead th { height: 76px; padding: 8px 6px; vertical-align: bottom; }
+.role-matrix thead th:first-child, .role-matrix tbody th {
+  width: 150px; min-width: 150px; text-align: left; position: sticky; left: 0; z-index: 2;
+  background: var(--surface);
+}
+.role-matrix tbody th { background: var(--surface-2); }
+.role-matrix thead th:not(:first-child) { width: 62px; }
+.role-matrix thead th:not(:first-child) { writing-mode: vertical-rl; transform: rotate(180deg); }
+.role-matrix tbody td { border-left: 1px solid var(--rule-soft); }
+.role-matrix input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--brand); }
+.role-matrix-name, .role-matrix .sub { display: block; }
+.role-matrix .sub { margin-top: 4px; }
+.role-matrix tbody th .btn { margin-top: 8px; }
+.role-form-permissions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; max-height: 48vh; overflow-y: auto; }
 .sechead { margin: 26px 0 10px; font-size: var(--text-sm); font-weight: 700; letter-spacing: 0.06em; }
 .sechead:first-child { margin-top: 0; }
 .sechead.row { display: flex; align-items: center; gap: 6px; }

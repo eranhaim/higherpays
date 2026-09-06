@@ -34,12 +34,18 @@ const requireWorkspace = asyncHandler(async (req, _res, next) => {
   if (!workspaceId) throw new BadRequestError('missing_workspace');
 
   const row = (await query(
-    `SELECT role FROM workspace_users
-      WHERE workspace_id = $1 AND user_id = $2 AND status = 'active'`,
+    `SELECT wu.role, wr.permissions
+       FROM workspace_users wu
+       LEFT JOIN workspace_roles wr
+         ON wr.workspace_id = wu.workspace_id AND wr.key = wu.role
+      WHERE wu.workspace_id = $1 AND wu.user_id = $2 AND wu.status = 'active'`,
     [workspaceId, req.user.id])).rows[0];
   if (!row) throw new ForbiddenError('not_a_member');
 
-  req.access = { workspaceId, role: row.role, permissions: ROLE_PERMISSIONS[row.role] };
+  const permissions = Array.isArray(row.permissions)
+    ? new Set(row.permissions)
+    : (ROLE_PERMISSIONS[row.role] || new Set());
+  req.access = { workspaceId, role: row.role, permissions };
   next();
 });
 
