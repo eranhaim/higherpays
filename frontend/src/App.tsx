@@ -8,6 +8,7 @@ import { NAV_ITEMS } from './rbac/nav';
 import ToastContainer from './components/Toast';
 import LoginPage from './pages/Login';
 import AcceptInvitePage from './pages/AcceptInvite';
+import PaymentCompletePage from './pages/PaymentComplete';
 import PaymentsPage from './pages/Payments';
 import LinksPage from './pages/Links';
 import PayoutsPage from './pages/Payouts';
@@ -38,6 +39,7 @@ export default function App() {
           <Route path="/login" element={<LoginPage />} />
           {/* Public: the emailed invite link lands here before there is a login. */}
           <Route path="/accept-invite" element={<AcceptInvitePage />} />
+          <Route path="/payment-complete" element={<PaymentCompletePage />} />
           <Route element={<AuthGuard />}>
             {/* The operator console is a tier above workspaces, so it sits
                 outside the workspace shell and gates on its own check. */}

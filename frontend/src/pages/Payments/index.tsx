@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useDebounced } from '../../hooks/useDebounced';
 import { useCan } from '../../hooks/usePermission';
@@ -665,7 +665,14 @@ function CompleteDetailsModal({ payment, categories, customers, onClose, onSubmi
         </div>
       )}
       <Select id="complete-category" label="Category" value={categoryId} onChange={setCategoryId}
-        hint={categories.length === 0 ? 'No categories defined yet — an admin adds them under Settings.' : undefined}>
+        hint={categories.length === 0 ? (
+          <>
+            No categories defined yet.{' '}
+            <Link className="btn ghost small" to="/settings?tab=categories" target="_blank" rel="noreferrer">
+              Manage categories
+            </Link>
+          </>
+        ) : undefined}>
         {categories.length === 0 && <option value="">No categories defined</option>}
         {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
       </Select>

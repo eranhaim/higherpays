@@ -34,6 +34,7 @@ router.get('/:reference', asyncHandler(async (req, res) => {
     currency: link.currency,
     order: req.params.reference,
     notificationUrl,
+    returnUrl: `${config.appPublicBase}/payment-complete`,
     clientIp: req.ip,
   });
   res.redirect(302, result.redirect);
