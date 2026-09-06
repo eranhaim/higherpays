@@ -355,13 +355,27 @@ export default function LinksPage() {
 
         <div className={`pl-fees${fees && fees.effectivePct >= 18 ? ' hot' : fees && fees.effectivePct >= 15 ? ' warm' : ''}`}>
           <div className="fee-line">
-            <span>Platform fee ({rateCard.blended.toFixed(1)}%)</span>
-            <b className="fee-val">{fees ? formatMoney(fees.blendedFee) : '—'}</b>
+            <span>Customer pays</span>
+            <b className="fee-val">{fees ? formatMoney(fees.customerTotal) : '—'}</b>
+          </div>
+          <div className="fee-line">
+            <span>MDR ({rateCard.pspRate}% of {fees ? formatMoney(fees.customerTotal) : '—'})</span>
+            <b className="fee-val">{fees ? formatMoney(fees.mdrFee) : '—'}</b>
           </div>
           <div className="fee-line">
             <span>Transaction fee</span>
             <b className="fee-val">{fees ? formatMoney(fees.fixed) : '—'}</b>
           </div>
+          <div className="fee-line">
+            <span>Settlement fee ({rateCard.settlementRate}% of {fees ? formatMoney(fees.settlementBase) : '—'})</span>
+            <b className="fee-val">{fees ? formatMoney(fees.settlementFee) : '—'}</b>
+          </div>
+          {rateCard.marginRate > 0 && (
+            <div className="fee-line">
+              <span>HigherPays margin ({rateCard.marginRate}% of {fees ? formatMoney(fees.amount) : '—'})</span>
+              <b className="fee-val">{fees ? formatMoney(fees.marginFee) : '—'}</b>
+            </div>
+          )}
           <div className="fee-tot">
             <span>Total fees</span>
             <span className="fee-val">{fees ? formatMoney(fees.total) : '—'}</span>

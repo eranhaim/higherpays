@@ -111,7 +111,6 @@ router.put('/workspaces/:id/platform-fee', asyncHandler(async (req, res) => {
   if (!pct(b.pspRatePct) || !pct(b.marginRatePct)) return badRequest(res, 'pspRatePct/marginRatePct must be 0..100', ['pspRatePct', 'marginRatePct']);
   if (b.mdrPct != null && !pct(b.mdrPct)) return badRequest(res, 'mdrPct must be 0..100', ['mdrPct']);
   if (!pct(settlementPct)) return badRequest(res, 'settlementPct must be 0..100', ['settlementPct']);
-  if (settlementPct > Number(b.pspRatePct)) return badRequest(res, 'settlementPct cannot exceed pspRatePct', ['settlementPct']);
   if (!(pspFixedFee >= 0)) return badRequest(res, 'pspFixedFee must be >= 0', ['pspFixedFee']);
   const checkoutFee = Number(b.checkoutFee || 0);
   if (!(checkoutFee >= 0)) return badRequest(res, 'checkoutFee must be >= 0', ['checkoutFee']);
@@ -122,7 +121,7 @@ router.put('/workspaces/:id/platform-fee', asyncHandler(async (req, res) => {
     `INSERT INTO platform_fee_rates (workspace_id, fee_model, psp_rate_pct, mdr_pct, settlement_pct, psp_fixed_fee, margin_rate_pct, checkout_fee, created_by_user_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
     [req.params.id, settlementPct > 0 ? 'cascade' : feeModel, b.pspRatePct,
-      settlementPct > 0 ? Number(b.pspRatePct) - settlementPct : b.mdrPct ?? null,
+      settlementPct > 0 ? Number(b.pspRatePct) : b.mdrPct ?? null,
       settlementPct, pspFixedFee, b.marginRatePct, checkoutFee, uid(req)])).rows[0];
   await audit({ workspaceId: req.params.id, actorUserId: uid(req), action: 'platform.fee.update', entityType: 'workspace', entityId: req.params.id, metadata: b });
   res.status(201).json(publicFee(fee));
@@ -171,7 +170,7 @@ router.post('/agencies', asyncHandler(async (req, res) => {
   if (!isStr(b.adminEmail, 120) || !b.adminEmail.includes('@')) return badRequest(res, 'a valid adminEmail is required', ['adminEmail']);
   if (!config.supportedCurrencies.includes(currency)) return badRequest(res, `currency ${currency} is not enabled`, ['currency']);
   if (!pct(b.pspRatePct) || !pct(b.marginRatePct)) return badRequest(res, 'pspRatePct/marginRatePct must be 0..100', ['pspRatePct', 'marginRatePct']);
-  if (!pct(settlementPct) || settlementPct > Number(b.pspRatePct)) return badRequest(res, 'settlementPct must be 0..100 and cannot exceed pspRatePct', ['settlementPct']);
+  if (!pct(settlementPct)) return badRequest(res, 'settlementPct must be 0..100', ['settlementPct']);
 
   const token = crypto.randomBytes(32).toString('base64url');
   const out = await withTransaction(async (c) => {
@@ -183,7 +182,7 @@ router.post('/agencies', asyncHandler(async (req, res) => {
       `INSERT INTO platform_fee_rates (workspace_id, fee_model, psp_rate_pct, mdr_pct, settlement_pct, psp_fixed_fee, margin_rate_pct, checkout_fee, effective_from, created_by_user_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'-infinity',$9)`,
       [ws.id, settlementPct > 0 ? 'cascade' : vocab.FEE_MODEL.includes(b.feeModel) ? b.feeModel : 'flat',
-        b.pspRatePct, settlementPct > 0 ? Number(b.pspRatePct) - settlementPct : b.mdrPct ?? null,
+        b.pspRatePct, settlementPct > 0 ? Number(b.pspRatePct) : b.mdrPct ?? null,
         settlementPct, Number(b.pspFixedFee || 0), b.marginRatePct, Number(b.checkoutFee || 0), uid(req)]);
     await c.query(
       `INSERT INTO settlement_fee_config (workspace_id, chargeback_fee, refund_fee, decline_fee, effective_from, created_by_user_id)
@@ -202,7 +201,12 @@ router.post('/agencies', asyncHandler(async (req, res) => {
   const link = `${config.appPublicBase}/accept-invite?token=${token}`;
   await sendEmail({ to: b.adminEmail, subject: `You're invited to run ${b.name} on HigherPays`, body: `Set up your login: ${link}` });
   await audit({ workspaceId: out.id, actorUserId: uid(req), action: 'platform.agency.onboard', entityType: 'workspace', entityId: out.id, metadata: { name: b.name, adminEmail: b.adminEmail } });
-  res.status(201).json({ workspaceId: out.id, name: b.name, webhookEndpointId: out.webhook_endpoint_id, blendedRatePct: b.pspRatePct + b.marginRatePct });
+  res.status(201).json({
+    workspaceId: out.id,
+    name: b.name,
+    webhookEndpointId: out.webhook_endpoint_id,
+    blendedRatePct: b.pspRatePct + settlementPct + b.marginRatePct,
+  });
 }));
 
 // PATCH /platform/users/:id/platform-admin  { isPlatformAdmin }

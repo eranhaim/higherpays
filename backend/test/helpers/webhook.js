@@ -52,7 +52,7 @@ async function paySale(app, tenant, account, amount, opts = {}) {
     .expect(201)).body;
   const transId = newTransId();
   const res = await postWebhook(app, await endpointFor(tenant.workspaceId),
-    buildPaidPayload({ reference: link.referenceId, transId, amount })).expect(200);
+    buildPaidPayload({ reference: link.referenceId, transId, amount: opts.paidAmount ?? amount })).expect(200);
   return { link, transId, paymentId: res.body.paymentId };
 }
 

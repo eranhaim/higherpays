@@ -164,13 +164,12 @@ function OnboardAgencyModal({ onClose, onSubmit }: {
   const fees = {
     fixed: parseAmount(fixedFee), checkout: parseAmount(checkoutFee),
   };
-  const blended = Number.isNaN(pct.psp) || Number.isNaN(pct.margin) ? null : pct.psp + pct.margin;
+  const blended = Object.values(pct).some(Number.isNaN) ? null : pct.psp + pct.settlement + pct.margin;
 
   const submit = async () => {
     if (!name.trim()) { toast('Agency name is required.'); return; }
     if (!adminEmail.includes('@')) { toast('A valid admin email is required.'); return; }
     if (Object.values(pct).some(Number.isNaN)) { toast('Percentages must be 0–100.'); return; }
-    if (pct.settlement > pct.psp) { toast('Settlement fee cannot exceed the PSP rate.'); return; }
     if (Object.values(fees).some(Number.isNaN)) { toast('Fees must be amounts of 0 or more.'); return; }
     setIsSaving(true);
     try {
@@ -305,10 +304,10 @@ function RatesForm({ workspace, onClose, onSubmit }: {
   const fixed = parseAmount(fixedFee);
   const checkout = parseAmount(checkoutFee);
   const valid = !Number.isNaN(psp) && !Number.isNaN(settlement) && !Number.isNaN(mrg)
-    && !Number.isNaN(fixed) && !Number.isNaN(checkout) && settlement <= psp;
+    && !Number.isNaN(fixed) && !Number.isNaN(checkout);
 
   const submit = async () => {
-    if (!valid) { toast('Enter valid rates and fees. Settlement fee cannot exceed the PSP rate.'); return; }
+    if (!valid) { toast('Enter valid rates and fees.'); return; }
     setIsSaving(true);
     try { await onSubmit({ pspRatePct: psp, settlementPct: settlement, marginRatePct: mrg, pspFixedFee: fixed, checkoutFee: checkout }); }
     catch (err) { toast(err instanceof Error ? err.message : 'Could not save the rates.'); }
@@ -353,7 +352,7 @@ function RatesForm({ workspace, onClose, onSubmit }: {
           </div>
         </div>
         <p className="sub">
-          New blended rate: {valid ? `${psp + mrg}%` : '—'}. The checkout fee is added to what the customer pays
+          New blended rate: {valid ? `${psp + settlement + mrg}%` : '—'}. The checkout fee is added to what the customer pays
           and does not appear in the agency's own figures.
         </p>
         <div className="modal-actions">

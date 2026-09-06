@@ -5,7 +5,11 @@ import type { Page, WorkspaceLabels, WorkspaceRole } from '../types';
 /** Response from `GET /workspaces/:wid/platform-fee`. */
 export interface PlatformFee {
   blendedRatePct: number;
+  pspRatePct: number;
+  settlementPct: number;
+  marginRatePct: number;
   pspFixedFee: number;
+  checkoutFee: number;
   providerRefundAvailable: boolean;
   // Treasury settings reach only callers who see the whole workspace; the
   // blended rate and fixed fee above are what the link fee preview needs.

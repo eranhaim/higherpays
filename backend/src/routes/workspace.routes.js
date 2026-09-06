@@ -62,7 +62,8 @@ router.patch('/', requirePermission('settings.edit'), asyncHandler(async (req, r
 router.get('/platform-fee', requirePermission('payments.view'), asyncHandler(async (req, res) => {
   const r = (await query(
     `SELECT workspace_blended_rate($1) AS blended,
-            f.psp_rate_pct, f.margin_rate_pct, f.psp_fixed_fee,
+            f.psp_rate_pct, f.settlement_pct, f.margin_rate_pct,
+            f.psp_fixed_fee, f.checkout_fee,
             s.refund_fee, s.decline_fee, s.chargeback_fee, s.reserve_pct, s.reserve_release_days
        FROM (SELECT 1) AS one
        LEFT JOIN LATERAL effective_platform_fee($1, now()) f ON true
@@ -73,7 +74,11 @@ router.get('/platform-fee', requirePermission('payments.view'), asyncHandler(asy
   const seesTreasury = hasPermission(req.access, 'data.view_all');
   res.json({
     blendedRatePct: n(r.blended),
+    pspRatePct: n(r.psp_rate_pct),
+    settlementPct: n(r.settlement_pct),
+    marginRatePct: n(r.margin_rate_pct),
     pspFixedFee: n(r.psp_fixed_fee),
+    checkoutFee: n(r.checkout_fee),
     providerRefundAvailable: !!config.mantapayRefundEnabled,
     ...(seesTreasury ? {
       refundFee: n(r.refund_fee),

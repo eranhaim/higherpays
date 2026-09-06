@@ -130,13 +130,13 @@ const PlatformFeeRate = entity('platform_fee_rates', {
     id:              uuid().primaryKey(),
     workspaceId:     uuid().references('workspaces').notNull(),
     feeModel:        enumOf(FEE_MODEL).notNull().default("'flat'"),
-    pspRatePct:      percent().notNull(),      // combined PSP rate when mdr/settlement are null
+    pspRatePct:      percent().notNull(),      // MDR rate applied to the full customer charge
     mdrPct:          percent(),                // processing commission, cascade model
     settlementPct:   percent(),                // settlement fee, applied after the fixed fee
     pspFixedFee:     money().notNull().default('0'),
     marginRatePct:   percent().notNull().default('0'),
     checkoutFee:     money().notNull().default('0'),   // charged to the customer, HigherPays' own
-    blendedRatePct:  numeric(6, 2).generatedAs('psp_rate_pct + margin_rate_pct'),
+    blendedRatePct:  numeric(6, 2).generatedAs('psp_rate_pct + COALESCE(settlement_pct, 0) + margin_rate_pct'),
     effectiveFrom:   timestamp().notNull().default('now()'),
     createdByUserId: uuid().references('users', 'SET NULL'),
   },
