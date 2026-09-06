@@ -208,14 +208,14 @@ test('direct APM links use the provider currency id and signed request', () => {
   const url = apm.buildApmUrl({
     merchantId: '3771097', hashKey: KEY, amount: 20, currency: 'EUR', order: 'ord-1',
     notificationUrl: 'https://api.example.com/webhooks/payment/abc', extraCostAmount: 2,
-    extraCostName: 'Application fee',
     returnUrl: 'https://higherpays.com/payment-complete', cpm: '743',
   });
   const params = new URL(url).searchParams;
   assert.equal(params.get('Currency'), '2');
   assert.equal(params.get('CPM'), '743');
   assert.equal(params.get('Amount'), '20.00');
-  assert.equal(params.get('EC'), '2|Application fee|');
+  assert.equal(params.get('ExtraCostAmount'), '2.00');
+  assert.equal(params.has('EC'), false);
   assert.equal(params.get('RetURL'), 'https://higherpays.com/payment-complete');
   assert.equal(params.get('signature'), sig.digest('37710970120.002' + KEY));
 });

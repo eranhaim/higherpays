@@ -4,7 +4,6 @@
 // D3Redirect. The browser is then sent to the provider's CentroBill page.
 const config = require('../config');
 const sig = require('./mantapay-signature');
-const { buildExtraCost } = require('./mantapay-checkout');
 
 const APM_PATH = '/member/remote_charge.asp';
 const CURRENCY_IDS = { USD: '1', EUR: '2', GBP: '3' };
@@ -22,7 +21,7 @@ function clientIp(ip) {
 
 function buildApmUrl({
   merchantId, hashKey, amount, currency, order, notificationUrl, returnUrl, clientIp: ip, cpm,
-  extraCostAmount, extraCostName, extraCostDescription,
+  extraCostAmount,
 }) {
   if (!merchantId) throw Object.assign(new Error('mantapay_merchant_id_missing'), { status: 500 });
   if (!hashKey) throw Object.assign(new Error('mantapay_hash_key_missing'), { status: 500 });
@@ -47,11 +46,7 @@ function buildApmUrl({
     ['Order', String(order)],
     ['CPM', String(cpm || config.mantapayCpm)],
     ...((Number(extraCostAmount) > 0)
-      ? [['EC', buildExtraCost([{
-        amount: extraCostAmount,
-        name: extraCostName || 'Application fee',
-        description: extraCostDescription || '',
-      }])]]
+      ? [['ExtraCostAmount', Number(extraCostAmount).toFixed(2)]]
       : []),
     ...(returnUrl ? [['RetURL', returnUrl]] : []),
     ...(notificationUrl ? [['notification_url', notificationUrl]] : []),
