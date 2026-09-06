@@ -99,7 +99,7 @@ router.patch('/:id', requirePermission('agents.manage'), asyncHandler(async (req
     }
     const updated = sets.length
       ? (await c.query(
-        `UPDATE agents SET ${sets.join(', ')} WHERE workspace_id = ${vals.length - 1} AND id = ${vals.length} RETURNING id, user_id`, vals)).rows[0]
+        `UPDATE agents SET ${sets.join(', ')} WHERE workspace_id = $${vals.length - 1} AND id = $${vals.length} RETURNING id, user_id`, vals)).rows[0]
       : (await c.query(
         'SELECT id, user_id FROM agents WHERE workspace_id = $1 AND id = $2', [wid(req), req.params.id])).rows[0];
     if (!updated) return { notFound: true };

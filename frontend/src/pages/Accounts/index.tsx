@@ -249,7 +249,7 @@ export default function AccountsPage() {
         title={confirming ? `${confirming.status === 'paused' ? 'Pause' : 'Archive'} ${confirming.account.name}?` : ''}
         subtitle={confirming?.status === 'paused'
           ? 'No new payment links can be created. Links already out there keep working, and money already taken is untouched.'
-          : 'The account leaves every picker and list. Its history, payments and balances stay, and it can be activated again later.'}>
+          : `The ${labels.account.toLowerCase()} leaves every picker and list. Its history, payments and balances stay, and it can be activated again later.`}>
         {confirming && (
           <div className="modal-actions">
             <button className="btn ghost" onClick={() => setConfirming(null)}>Keep as is</button>
@@ -269,7 +269,7 @@ interface CreateAccountModalProps {
   onSubmit: (input: CreateAccountInput, agentIds: string[]) => Promise<void>;
 }
 
-/** An account and the login of the person who owns it, in one form. */
+/** A creator and the login of the person who owns it, in one form. */
 function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalProps) {
   const { labels } = useCurrentSession();
   const [name, setName] = useState('');
@@ -306,7 +306,7 @@ function CreateAccountModal({ agents, onClose, onSubmit }: CreateAccountModalPro
   };
 
   return (
-    <Modal open onClose={onClose} title={`Add ${labels.account.toLowerCase()}`} subtitle="Creates the account and the login of the person who owns it.">
+    <Modal open onClose={onClose} title={`Add ${labels.account.toLowerCase()}`} subtitle={`Creates the ${labels.account.toLowerCase()} and the login of the person who owns it.`}>
       <div className="form-row">
         <div className="field">
           <label htmlFor="account-name">{labels.account} name</label>

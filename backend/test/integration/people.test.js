@@ -5,7 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const request = require('supertest');
 const { app, pool } = require('../helpers/setup');
-const { createTenant, createAccount, createAgent, addMember, PASSWORD, tag } = require('../helpers/tenant');
+const { createTenant, createAccount, createAgent, addMember, assignAgent, PASSWORD, tag } = require('../helpers/tenant');
 
 test('creating an agent creates the login, the access and the profile in one go', async () => {
   const t = await createTenant(app);
@@ -22,6 +22,25 @@ test('creating an agent creates the login, the access and the profile in one go'
   assert.equal(me.role, 'agent');
   assert.ok(me.permissions.includes('links.create'));
   assert.ok(!me.permissions.includes('data.view_all'));
+});
+
+test('an assigned agent can be edited and unassigned', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const agent = await createAgent(app, t, { commissionPct: 12 });
+  await assignAgent(app, t, account.id, agent.id);
+
+  await request(app).patch(`/workspaces/${t.workspaceId}/agents/${agent.id}`)
+    .set(t.authHeaders)
+    .send({ fullName: agent.name, commissionPct: agent.commissionPct, country: agent.country })
+    .expect(200);
+  await request(app).delete(`/workspaces/${t.workspaceId}/accounts/${account.id}/agents/${agent.id}`)
+    .set(t.authHeaders)
+    .expect(204);
+
+  const detail = (await request(app).get(`/workspaces/${t.workspaceId}/accounts/${account.id}`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.deepEqual(detail.agents, []);
 });
 
 test('an account owner cannot also be made an agent in the same workspace', async () => {

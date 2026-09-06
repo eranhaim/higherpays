@@ -153,9 +153,9 @@ function WorkspaceCard({ editable, workspace, onSave }: {
         <span className="mono-val">{workspace.currency}</span>
       </div>
       <div className="sechead">Vocabulary</div>
-      <p className="sub">What this agency calls its accounts and agents. Used across the console; it changes no data.</p>
-      {labelRow('label-account', 'Account, singular', 'e.g. Creator, Talent, Model', account, setAccount)}
-      {labelRow('label-accounts', 'Account, plural', 'e.g. Creators, Talent, Models', accounts, setAccounts)}
+      <p className="sub">What this agency calls its creators and agents. Used across the console; it changes no data.</p>
+      {labelRow('label-account', 'Creator, singular', 'e.g. Creator, Talent, Model', account, setAccount)}
+      {labelRow('label-accounts', 'Creator, plural', 'e.g. Creators, Talent, Models', accounts, setAccounts)}
       {labelRow('label-agent', 'Agent, singular', 'e.g. Chatter, Closer', agent, setAgent)}
       {labelRow('label-agents', 'Agent, plural', 'e.g. Chatters, Closers', agents, setAgents)}
       {editable && (

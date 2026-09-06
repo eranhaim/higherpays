@@ -263,7 +263,7 @@ export default function PaymentsPage() {
           type="search"
           className="search-input"
           aria-label="Search payments"
-          placeholder="Search reference, customer, account, agent"
+          placeholder={`Search reference, customer, ${labels.account.toLowerCase()}, ${labels.agent.toLowerCase()}`}
           value={filters.search}
           onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
         />

@@ -109,10 +109,10 @@ const Workspace = entity('workspaces', {
     maxLinkAmount:     money(),
     linkTtlMinutes:    int(),   // how long a single-use link lives; null = platform default
 
-    // What this agency calls an account and an agent. Both forms are stored
+    // What this agency calls a creator and an agent. Both forms are stored
     // because pluralising in code breaks on words like "staff" or "talent".
-    accountLabel:       text().notNull().default("'Account'"),
-    accountLabelPlural: text().notNull().default("'Accounts'"),
+    accountLabel:       text().notNull().default("'Creator'"),
+    accountLabelPlural: text().notNull().default("'Creators'"),
     agentLabel:         text().notNull().default("'Agent'"),
     agentLabelPlural:   text().notNull().default("'Agents'"),
   },

@@ -14,10 +14,10 @@ export const WORKSPACE_ROLE_LABELS: Record<WorkspaceRole, string> = {
   workspace_admin: 'Admin',
   analyst: 'Analyst',
   agent: 'Agent',
-  account_owner: 'Account owner',
+  account_owner: 'Creator owner',
 };
 
-/** What this agency calls an account and an agent. */
+/** What this agency calls a creator and an agent. */
 export interface WorkspaceLabels {
   account: string;
   accounts: string;
