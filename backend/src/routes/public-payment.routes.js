@@ -30,7 +30,9 @@ router.get('/:reference', asyncHandler(async (req, res) => {
   const result = await provider.apm.startApm({
     merchantId: provider.resolveMerchantId(link),
     hashKey: provider.resolveApiKey(link),
-    amount: Number(link.amount) + Number(link.checkout_fee || 0),
+    amount: Number(link.amount),
+    extraCostAmount: Number(link.checkout_fee || 0),
+    extraCostName: 'Application fee',
     currency: link.currency,
     order: req.params.reference,
     notificationUrl,

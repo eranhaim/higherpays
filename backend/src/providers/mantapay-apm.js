@@ -4,6 +4,7 @@
 // D3Redirect. The browser is then sent to the provider's CentroBill page.
 const config = require('../config');
 const sig = require('./mantapay-signature');
+const { buildExtraCost } = require('./mantapay-checkout');
 
 const APM_PATH = '/member/remote_charge.asp';
 const CURRENCY_IDS = { USD: '1', EUR: '2', GBP: '3' };
@@ -19,7 +20,10 @@ function clientIp(ip) {
   return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(value) ? value : '127.0.0.1';
 }
 
-function buildApmUrl({ merchantId, hashKey, amount, currency, order, notificationUrl, returnUrl, clientIp: ip, cpm }) {
+function buildApmUrl({
+  merchantId, hashKey, amount, currency, order, notificationUrl, returnUrl, clientIp: ip, cpm,
+  extraCostAmount, extraCostName, extraCostDescription,
+}) {
   if (!merchantId) throw Object.assign(new Error('mantapay_merchant_id_missing'), { status: 500 });
   if (!hashKey) throw Object.assign(new Error('mantapay_hash_key_missing'), { status: 500 });
   if (!(Number(amount) > 0)) throw Object.assign(new Error('invalid_amount'), { status: 400 });
@@ -42,6 +46,13 @@ function buildApmUrl({ merchantId, hashKey, amount, currency, order, notificatio
     ['ClientIP', clientIp(ip)],
     ['Order', String(order)],
     ['CPM', String(cpm || config.mantapayCpm)],
+    ...((Number(extraCostAmount) > 0)
+      ? [['EC', buildExtraCost([{
+        amount: extraCostAmount,
+        name: extraCostName || 'Application fee',
+        description: extraCostDescription || '',
+      }])]]
+      : []),
     ...(returnUrl ? [['RetURL', returnUrl]] : []),
     ...(notificationUrl ? [['notification_url', notificationUrl]] : []),
     ['signature', signature],
