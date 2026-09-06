@@ -34,7 +34,7 @@ const AGENCIES = [
     linkLimits: { min: 5, max: 2000 },
     fees: {
       feeModel: 'cascade',
-      pspRatePct: 8, mdrPct: 7, settlementPct: 1, pspFixedFee: 0.5, marginRatePct: 5,
+      pspRatePct: 7, mdrPct: 7, settlementPct: 1, pspFixedFee: 0.5, marginRatePct: 5,
     },
     settlementFees: {
       chargebackFee: 15, refundFee: 1, declineFee: 0.25,

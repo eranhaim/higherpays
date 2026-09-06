@@ -226,7 +226,7 @@ function OnboardAgencyModal({ onClose, onSubmit }: {
 
         <div className="sechead">Rate card</div>
         <div className="form-row">
-          {pctField('agency-psp', 'PSP rate', pspRate, setPspRate)}
+          {pctField('agency-psp', 'MDR rate', pspRate, setPspRate)}
           {pctField('agency-settlement', 'Settlement fee', settlementPct, setSettlementPct)}
           {pctField('agency-margin', 'HigherPays margin', margin, setMargin)}
           {amountField('agency-fixed', 'Fixed fee per transaction', fixedFee, setFixedFee)}
@@ -320,7 +320,7 @@ function RatesForm({ workspace, onClose, onSubmit }: {
       <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
         <div className="form-row">
           <div className="field">
-            <label htmlFor="rates-psp">PSP rate</label>
+            <label htmlFor="rates-psp">MDR rate</label>
             <div className="pct-input">
               <input id="rates-psp" type="number" min={0} max={100} step={0.01} value={pspRate} onChange={(e) => setPspRate(e.target.value)} />
               <span className="sub">%</span>

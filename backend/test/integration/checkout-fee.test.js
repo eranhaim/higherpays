@@ -35,10 +35,11 @@ test('the customer pays the price plus the checkout fee, and only the price is s
   assert.equal(Number(tx.surcharge), 2);
 
   const entry = (await pool.query(
-    `SELECT re.gross, re.fee_surcharge, re.distributable, re.account_amount
+    `SELECT re.gross, re.fee_mdr, re.fee_surcharge, re.distributable, re.account_amount
        FROM revenue_entries re JOIN transactions t ON t.id = re.transaction_id
       WHERE t.provider_transaction_id=$1 AND re.entry_type='sale'`, [transId])).rows[0];
   assert.equal(Number(entry.gross), 100, 'the split is computed on the price');
+  assert.equal(Number(entry.fee_mdr), 8.16, 'MDR is 8% of the €102 customer charge');
   assert.equal(Number(entry.fee_surcharge), 2, 'the fee is recorded as ours');
 });
 
