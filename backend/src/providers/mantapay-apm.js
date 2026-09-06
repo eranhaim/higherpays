@@ -32,6 +32,10 @@ function buildApmUrl({
   const typeCredit = '1';
   const value = Number(amount).toFixed(2);
   const currencyValue = currencyId(currency);
+  const extraCostRate = Number(extraCostAmount || 0) / Number(amount);
+  if (extraCostRate >= 1) {
+    throw Object.assign(new Error('mantapay_extra_cost_must_be_less_than_amount'), { status: 400 });
+  }
   const signature = sig.digest(companyNum + transType + typeCredit + value + currencyValue + hashKey);
   const fields = [
     ['CompanyNum', companyNum],
@@ -45,8 +49,8 @@ function buildApmUrl({
     ['ClientIP', clientIp(ip)],
     ['Order', String(order)],
     ['CPM', String(cpm || config.mantapayCpm)],
-    ...((Number(extraCostAmount) > 0)
-      ? [['ExtraCostAmount', Number(extraCostAmount).toFixed(2)]]
+    ...((extraCostRate > 0)
+      ? [['ExtraCostAmount', String(Number(extraCostRate.toFixed(8)))]]
       : []),
     ...(returnUrl ? [['RetURL', returnUrl]] : []),
     ...(notificationUrl ? [['notification_url', notificationUrl]] : []),

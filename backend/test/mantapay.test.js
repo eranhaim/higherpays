@@ -214,10 +214,17 @@ test('direct APM links use the provider currency id and signed request', () => {
   assert.equal(params.get('Currency'), '2');
   assert.equal(params.get('CPM'), '743');
   assert.equal(params.get('Amount'), '20.00');
-  assert.equal(params.get('ExtraCostAmount'), '2.00');
+  assert.equal(params.get('ExtraCostAmount'), '0.1');
   assert.equal(params.has('EC'), false);
   assert.equal(params.get('RetURL'), 'https://higherpays.com/payment-complete');
   assert.equal(params.get('signature'), sig.digest('37710970120.002' + KEY));
+});
+
+test('direct APM checkout fee must be less than the content amount', () => {
+  assert.throws(() => apm.buildApmUrl({
+    merchantId: '3771097', hashKey: KEY, amount: 2, extraCostAmount: 2,
+    currency: 'EUR', order: 'ord-1',
+  }), /extra_cost_must_be_less_than_amount/);
 });
 
 // ── Status check ─────────────────────────────────────────────────────────────
