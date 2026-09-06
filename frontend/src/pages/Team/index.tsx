@@ -351,6 +351,7 @@ function RolePermissionsTable({ roles, canEdit, onSave, onRemove }: {
   onRemove: (key: string) => Promise<void>;
 }) {
   const [drafts, setDrafts] = useState<Record<string, Permission[]>>({});
+  const [draftNames, setDraftNames] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
 
   const toggle = (role: RoleDefinition, permission: Permission) => {
@@ -364,8 +365,16 @@ function RolePermissionsTable({ roles, canEdit, onSave, onRemove }: {
   const save = async (role: RoleDefinition) => {
     setSaving(role.key);
     try {
-      await onSave(role.key, { permissions: drafts[role.key] ?? role.permissions });
+      await onSave(role.key, {
+        ...(draftNames[role.key] !== undefined ? { name: draftNames[role.key] } : {}),
+        permissions: drafts[role.key] ?? role.permissions,
+      });
       setDrafts((previous) => {
+        const next = { ...previous };
+        delete next[role.key];
+        return next;
+      });
+      setDraftNames((previous) => {
         const next = { ...previous };
         delete next[role.key];
         return next;
@@ -396,12 +405,16 @@ function RolePermissionsTable({ roles, canEdit, onSave, onRemove }: {
           <tbody>
             {roles.map((role) => {
               const permissions = drafts[role.key] ?? role.permissions;
-              const changed = drafts[role.key] !== undefined;
+              const changed = drafts[role.key] !== undefined || draftNames[role.key] !== undefined;
               const fixed = role.key === 'workspace_owner';
               return (
                 <tr key={role.key}>
                   <th scope="row">
-                    <span className="role-matrix-name">{role.name}</span>
+                    {role.isSystem
+                      ? <span className="role-matrix-name">{role.name}</span>
+                      : <input className="role-matrix-name-input" aria-label={`${role.name} role name`}
+                          value={draftNames[role.key] ?? role.name}
+                          onChange={(event) => setDraftNames((previous) => ({ ...previous, [role.key]: event.target.value }))} />}
                     <span className="sub">{role.memberCount} member{role.memberCount === 1 ? '' : 's'}</span>
                     {!role.isSystem && (
                       <button className="btn ghost small" disabled={role.memberCount > 0}
