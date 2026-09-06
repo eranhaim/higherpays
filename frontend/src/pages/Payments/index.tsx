@@ -116,6 +116,11 @@ export default function PaymentsPage() {
       key: 'fees', label: 'Platform fees',
       card: <StatCard isUnknown={statsUnknown} label="Platform fees" value={<Money amount={fees} direction="out" />} sub={`${rateCard.blended.toFixed(1)}%`} />,
     }] : []),
+    ...(canScope ? [{
+      key: 'netProfit', label: 'Net profit',
+      card: <StatCard isUnknown={statsUnknown} label="Net profit"
+        value={<Money amount={gross - fees} direction="in" emphasis />} sub="Gross after platform fees" />,
+    }] : []),
     {
       key: 'approvalRate', label: 'Approval rate',
       card: (
@@ -132,11 +137,11 @@ export default function PaymentsPage() {
       card: <StatCard isUnknown={statsUnknown} label="Details needed" value={awaiting} sub="Paid, not yet completed" />,
     },
     {
-      key: 'refunded', label: 'Refunded',
+      key: 'refunded', label: 'Refunded amount',
       card: (
         <StatCard
           isUnknown={statsUnknown}
-          label="Refunded"
+          label="Refunded amount"
           value={<Money amount={sum(reversed.map((p) => p.amount))} direction="out" />}
           sub={`${reversed.length} refunds`}
         />
@@ -144,7 +149,7 @@ export default function PaymentsPage() {
     },
   ];
   // Useful figures, but not what this page is read for — off unless asked for.
-  const statsView = useViewLayout('payments.stats', statCards, ['approvalRate', 'detailsNeeded']);
+  const statsView = useViewLayout('payments.stats', statCards, ['approvalRate', 'detailsNeeded', 'refunded']);
 
   const range: DateRange = { from: filters.from, to: filters.to };
   const setRange = (r: DateRange) => setFilters((f) => ({ ...f, ...r }));
