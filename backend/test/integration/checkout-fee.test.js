@@ -48,3 +48,24 @@ test("the agency's fee report does not show the checkout fee", async () => {
   const report = (await request(app).get(`/workspaces/${t.workspaceId}/fees`).set(t.authHeaders).expect(200)).body;
   assert.equal(report.platformFees.surcharge, undefined);
 });
+
+test('a provider webhook reporting the content amount does not subtract the checkout fee twice', async () => {
+  const t = await createTenant(app, { checkoutFee: 2 });
+  const account = await createAccount(app, t);
+  const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+    .send({ accountId: account.id, type: 'single_use', amount: 3, currency: 'EUR' })
+    .expect(201)).body;
+
+  const transId = newTransId();
+  const res = await postWebhook(app, await endpointFor(t.workspaceId),
+    buildPaidPayload({ reference: link.referenceId, transId, amount: 3 })).expect(200);
+
+  const payment = (await pool.query(
+    'SELECT amount FROM payments WHERE id=$1', [res.body.paymentId])).rows[0];
+  assert.equal(Number(payment.amount), 3);
+
+  const tx = (await pool.query(
+    'SELECT gross, surcharge FROM transactions WHERE provider_transaction_id=$1', [transId])).rows[0];
+  assert.equal(Number(tx.gross), 3);
+  assert.equal(Number(tx.surcharge), 2);
+});

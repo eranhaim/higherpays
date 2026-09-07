@@ -30,7 +30,7 @@ const { log } = require('../lib/log');
  */
 async function recordPaymentOutcome(client, workspaceId, params) {
   const {
-    providerTransactionId, status, gross, fee = null, currency,
+    providerTransactionId, status, fee = null, currency,
     linkReference = null, paymentMethod = null, rawPayload,
   } = params;
 
@@ -53,13 +53,11 @@ async function recordPaymentOutcome(client, workspaceId, params) {
     return { paymentId: null, transactionId: null, linkId: null, newSale: false };
   }
 
-  // `gross` is what the customer paid. The checkout fee inside it is
-  // HigherPays' own, so it leaves the sale here: the ledger splits the price
-  // the creator set, and the fee is carried as the transaction's surcharge,
-  // which the revenue engine already counts as our revenue.
-  const paidValue = gross != null ? gross : Number(link.amount || 0) + Number(link.checkout_fee || 0);
-  const surcharge = Math.min(Number(link.checkout_fee || 0), paidValue);
-  const grossValue = paidValue - surcharge;
+  // MantaPay reports the content amount when ExtraCostAmount is used, and
+  // reported the customer total before that change. The link is authoritative:
+  // the ledger splits its content amount and carries the checkout fee separately.
+  const grossValue = Number(link.amount || 0);
+  const surcharge = Number(link.checkout_fee || 0);
   // MantaPay does not send fees in notifications; the ledger prices the sale
   // from the rate card and the Search API later replaces the estimate.
   const feeValue = fee != null ? fee : 0;
