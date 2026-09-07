@@ -12,7 +12,7 @@ test('POST /auth/login accepts correct credentials and lists the workspace with 
   assert.equal(res.body.user.isPlatformAdmin, false);
   const ws = res.body.workspaces.find((w) => w.id === t.workspaceId);
   assert.equal(ws.role, 'workspace_admin');
-  assert.deepEqual(ws.labels, { account: 'Account', accounts: 'Accounts', agent: 'Agent', agents: 'Agents' });
+  assert.deepEqual(ws.labels, { account: 'Creator', accounts: 'Creators', agent: 'Agent', agents: 'Agents' });
 });
 
 test('POST /auth/login rejects a wrong password with 401', async () => {

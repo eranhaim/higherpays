@@ -116,7 +116,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
     await notifier.notify(client, workspaceId, {
       event: status === 'approved' ? 'payment.paid' : 'payment.failed',
       title: status === 'approved' ? 'Payment received' : 'Payment declined',
-      body: account ? `Account: ${account.name}` : null,
+      body: account ? `Creator: ${account.name}` : null,
       accountId: link.account_id,
       agentId: link.created_by_agent_id,
       amount: grossValue,

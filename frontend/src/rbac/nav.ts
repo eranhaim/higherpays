@@ -41,7 +41,7 @@ export const NAV: NavGroup[] = [
   {
     label: 'Manage',
     items: [
-      { path: '/accounts', label: 'Accounts', labelKey: 'accounts', perm: 'accounts.view', icon: 'accounts' },
+      { path: '/accounts', label: 'Creators', labelKey: 'accounts', perm: 'accounts.view', icon: 'accounts' },
       { path: '/agents', label: 'Agents', labelKey: 'agents', perm: 'agents.view', icon: 'agents' },
       { path: '/customers', label: 'Customers', perm: 'customers.view', icon: 'customers' },
     ],
