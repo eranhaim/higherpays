@@ -13,7 +13,7 @@
 set -eu
 
 CONTAINER="${PG_CONTAINER:-higherpays-pg}"
-BACKUP_DIR="${BACKUP_DIR:-/var/backups/higherpays}"
+BACKUP_DIR="${BACKUP_DIR:-${HOME}/backups/higherpays}"
 KEEP_LOCAL="${KEEP_LOCAL:-30}"
 BUCKET="${BACKUP_S3_BUCKET:-$(grep -E '^BACKUP_S3_BUCKET=' .env 2>/dev/null | cut -d= -f2- || true)}"
 BACKUP_URL="${BACKUP_DATABASE_URL:-}"
@@ -21,7 +21,7 @@ if [ -z "$BACKUP_URL" ]; then
   BACKUP_URL="$(grep -E '^MIGRATIONS_DATABASE_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d '\r' | sed 's/^"//; s/"$//' || true)"
 fi
 # This parameter is for node-postgres only; libpq rejects unknown URL options.
-BACKUP_URL="${BACKUP_URL/&uselibpqcompat=true/}"
+BACKUP_URL="$(printf '%s' "$BACKUP_URL" | sed 's/[&?]uselibpqcompat=true//')"
 
 mkdir -p "$BACKUP_DIR"
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
