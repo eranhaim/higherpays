@@ -24,7 +24,8 @@ const config = {
   // JWT signing. MUST be set to a long random value in production.
   jwtSecret: required('JWT_SECRET', 'dev-only-insecure-secret-change-me'),
   accessTokenTtl: process.env.ACCESS_TOKEN_TTL || '15m',
-  refreshTokenDays: parseInt(process.env.REFRESH_TOKEN_DAYS || '30', 10),
+  sessionAbsoluteDays: parseInt(process.env.SESSION_ABSOLUTE_DAYS || process.env.REFRESH_TOKEN_DAYS || '30', 10),
+  sessionInactivityDays: parseInt(process.env.SESSION_INACTIVITY_DAYS || '7', 10),
 
   // Supported agency and link currencies. FX is deliberately out of scope:
   // every workspace keeps its own currency and all amounts stay in it.

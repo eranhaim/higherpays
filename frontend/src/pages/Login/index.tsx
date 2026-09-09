@@ -41,6 +41,7 @@ export default function LoginPage() {
       authApi.login(input.email, input.password, input.totp),
     onSuccess: (response) => {
       if (isTwoFactorRequired(response)) {
+        if (stage === 'totp') setFormError('That authentication or recovery code was not accepted.');
         setStage('totp');
         return;
       }
@@ -58,7 +59,11 @@ export default function LoginPage() {
   // Browser validation is off (noValidate), so the empty cases are checked
   // here rather than sent to the server to come back as "invalid credentials".
   function localError(): string | null {
-    if (stage === 'totp') return /^\d{6}$/.test(totp) ? null : 'Enter the 6-digit code from your app.';
+    if (stage === 'totp') {
+      return /^\d{6}$/.test(totp) || /^[A-Z0-9]{10}-?[A-Z0-9]{10}$/.test(totp.toUpperCase())
+        ? null
+        : 'Enter a 6-digit authentication code or a recovery code.';
+    }
     if (!email.trim()) return 'Enter your email address.';
     if (!password) return 'Enter your password.';
     return null;
@@ -119,20 +124,18 @@ export default function LoginPage() {
               </>
             ) : (
               <div className="field">
-                <label htmlFor="totp">Authentication code</label>
+                <label htmlFor="totp">Authentication or recovery code</label>
                 <input
                   id="totp"
                   type="text"
-                  inputMode="numeric"
                   autoComplete="one-time-code"
                   required
-                  pattern="[0-9]{6}"
-                  maxLength={6}
+                  maxLength={21}
                   ref={firstFieldRef}
                   value={totp}
-                  onChange={(e) => setTotp(e.target.value.replace(/\D/g, ''))}
+                  onChange={(e) => setTotp(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ''))}
                 />
-                <p className="sub">Enter the 6-digit code from your authenticator app.</p>
+                <p className="sub">Use the 6-digit code from your authenticator app or a one-time recovery code.</p>
               </div>
             )}
 

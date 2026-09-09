@@ -1,13 +1,14 @@
 'use strict';
-// Customers belong to the workspace. They meet an account only through a
-// payment link, so there is no account column and no account scope here.
+// Customer access follows the payments that connect the customer to an
+// assigned creator, agent, or account owner.
 const express = require('express');
-const { query } = require('../db');
+const { query, withTransaction } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { isStr, isOptStr, badRequest, toCSV } = require('../util/validate');
 const { status } = require('../schema/entities');
+const { resolveDataScope } = require('../auth/dataScope');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -22,6 +23,30 @@ const publicCustomer = (r) => ({
 // Mirrored in frontend/src/api/endpoints/customers.ts.
 const CUSTOMER_SORTS = { name: 'name', spend: 'total_spend', last: 'last_purchase_at', segment: 'segment' };
 
+function customerScopePredicate(customerAlias, paymentAlias, positions) {
+  const { kind, agent, account } = positions;
+  return `(
+    $${kind}::text = 'workspace'
+    OR ($${kind}::text = 'agent' AND EXISTS (
+      SELECT 1 FROM payments ${paymentAlias}
+       WHERE ${paymentAlias}.customer_id = ${customerAlias}.id
+         AND ${paymentAlias}.workspace_id = ${customerAlias}.workspace_id
+         AND (${paymentAlias}.agent_id = $${agent}::uuid
+           OR ${paymentAlias}.account_id IN (
+             SELECT account_id FROM account_agents WHERE agent_id = $${agent}::uuid
+           ))
+    ))
+    OR ($${kind}::text = 'account' AND EXISTS (
+      SELECT 1 FROM payments ${paymentAlias}
+       WHERE ${paymentAlias}.customer_id = ${customerAlias}.id
+         AND ${paymentAlias}.workspace_id = ${customerAlias}.workspace_id
+         AND ${paymentAlias}.account_id = $${account}::uuid
+    ))
+  )`;
+}
+
+const scopeValues = (scope) => [scope.kind, scope.agentId, scope.accountId];
+
 // GET /?segment=&q=&sort=&dir=&limit=&offset=
 router.get('/', requirePermission('customers.view'), asyncHandler(async (req, res) => {
   const { segment, q } = req.query;
@@ -29,27 +54,42 @@ router.get('/', requirePermission('customers.view'), asyncHandler(async (req, re
   const dir = req.query.dir === 'asc' ? 'ASC' : 'DESC';
   const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
   const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
-  const where = ['workspace_id = $1', 'deleted_at IS NULL'];
-  const vals = [wid(req)];
-  if (segment && SEGMENTS.includes(segment)) { vals.push(segment); where.push(`segment = $${vals.length}`); }
-  if (q) {
-    vals.push(`%${String(q).toLowerCase()}%`);
-    where.push(`(lower(name) LIKE $${vals.length} OR lower(email::text) LIKE $${vals.length}
-                 OR lower(coalesce(telegram_name,'')) LIKE $${vals.length} OR lower(coalesce(phone,'')) LIKE $${vals.length})`);
-  }
-  vals.push(limit, offset);
-  const rows = (await query(
-    `SELECT * FROM customers WHERE ${where.join(' AND ')}
-      ORDER BY ${sortColumn} ${dir} NULLS LAST, created_at DESC
-      LIMIT ${vals.length - 1} OFFSET ${vals.length}`, vals)).rows;
+  const rows = await withTransaction(async (c) => {
+    const scope = await resolveDataScope(c, req);
+    const where = [
+      'c.workspace_id = $1',
+      'c.deleted_at IS NULL',
+      customerScopePredicate('c', 'scope_payment', { kind: 2, agent: 3, account: 4 }),
+    ];
+    const vals = [wid(req), ...scopeValues(scope)];
+    if (segment && SEGMENTS.includes(segment)) { vals.push(segment); where.push(`c.segment = $${vals.length}`); }
+    if (q) {
+      vals.push(`%${String(q).toLowerCase()}%`);
+      where.push(`(lower(c.name) LIKE $${vals.length} OR lower(c.email::text) LIKE $${vals.length}
+                   OR lower(coalesce(c.telegram_name,'')) LIKE $${vals.length}
+                   OR lower(coalesce(c.phone,'')) LIKE $${vals.length})`);
+    }
+    vals.push(limit, offset);
+    return (await c.query(
+      `SELECT c.* FROM customers c WHERE ${where.join(' AND ')}
+        ORDER BY ${sortColumn} ${dir} NULLS LAST, created_at DESC
+        LIMIT ${vals.length - 1} OFFSET ${vals.length}`, vals)).rows;
+  });
   res.json({ customers: rows.map(publicCustomer), limit, offset });
 }));
 
 // GET /export  (CSV, audited: bulk PII access is always logged)
 router.get('/export', requirePermission('customers.export'), asyncHandler(async (req, res) => {
-  const rows = (await query(
-    `SELECT name, telegram_name, email, phone, segment, total_spend, last_purchase_at
-       FROM customers WHERE workspace_id = $1 AND deleted_at IS NULL ORDER BY total_spend DESC`, [wid(req)])).rows;
+  const rows = await withTransaction(async (c) => {
+    const scope = await resolveDataScope(c, req);
+    return (await c.query(
+      `SELECT c.name, c.telegram_name, c.email, c.phone, c.segment, c.total_spend, c.last_purchase_at
+         FROM customers c
+        WHERE c.workspace_id = $1 AND c.deleted_at IS NULL
+          AND ${customerScopePredicate('c', 'scope_payment', { kind: 2, agent: 3, account: 4 })}
+        ORDER BY c.total_spend DESC`,
+      [wid(req), ...scopeValues(scope)])).rows;
+  });
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'customer.export', metadata: { count: rows.length }, ip: req.ip || null });
   const csv = toCSV(
     ['name', 'telegram', 'email', 'phone', 'segment', 'total_spend', 'last_purchase'],
@@ -62,16 +102,31 @@ router.get('/export', requirePermission('customers.export'), asyncHandler(async 
 
 // GET /:id — the profile plus its payment history.
 router.get('/:id', requirePermission('customers.view'), asyncHandler(async (req, res) => {
-  const row = (await query(
-    'SELECT * FROM customers WHERE workspace_id = $1 AND id = $2 AND deleted_at IS NULL', [wid(req), req.params.id])).rows[0];
-  if (!row) return res.status(404).json({ error: 'not_found' });
-  const payments = (await query(
-    `SELECT p.id, p.amount, p.currency, p.status, p.occurred_at, a.name AS account, u.full_name AS agent
-       FROM payments p
-       JOIN accounts a ON a.id = p.account_id
-       LEFT JOIN agents ag ON ag.id = p.agent_id LEFT JOIN users u ON u.id = ag.user_id
-      WHERE p.workspace_id = $1 AND p.customer_id = $2
-      ORDER BY p.occurred_at DESC LIMIT 100`, [wid(req), row.id])).rows;
+  const result = await withTransaction(async (c) => {
+    const scope = await resolveDataScope(c, req);
+    const params = [wid(req), req.params.id, ...scopeValues(scope)];
+    const row = (await c.query(
+      `SELECT c.* FROM customers c
+        WHERE c.workspace_id = $1 AND c.id = $2 AND c.deleted_at IS NULL
+          AND ${customerScopePredicate('c', 'scope_payment', { kind: 3, agent: 4, account: 5 })}`,
+      params)).rows[0];
+    if (!row) return null;
+    const payments = (await c.query(
+      `SELECT p.id, p.amount, p.currency, p.status, p.occurred_at, a.name AS account, u.full_name AS agent
+         FROM payments p
+         JOIN accounts a ON a.id = p.account_id
+         LEFT JOIN agents ag ON ag.id = p.agent_id LEFT JOIN users u ON u.id = ag.user_id
+        WHERE p.workspace_id = $1 AND p.customer_id = $2
+          AND ($3::text = 'workspace'
+            OR ($3::text = 'agent' AND (p.agent_id = $4::uuid OR p.account_id IN (
+              SELECT account_id FROM account_agents WHERE agent_id = $4::uuid
+            )))
+            OR ($3::text = 'account' AND p.account_id = $5::uuid))
+        ORDER BY p.occurred_at DESC LIMIT 100`, params)).rows;
+    return { row, payments };
+  });
+  if (!result) return res.status(404).json({ error: 'not_found' });
+  const { row, payments } = result;
   res.json({
     ...publicCustomer(row),
     payments: payments.map((p) => ({
@@ -114,10 +169,19 @@ router.patch('/:id', requirePermission('customers.manage'), asyncHandler(async (
     vals.push(b[k] === '' ? null : b[k]); sets.push(`${col} = $${vals.length}`);
   }
   if (!sets.length) return badRequest(res, 'no updatable fields provided');
-  vals.push(wid(req), req.params.id);
-  const row = (await query(
-    `UPDATE customers SET ${sets.join(', ')}
-      WHERE workspace_id = $${vals.length - 1} AND id = $${vals.length} AND deleted_at IS NULL RETURNING *`, vals)).rows[0];
+  const row = await withTransaction(async (c) => {
+    const scope = await resolveDataScope(c, req);
+    vals.push(wid(req), req.params.id, ...scopeValues(scope));
+    const workspacePos = vals.length - 4;
+    const idPos = vals.length - 3;
+    return (await c.query(
+      `UPDATE customers c SET ${sets.join(', ')}
+        WHERE c.workspace_id = $${workspacePos} AND c.id = $${idPos} AND c.deleted_at IS NULL
+          AND ${customerScopePredicate('c', 'scope_payment', {
+            kind: vals.length - 2, agent: vals.length - 1, account: vals.length,
+          })}
+        RETURNING c.*`, vals)).rows[0];
+  });
   if (!row) return res.status(404).json({ error: 'not_found' });
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'customer.update', entityType: 'customer', entityId: row.id });
   res.json(publicCustomer(row));
@@ -125,10 +189,16 @@ router.patch('/:id', requirePermission('customers.manage'), asyncHandler(async (
 
 // DELETE /:id — soft delete + anonymise (erasure request)
 router.delete('/:id', requirePermission('customers.manage'), asyncHandler(async (req, res) => {
-  const done = (await query(
-    `UPDATE customers
-        SET deleted_at = now(), name = 'deleted', telegram_name = NULL, email = NULL, phone = NULL
-      WHERE workspace_id = $1 AND id = $2 AND deleted_at IS NULL RETURNING id`, [wid(req), req.params.id])).rows[0];
+  const done = await withTransaction(async (c) => {
+    const scope = await resolveDataScope(c, req);
+    return (await c.query(
+      `UPDATE customers c
+          SET deleted_at = now(), name = 'deleted', telegram_name = NULL, email = NULL, phone = NULL
+        WHERE c.workspace_id = $1 AND c.id = $2 AND c.deleted_at IS NULL
+          AND ${customerScopePredicate('c', 'scope_payment', { kind: 3, agent: 4, account: 5 })}
+        RETURNING c.id`,
+      [wid(req), req.params.id, ...scopeValues(scope)])).rows[0];
+  });
   if (!done) return res.status(404).json({ error: 'not_found' });
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'customer.erase', entityType: 'customer', entityId: req.params.id });
   res.status(204).end();

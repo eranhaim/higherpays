@@ -4,10 +4,11 @@ import type { Page } from '../types';
 import type { LinkType, ReassignImpact, ReassignInput } from './links';
 
 /** Mirrors PAYMENT_STATUS in the schema. */
-export type PaymentStatus = 'paid' | 'failed' | 'refunded';
-export const PAYMENT_STATUSES: PaymentStatus[] = ['paid', 'failed', 'refunded'];
+export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded';
+export const PAYMENT_STATUSES: PaymentStatus[] = ['pending', 'paid', 'failed', 'refunded'];
 
 export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
+  pending: 'Pending',
   paid: 'Paid',
   failed: 'Failed',
   refunded: 'Refunded',
@@ -72,6 +73,7 @@ export interface PaymentFlow {
     fixed: number;
     settlement: number;
     provider: number;
+    providerSource: 'estimated' | 'actual';
     platform: number;
     higherPaysMargin: number;
   };
@@ -87,6 +89,11 @@ export interface PaymentFlow {
     agency: PaymentFlowParty;
   };
 }
+
+export const PROVIDER_FEE_SOURCE_LABELS: Record<PaymentFlow['fees']['providerSource'], string> = {
+  estimated: 'Estimated',
+  actual: 'Actual',
+};
 
 /** Mirrors PAYMENT_SORTS in backend/src/routes/payments.routes.js. */
 export type PaymentSort = 'date' | 'amount' | 'status';

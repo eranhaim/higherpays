@@ -15,7 +15,13 @@ const requireAuth = (req, _res, next) => {
   if (scheme !== 'Bearer' || !token) return next(new UnauthorizedError('missing_token'));
   try {
     const payload = verifyAccessToken(token);
-    req.user = { id: payload.sub, email: payload.email, name: payload.name, sessionId: payload.sid || null };
+    req.user = {
+      id: payload.sub,
+      email: payload.email,
+      name: payload.name,
+      sessionId: payload.sid || null,
+      twoFactorAuthenticated: payload.mfa === true,
+    };
     next();
   } catch {
     next(new UnauthorizedError('invalid_token'));
@@ -55,8 +61,13 @@ const requirePermission = (permission) => (req, _res, next) => {
 
 // 4) requirePlatformAdmin — HigherPays operator gate, above any single workspace.
 const requirePlatformAdmin = asyncHandler(async (req, _res, next) => {
-  const { rows } = await query('SELECT is_platform_admin FROM users WHERE id = $1', [req.user.id]);
+  const { rows } = await query(
+    'SELECT is_platform_admin, two_factor_enabled FROM users WHERE id = $1',
+    [req.user.id]);
   if (!rows[0] || !rows[0].is_platform_admin) throw new ForbiddenError('not_platform_admin');
+  if (!rows[0].two_factor_enabled || !req.user.twoFactorAuthenticated) {
+    throw new ForbiddenError('platform_two_factor_required');
+  }
   next();
 });
 

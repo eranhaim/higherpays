@@ -52,4 +52,21 @@ function otpauthUrl(secretB32, { issuer = 'HigherPays', account = 'user' } = {})
   const params = new URLSearchParams({ secret: secretB32, issuer, algorithm: 'SHA1', digits: '6', period: '30' });
   return `otpauth://totp/${label}?${params.toString()}`;
 }
-module.exports = { generateSecret, base32Encode, base32Decode, hotp, totp, verifyTotp, otpauthUrl };
+
+function normaliseRecoveryCode(code) {
+  return String(code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+function hashRecoveryCode(code) {
+  return crypto.createHash('sha256').update(normaliseRecoveryCode(code)).digest('hex');
+}
+function generateRecoveryCodes(count = 10) {
+  return Array.from({ length: count }, () => {
+    const value = crypto.randomBytes(10).toString('hex').toUpperCase();
+    return `${value.slice(0, 10)}-${value.slice(10)}`;
+  });
+}
+
+module.exports = {
+  generateSecret, base32Encode, base32Decode, hotp, totp, verifyTotp, otpauthUrl,
+  generateRecoveryCodes, hashRecoveryCode, normaliseRecoveryCode,
+};

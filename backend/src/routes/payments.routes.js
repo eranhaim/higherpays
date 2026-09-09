@@ -11,7 +11,7 @@ const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const { resolveDataScope, scopeParams } = require('../auth/dataScope');
 const { hasPermission } = require('../auth/permissions');
 const { resolveAttribution, repostSales } = require('../services/attribution');
-const notifier = require('../notify');
+const paymentsService = require('../services/payments.service');
 const config = require('../config');
 
 const router = express.Router({ mergeParams: true });
@@ -165,7 +165,7 @@ router.get('/:id', requirePermission('payments.view'), asyncHandler(async (req, 
 router.get('/:id/flow', requirePermission('payments.view'), requirePlatformAdmin, asyncHandler(async (req, res) => {
   const row = (await query(
     `SELECT p.id, p.status, p.amount, p.currency,
-            t.provider_transaction_id, t.gross AS transaction_gross, t.surcharge,
+            t.provider_transaction_id, t.gross AS transaction_gross, t.surcharge, t.fee_is_estimate,
             re.id AS sale_entry_id, re.gross AS sale_gross,
             re.fee_mdr, re.fee_fixed, re.fee_settlement, re.psp_fee,
             re.platform_fee, re.platform_margin, re.distributable,
@@ -211,6 +211,7 @@ router.get('/:id/flow', requirePermission('payments.view'), requirePlatformAdmin
       fixed: Number(row.fee_fixed || 0),
       settlement: Number(row.fee_settlement || 0),
       provider: Number(row.psp_fee || providerItemised),
+      providerSource: row.fee_is_estimate === false ? 'actual' : 'estimated',
       platform: Number(row.platform_fee || 0),
       higherPaysMargin: Number(row.platform_margin || 0),
     },
@@ -376,36 +377,10 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
 // transaction under the same payment. Idempotent: the ledger refuses a second
 // reversal.
 async function reverse(req, res, kind) {
-  const status = kind === 'refund' ? 'refunded' : 'charged_back';
-  const fn = kind === 'refund' ? 'fn_post_refund' : 'fn_post_chargeback';
-  const result = await withTransaction(async (c) => {
-    const p = (await c.query(
-      `SELECT p.id, p.amount, p.currency, p.status, p.payment_link_id, p.account_id, p.agent_id,
-              t.id AS sale_tx_id
-         FROM payments p LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment' AND t.status = 'approved'
-        WHERE p.id = $1 AND p.workspace_id = $2`, [req.params.id, wid(req)])).rows[0];
-    if (!p) return { notFound: true };
-    if (!p.sale_tx_id) return { noSale: true };
-    const already = (await c.query(
-      "SELECT entry_type FROM revenue_entries WHERE transaction_id=$1 AND entry_type IN ('refund','chargeback')", [p.sale_tx_id])).rows[0];
-    if (already) return { already: already.entry_type };
-
-    const entry = (await c.query(`SELECT * FROM ${fn}($1)`, [p.sale_tx_id])).rows[0];
-    await c.query(
-      `INSERT INTO transactions (workspace_id, payment_id, type, status, gross, currency, occurred_at)
-       VALUES ($1,$2,$3,$4,$5,$6,now())`, [wid(req), p.id, kind, status, p.amount, p.currency]);
-    await c.query('UPDATE payments SET status = $2 WHERE id = $1', [p.id, 'refunded']);
-    if (p.payment_link_id) {
-      await c.query("UPDATE payment_links SET status='refunded' WHERE id=$1 AND type='single_use'", [p.payment_link_id]);
-    }
-    await notifier.notify(c, wid(req), {
-      event: kind === 'refund' ? 'payment.refunded' : 'payment.chargeback',
-      title: kind === 'refund' ? 'Refund recorded' : 'Chargeback recorded',
-      accountId: p.account_id, agentId: p.agent_id,
-      amount: Number(p.amount), currency: p.currency, entityType: 'payment', entityId: p.id,
-    });
-    return { entry, amount: Number(p.amount), currency: p.currency };
-  });
+  const result = await withTransaction((c) => paymentsService.recordPaymentReversal(c, wid(req), {
+    paymentId: req.params.id,
+    kind,
+  }));
 
   if (result.notFound) return res.status(404).json({ error: 'not_found' });
   if (result.noSale) return res.status(400).json({ error: 'no_sale_to_reverse' });

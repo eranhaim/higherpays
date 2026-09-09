@@ -23,7 +23,8 @@ export {
   type ReassignImpact, type ReassignInput,
 } from './links';
 export {
-  paymentsApi, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, PAYMENT_EXPORT_COLUMNS, isReversed,
+  paymentsApi, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, PAYMENT_EXPORT_COLUMNS,
+  PROVIDER_FEE_SOURCE_LABELS, isReversed,
   type Payment, type PaymentFlow, type PaymentFlowParty, type PaymentFlowRate, type PaymentStatus, type ListPaymentsQuery, type CompletePaymentInput, type ReversalResult,
   type ExportColumn, type ExportOptions, type PaymentSort,
 } from './payments';

@@ -7,7 +7,13 @@ const config = require('../config');
 // the token was issued from, so a request can tell which session it is on.
 function signAccessToken(user, sessionId) {
   return jwt.sign(
-    { sub: user.id, email: user.email, name: user.full_name, sid: sessionId },
+    {
+      sub: user.id,
+      email: user.email,
+      name: user.full_name,
+      sid: sessionId,
+      mfa: user.two_factor_authenticated === true || user.twoFactorAuthenticated === true,
+    },
     config.jwtSecret,
     { expiresIn: config.accessTokenTtl }
   );

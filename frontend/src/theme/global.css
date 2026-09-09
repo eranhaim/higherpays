@@ -169,7 +169,7 @@ input[type=password]:hover:not(:disabled), input[type=search]:hover:not(:disable
 .field > .sub { margin-top: 2px; }
 /* Input with a button beside it, e.g. a read-only value and its copy action. */
 .field-row { display: flex; gap: 8px; align-items: center; }
-.field-row input { flex: 1; min-width: 0; }
+.field-row input, .field-row textarea { flex: 1; min-width: 0; }
 .field-label { padding-left: 2px; }
 .form-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
 .form-row .field { flex: 1; min-width: 150px; }
@@ -550,10 +550,11 @@ label.setrow { cursor: pointer; }
 .flow-total { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; background: var(--surface-2); }
 .flow-connector { color: var(--brand); text-align: center; line-height: 1; padding: 7px 0; }
 .flow-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding-bottom: 4px; }
+.flow-fee-note { margin: 2px 0 8px; }
 .flow-breakdown { border-top: 1px solid var(--rule-soft); }
 .flow-branches { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
 .flow-branch { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 10px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface-2); }
-.flow-branch > span:first-child { color: var(--muted); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-branch > span:first-child { color: var(--muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
 .payment-flow .warnbar { margin: 12px 0 0; }
 
 /* ── Toast ──────────────────────────────────────────────────────────────── */

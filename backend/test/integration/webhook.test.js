@@ -9,6 +9,7 @@ const { app, pool } = require('../helpers/setup');
 const { createTenant, createAccount } = require('../helpers/tenant');
 const { endpointFor, buildPaidPayload, postWebhook, newTransId, paySale } = require('../helpers/webhook');
 const paymentsService = require('../../src/services/payments.service');
+const signature = require('../../src/providers/mantapay-signature');
 
 test('valid signature -> payment paid, transaction approved, link pending, ledger posted, notification recorded', async () => {
   const t = await createTenant(app);
@@ -102,4 +103,108 @@ test('a delivery that failed mid-processing is processed on the provider retry',
   assert.equal(retry.body.duplicate, undefined);
   const after = (await pool.query('SELECT status FROM payments WHERE provider_payment_id = $1', [payload.trans_id])).rows[0];
   assert.equal(after.status, 'paid');
+});
+
+test('signed provider amount and currency mismatches stay visible and post no money', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+    .send({ accountId: account.id, type: 'single_use', amount: 25, currency: 'EUR' }).expect(201)).body;
+  const endpoint = await endpointFor(t.workspaceId);
+
+  const wrongAmount = buildPaidPayload({ reference: link.referenceId, transId: newTransId(), amount: 26 });
+  await postWebhook(app, endpoint, wrongAmount).expect(422);
+  const amountEvent = (await pool.query(
+    'SELECT processed, processing_error FROM webhook_events WHERE provider_event_id = $1',
+    [wrongAmount.trans_id])).rows[0];
+  assert.equal(amountEvent.processed, false);
+  assert.equal(amountEvent.processing_error, 'provider_amount_mismatch');
+
+  const wrongCurrency = buildPaidPayload({
+    reference: link.referenceId, transId: newTransId(), amount: 25, currency: 'USD',
+  });
+  await postWebhook(app, endpoint, wrongCurrency).expect(422);
+  const count = (await pool.query(
+    'SELECT count(*)::int AS count FROM payments WHERE payment_link_id = $1',
+    [link.id])).rows[0].count;
+  assert.equal(count, 0);
+});
+
+test('MantaPay may sign either content amount or content plus checkout fee', async () => {
+  const t = await createTenant(app, { checkoutFee: 2 });
+  const account = await createAccount(app, t);
+  const { paymentId } = await paySale(app, t, account, 25, { paidAmount: 27 });
+  const payment = (await pool.query('SELECT amount FROM payments WHERE id = $1', [paymentId])).rows[0];
+  assert.equal(Number(payment.amount), 25);
+});
+
+test('a pending attempt is preserved and can later become the approved sale', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+    .send({ accountId: account.id, type: 'single_use', amount: 25, currency: 'EUR' }).expect(201)).body;
+  const endpoint = await endpointFor(t.workspaceId);
+  const transId = newTransId();
+
+  await postWebhook(app, endpoint, buildPaidPayload({
+    reference: link.referenceId, transId, amount: 25, replyCode: '663',
+  })).expect(200);
+  assert.equal((await pool.query(
+    'SELECT status FROM payments WHERE provider_payment_id = $1', [transId])).rows[0].status, 'pending');
+  assert.equal((await pool.query(
+    'SELECT status FROM payment_links WHERE id = $1', [link.id])).rows[0].status, 'active');
+
+  await postWebhook(app, endpoint, buildPaidPayload({
+    reference: link.referenceId, transId, amount: 25, replyCode: '000',
+  })).expect(200);
+  assert.equal((await pool.query(
+    'SELECT status FROM payments WHERE provider_payment_id = $1', [transId])).rows[0].status, 'paid');
+  assert.equal((await pool.query(
+    `SELECT count(*)::int AS count FROM revenue_entries re
+      JOIN transactions tx ON tx.id = re.transaction_id
+     WHERE tx.provider_transaction_id = $1 AND re.entry_type = 'sale'`, [transId])).rows[0].count, 1);
+});
+
+test('concurrent approvals of one single-use link post exactly one sale', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+    .send({ accountId: account.id, type: 'single_use', amount: 25, currency: 'EUR' }).expect(201)).body;
+  const endpoint = await endpointFor(t.workspaceId);
+  const responses = await Promise.all([
+    postWebhook(app, endpoint, buildPaidPayload({ reference: link.referenceId, transId: newTransId(), amount: 25 })),
+    postWebhook(app, endpoint, buildPaidPayload({ reference: link.referenceId, transId: newTransId(), amount: 25 })),
+  ]);
+  assert.deepEqual(responses.map((response) => response.status).sort(), [200, 422]);
+  assert.equal((await pool.query(
+    `SELECT count(*)::int AS count FROM revenue_entries re
+      JOIN transactions tx ON tx.id = re.transaction_id
+      JOIN payments p ON p.id = tx.payment_id
+     WHERE p.payment_link_id = $1 AND re.entry_type = 'sale'`, [link.id])).rows[0].count, 1);
+});
+
+test('a signed chargeback webhook uses the idempotent reversal path', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const sale = await paySale(app, t, account, 25);
+  const fields = {
+    trans_id: newTransId(),
+    action: 'Chargback',
+    reason: 'test',
+    reasonCode: '1',
+    comment: '',
+    originalID: sale.transId,
+    OrderId: sale.link.referenceId,
+  };
+  fields.Signature = signature.expectedNotificationSignature(fields, process.env.MANTAPAY_HASH_KEY, 'chargeback');
+  const endpoint = await endpointFor(t.workspaceId);
+  await postWebhook(app, endpoint, fields).expect(200);
+  await postWebhook(app, endpoint, fields).expect(200);
+
+  assert.equal((await pool.query('SELECT status FROM payments WHERE id = $1', [sale.paymentId])).rows[0].status, 'refunded');
+  assert.equal((await pool.query(
+    `SELECT count(*)::int AS count FROM revenue_entries re
+      JOIN transactions tx ON tx.id = re.transaction_id
+     WHERE tx.provider_transaction_id = $1 AND re.entry_type = 'chargeback'`,
+    [sale.transId])).rows[0].count, 1);
 });

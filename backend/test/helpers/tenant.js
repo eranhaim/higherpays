@@ -6,6 +6,7 @@
 const request = require('supertest');
 const { pool } = require('../../src/db');
 const { hashPassword } = require('../../src/auth/passwords');
+const { totp } = require('../../src/auth/totp');
 const { lastEmailTo } = require('../../src/util/email');
 
 let counter = 0;
@@ -31,7 +32,12 @@ async function getPlatformAdmin(app) {
     'INSERT INTO users (email, full_name, password_hash, is_platform_admin) VALUES ($1,$2,$3,true)',
     [email, 'Platform Admin', await hashPassword(PASSWORD)]);
   const session = await login(app, email);
-  platformAdmin = { email, ...session, headers: { Authorization: `Bearer ${session.accessToken}` } };
+  const headers = { Authorization: `Bearer ${session.accessToken}` };
+  const setup = (await request(app).post('/auth/2fa/setup').set(headers).send({}).expect(200)).body;
+  const enabled = (await request(app).post('/auth/2fa/enable').set(headers)
+    .send({ code: totp(setup.secret) }).expect(200)).body;
+  headers.Authorization = `Bearer ${enabled.accessToken}`;
+  platformAdmin = { email, ...session, headers };
   return platformAdmin;
 }
 

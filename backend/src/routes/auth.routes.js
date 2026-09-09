@@ -1,10 +1,13 @@
 'use strict';
+const crypto = require('crypto');
 const express = require('express');
 const { query } = require('../db');
 const { verifyPassword } = require('../auth/passwords');
 const { signAccessToken, generateRefreshToken, hashRefreshToken } = require('../auth/tokens');
 const { requireAuth } = require('../middleware');
-const { generateSecret, verifyTotp, otpauthUrl } = require('../auth/totp');
+const {
+  generateSecret, verifyTotp, otpauthUrl, generateRecoveryCodes, hashRecoveryCode,
+} = require('../auth/totp');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { createLimiter } = require('../lib/rateLimit');
@@ -25,16 +28,41 @@ const limitByIp = ipLimiter.middleware((req) => ipOf(req) || 'unknown');
 const accountKey = (email) => String(email || '').trim().toLowerCase();
 
 // A new sign-in starts a token family; rotation continues the same one.
-async function issueRefreshToken(userId, req, familyId = null) {
+async function issueRefreshToken(userId, req, familyId = null, twoFactorAuthenticated = false) {
   const token = generateRefreshToken();
-  const expires = new Date(Date.now() + config.refreshTokenDays * 86400 * 1000);
+  const resolvedFamilyId = familyId || crypto.randomUUID();
+  const now = Date.now();
+  let absoluteExpires = new Date(now + config.sessionAbsoluteDays * 86400 * 1000);
+  if (familyId) {
+    const family = (await query(
+      'SELECT min(absolute_expires_at) AS absolute_expires_at FROM refresh_tokens WHERE family_id = $1',
+      [familyId])).rows[0];
+    if (family?.absolute_expires_at) absoluteExpires = new Date(family.absolute_expires_at);
+  }
+  const inactivityExpires = new Date(now + config.sessionInactivityDays * 86400 * 1000);
+  const expires = new Date(Math.min(inactivityExpires.getTime(), absoluteExpires.getTime()));
   const row = (await query(
-    `INSERT INTO refresh_tokens (user_id, token_hash, expires_at, user_agent, ip, family_id)
-     VALUES ($1,$2,$3,$4,$5,COALESCE($6, gen_random_uuid()))
+    `INSERT INTO refresh_tokens
+       (user_id, token_hash, expires_at, absolute_expires_at, two_factor_authenticated,
+        user_agent, ip, family_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
      RETURNING family_id`,
-    [userId, hashRefreshToken(token), expires, req.headers['user-agent'] || null, ipOf(req), familyId]
+    [userId, hashRefreshToken(token), expires, absoluteExpires, twoFactorAuthenticated,
+     req.headers['user-agent'] || null, ipOf(req), resolvedFamilyId]
   )).rows[0];
   return { token, familyId: row.family_id };
+}
+
+async function verifySecondFactor(user, code) {
+  if (verifyTotp(user.two_factor_secret, code)) return { ok: true, recovery: false };
+  const recoveryHash = hashRecoveryCode(code);
+  const used = (await query(
+    `UPDATE users
+        SET two_factor_recovery_codes = array_remove(two_factor_recovery_codes, $2)
+      WHERE id = $1 AND $2 = ANY(two_factor_recovery_codes)
+      RETURNING id`,
+    [user.id, recoveryHash])).rows[0];
+  return { ok: Boolean(used), recovery: Boolean(used) };
 }
 
 // Every workspace the user may sign into, with the vocabulary that workspace
@@ -66,7 +94,8 @@ router.post('/login', limitByIp, asyncHandler(async (req, res) => {
   }
 
   const user = (await query(
-    `SELECT id, email, full_name, password_hash, status, is_platform_admin, two_factor_secret, two_factor_enabled
+    `SELECT id, email, full_name, password_hash, status, is_platform_admin, two_factor_secret,
+            two_factor_enabled, two_factor_recovery_codes
        FROM users WHERE email = $1`, [email])).rows[0];
   // Same response whether the user exists or not (avoid user enumeration).
   if (!user || !user.password_hash || user.status !== 'active' || !(await verifyPassword(password, user.password_hash))) {
@@ -74,22 +103,28 @@ router.post('/login', limitByIp, asyncHandler(async (req, res) => {
     return res.status(401).json({ error: 'invalid_credentials' });
   }
 
+  let twoFactorAuthenticated = false;
   if (user.two_factor_enabled) {
     const { totp } = req.body || {};
     if (!totp) return res.json({ twoFactorRequired: true });
-    if (!verifyTotp(user.two_factor_secret, totp)) {
+    const secondFactor = await verifySecondFactor(user, totp);
+    if (!secondFactor.ok) {
       accountFailures.hit(accountKey(email));
       await audit({ actorUserId: user.id, action: 'auth.2fa.failed', ip: ipOf(req) });
       return res.json({ twoFactorRequired: true });
     }
+    if (secondFactor.recovery) {
+      await audit({ actorUserId: user.id, action: 'auth.2fa.recovery_used', ip: ipOf(req) });
+    }
+    twoFactorAuthenticated = true;
   }
 
   accountFailures.reset(accountKey(email));
   await query('UPDATE users SET last_login_at = now() WHERE id = $1', [user.id]);
   await audit({ actorUserId: user.id, action: 'auth.login', ip: ipOf(req) });
-  const session = await issueRefreshToken(user.id, req);
+  const session = await issueRefreshToken(user.id, req, null, twoFactorAuthenticated);
   res.json({
-    accessToken: signAccessToken(user, session.familyId),
+    accessToken: signAccessToken({ ...user, two_factor_authenticated: twoFactorAuthenticated }, session.familyId),
     refreshToken: session.token,
     user: publicUser(user),
     workspaces: await workspacesFor(user.id),
@@ -112,19 +147,55 @@ router.post('/2fa/enable', limitByIp, requireAuth, asyncHandler(async (req, res)
   if (!u || !u.two_factor_secret) return res.status(400).json({ error: 'no_pending_secret' });
   if (u.two_factor_enabled) return res.status(400).json({ error: 'already_enabled' });
   if (!verifyTotp(u.two_factor_secret, code)) return res.status(400).json({ error: 'invalid_code' });
-  await query('UPDATE users SET two_factor_enabled = true WHERE id = $1', [req.user.id]);
+  const recoveryCodes = generateRecoveryCodes();
+  await query(
+    `UPDATE users
+        SET two_factor_enabled = true, two_factor_recovery_codes = $2
+      WHERE id = $1`,
+    [req.user.id, recoveryCodes.map(hashRecoveryCode)]);
+  if (req.user.sessionId) {
+    await query(
+      'UPDATE refresh_tokens SET two_factor_authenticated = true WHERE family_id = $1 AND user_id = $2',
+      [req.user.sessionId, req.user.id]);
+  }
+  const enabledUser = (await query(
+    'SELECT id, email, full_name FROM users WHERE id = $1', [req.user.id])).rows[0];
   await audit({ actorUserId: req.user.id, action: 'auth.2fa.enabled', ip: ipOf(req) });
-  res.json({ enabled: true });
+  res.json({
+    enabled: true,
+    recoveryCodes,
+    accessToken: signAccessToken({ ...enabledUser, two_factor_authenticated: true }, req.user.sessionId),
+  });
 }));
 
 router.post('/2fa/disable', limitByIp, requireAuth, asyncHandler(async (req, res) => {
   const { code } = req.body || {};
-  const u = (await query('SELECT two_factor_secret, two_factor_enabled FROM users WHERE id = $1', [req.user.id])).rows[0];
+  const u = (await query(
+    `SELECT id, two_factor_secret, two_factor_enabled, two_factor_recovery_codes
+       FROM users WHERE id = $1`, [req.user.id])).rows[0];
   if (!u || !u.two_factor_enabled) return res.json({ enabled: false });
-  if (!verifyTotp(u.two_factor_secret, code)) return res.status(400).json({ error: 'invalid_code' });
-  await query('UPDATE users SET two_factor_enabled = false, two_factor_secret = NULL WHERE id = $1', [req.user.id]);
+  if (!(await verifySecondFactor(u, code)).ok) return res.status(400).json({ error: 'invalid_code' });
+  await query(
+    `UPDATE users
+        SET two_factor_enabled = false, two_factor_secret = NULL, two_factor_recovery_codes = '{}'
+      WHERE id = $1`,
+    [req.user.id]);
   await audit({ actorUserId: req.user.id, action: 'auth.2fa.disabled', ip: ipOf(req) });
   res.json({ enabled: false });
+}));
+
+router.post('/2fa/recovery-codes', limitByIp, requireAuth, asyncHandler(async (req, res) => {
+  const { code } = req.body || {};
+  const u = (await query(
+    `SELECT id, two_factor_secret, two_factor_enabled, two_factor_recovery_codes
+       FROM users WHERE id = $1`, [req.user.id])).rows[0];
+  if (!u?.two_factor_enabled) return res.status(400).json({ error: 'two_factor_not_enabled' });
+  if (!(await verifySecondFactor(u, code)).ok) return res.status(400).json({ error: 'invalid_code' });
+  const recoveryCodes = generateRecoveryCodes();
+  await query('UPDATE users SET two_factor_recovery_codes = $2 WHERE id = $1',
+    [req.user.id, recoveryCodes.map(hashRecoveryCode)]);
+  await audit({ actorUserId: req.user.id, action: 'auth.2fa.recovery_regenerated', ip: ipOf(req) });
+  res.json({ recoveryCodes });
 }));
 
 // POST /auth/refresh — rotate the refresh token, issue a new access token
@@ -134,7 +205,9 @@ router.post('/refresh', limitByIp, asyncHandler(async (req, res) => {
   const hash = hashRefreshToken(refreshToken);
 
   const rec = (await query(
-    `SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked_at, rt.family_id, u.email, u.full_name
+    `SELECT rt.id, rt.user_id, rt.expires_at, rt.absolute_expires_at,
+            rt.two_factor_authenticated, rt.revoked_at,
+            rt.family_id, u.email, u.full_name
        FROM refresh_tokens rt JOIN users u ON u.id = rt.user_id
       WHERE rt.token_hash = $1`, [hash])).rows[0];
   if (!rec) return res.status(401).json({ error: 'invalid_refresh' });
@@ -145,10 +218,20 @@ router.post('/refresh', limitByIp, asyncHandler(async (req, res) => {
     await audit({ actorUserId: rec.user_id, action: 'auth.refresh.reuse', metadata: { familyId: rec.family_id }, ip: ipOf(req) });
     return res.status(401).json({ error: 'refresh_token_reused' });
   }
-  if (new Date(rec.expires_at) < new Date()) return res.status(401).json({ error: 'invalid_refresh' });
+  const now = new Date();
+  if (new Date(rec.expires_at) <= now || new Date(rec.absolute_expires_at) <= now) {
+    await query('UPDATE refresh_tokens SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL', [rec.family_id]);
+    return res.status(401).json({ error: 'session_expired' });
+  }
   await query('UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1', [rec.id]);
-  const next = await issueRefreshToken(rec.user_id, req, rec.family_id);
-  const accessToken = signAccessToken({ id: rec.user_id, email: rec.email, full_name: rec.full_name }, next.familyId);
+  const next = await issueRefreshToken(
+    rec.user_id, req, rec.family_id, rec.two_factor_authenticated);
+  const accessToken = signAccessToken({
+    id: rec.user_id,
+    email: rec.email,
+    full_name: rec.full_name,
+    two_factor_authenticated: rec.two_factor_authenticated,
+  }, next.familyId);
   res.json({ accessToken, refreshToken: next.token });
 }));
 
@@ -165,13 +248,15 @@ router.post('/logout', asyncHandler(async (req, res) => {
 // ---- Sessions: a session is a refresh-token family -------------------------
 router.get('/sessions', requireAuth, asyncHandler(async (req, res) => {
   const { rows } = await query(
-    `SELECT DISTINCT ON (family_id) family_id, user_agent, ip, created_at, expires_at
+    `SELECT DISTINCT ON (family_id) family_id, user_agent, ip, created_at, expires_at, absolute_expires_at
        FROM refresh_tokens
-      WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
+      WHERE user_id = $1 AND revoked_at IS NULL
+        AND expires_at > now() AND absolute_expires_at > now()
       ORDER BY family_id, created_at DESC`, [req.user.id]);
   res.json({
     sessions: rows.map((r) => ({
-      id: r.family_id, userAgent: r.user_agent, ip: r.ip, lastRefreshedAt: r.created_at, expiresAt: r.expires_at,
+      id: r.family_id, userAgent: r.user_agent, ip: r.ip, lastRefreshedAt: r.created_at,
+      expiresAt: r.expires_at, absoluteExpiresAt: r.absolute_expires_at,
       isCurrent: r.family_id === req.user.sessionId,
     })),
   });

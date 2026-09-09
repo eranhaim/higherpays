@@ -54,7 +54,7 @@ export function SessionsCard() {
           </button>
         )}
       </div>
-      <p className="sub">Each entry is a device that can renew its sign-in. Ending one signs that device out within 15 minutes.</p>
+      <p className="sub">Sessions end after inactivity and cannot continue past their absolute limit. Ending one signs that device out within 15 minutes.</p>
       <div className="tablewrap flush">
         <table>
           <thead>
@@ -62,7 +62,8 @@ export function SessionsCard() {
               <th scope="col">Device</th>
               <th scope="col">Address</th>
               <th scope="col">Last active</th>
-              <th scope="col">Expires</th>
+              <th scope="col">Inactive after</th>
+              <th scope="col">Absolute limit</th>
               <th scope="col"><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
@@ -76,6 +77,7 @@ export function SessionsCard() {
                 <td className="mono">{s.ip ?? '—'}</td>
                 <td><DateCell ts={s.lastRefreshedAt} /></td>
                 <td><DateCell ts={s.expiresAt} /></td>
+                <td><DateCell ts={s.absoluteExpiresAt} /></td>
                 <td className="cell-actions">
                   <button
                     className="btn ghost small"

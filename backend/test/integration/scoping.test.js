@@ -91,3 +91,35 @@ test('agency A cannot see agency B, with either header combination', async () =>
   await request(app).get(`/workspaces/${b.workspaceId}/accounts`)
     .set({ Authorization: a.authHeaders.Authorization, 'X-Workspace-Id': b.workspaceId }).expect(403);
 });
+
+test('customer PII follows the agent assigned-creator scope on every operation', async () => {
+  const { t, mine, other, agent } = await fixture();
+  const category = (await request(app).post(`/workspaces/${t.workspaceId}/categories`).set(t.authHeaders)
+    .send({ name: `Scoped ${Date.now()}` }).expect(201)).body;
+  const ownSale = await paySale(app, t, mine, 40);
+  const otherSale = await paySale(app, t, other, 60);
+  const ownCustomer = (await request(app)
+    .patch(`/workspaces/${t.workspaceId}/payments/${ownSale.paymentId}/details`)
+    .set(t.authHeaders)
+    .send({ categoryId: category.id, customer: { name: 'Visible Customer', telegramName: '@visible' } })
+    .expect(200)).body;
+  const otherCustomer = (await request(app)
+    .patch(`/workspaces/${t.workspaceId}/payments/${otherSale.paymentId}/details`)
+    .set(t.authHeaders)
+    .send({ categoryId: category.id, customer: { name: 'Hidden Customer', telegramName: '@hidden' } })
+    .expect(200)).body;
+
+  const list = (await request(app).get(`/workspaces/${t.workspaceId}/customers`)
+    .set(agent.headers).expect(200)).body.customers;
+  assert.deepEqual(list.map((customer) => customer.id), [ownCustomer.customerId]);
+  await request(app).get(`/workspaces/${t.workspaceId}/customers/${ownCustomer.customerId}`)
+    .set(agent.headers).expect(200);
+  await request(app).get(`/workspaces/${t.workspaceId}/customers/${otherCustomer.customerId}`)
+    .set(agent.headers).expect(404);
+  await request(app).patch(`/workspaces/${t.workspaceId}/customers/${ownCustomer.customerId}`)
+    .set(agent.headers).send({ phone: '+35799123456' }).expect(200);
+  await request(app).patch(`/workspaces/${t.workspaceId}/customers/${otherCustomer.customerId}`)
+    .set(agent.headers).send({ phone: '+35700000000' }).expect(404);
+  await request(app).delete(`/workspaces/${t.workspaceId}/customers/${otherCustomer.customerId}`)
+    .set(agent.headers).expect(404);
+});

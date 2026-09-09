@@ -39,10 +39,10 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
     }
     const st = statusResp.status;   // approved | declined | pending | abandoned | unknown
 
-    if (st === 'approved') {
+    if (st === 'approved' || (st === 'pending' && statusResp.transaction_id)) {
       const outcome = await paymentsService.recordPaymentOutcome(c, ws.id, {
         providerTransactionId: statusResp.transaction_id || ('ref-' + link.reference_id),
-        status: 'approved',
+        status: st,
         gross: statusResp.gross_amount != null
           ? Number(statusResp.gross_amount)
           : Number(link.amount || 0) + Number(link.checkout_fee || 0),
@@ -51,8 +51,12 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
         linkReference: link.reference_id,
         rawPayload: statusResp,
       });
-      summary.updated.push({ linkId: link.id, to: 'pending', paymentId: outcome.paymentId, newSale: outcome.newSale });
-      continue;
+      if (st === 'approved') {
+        summary.updated.push({ linkId: link.id, to: 'pending', paymentId: outcome.paymentId, newSale: outcome.newSale });
+        continue;
+      }
+      summary.skipped.push({ linkId: link.id, reason: 'status_pending', paymentId: outcome.paymentId });
+      if (!link.is_expired) continue;
     }
     // Anything short of approval leaves the link open until its deadline.
     if (link.is_expired) {

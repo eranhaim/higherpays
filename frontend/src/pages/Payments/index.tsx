@@ -17,11 +17,13 @@ import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import { formatMoney, sum } from '../../lib/format';
 import {
   isReversed, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, PAYMENT_EXPORT_COLUMNS,
+  PROVIDER_FEE_SOURCE_LABELS,
   paymentsApi, type Payment, type PaymentFlow, type PaymentStatus, type PaymentSort, type ListPaymentsQuery,
 } from '../../api/endpoints';
 import { usePaymentsData, type ExportInput } from './usePaymentsData';
 
 const STATUS_TONE: Record<PaymentStatus, 'ok' | 'no' | 'warn'> = {
+  pending: 'warn',
   paid: 'ok',
   failed: 'no',
   refunded: 'no',
@@ -103,7 +105,7 @@ export default function PaymentsPage() {
   const reversed = payments.filter((p) => isReversed(p.status));
   const gross = sum(paid.map((p) => p.amount));
   const fees = sum(paid.map((p) => p.platformFee ?? 0));
-  const attempts = paid.length + failed.length;
+  const attempts = paid.length + failed.length + payments.filter((p) => p.status === 'pending').length;
   const awaiting = payments.filter((p) => p.needsDetails).length;
   const statsUnknown = isLoading || isError;
 
@@ -420,7 +422,7 @@ function PaymentFlowContent({ flow }: { flow: PaymentFlow }) {
   return (
     <div className="payment-flow">
       <div className="flow-node flow-total">
-        <span className="field-label">{flow.status === 'failed' ? 'Customer attempted' : 'Customer paid'}</span>
+        <span className="field-label">{flow.status === 'paid' ? 'Customer paid' : 'Customer attempted'}</span>
         <Money amount={flow.customerTotal} currency={flow.currency} direction="in" emphasis />
       </div>
 
@@ -448,9 +450,12 @@ function PaymentFlowContent({ flow }: { flow: PaymentFlow }) {
               <span className="field-label">Platform deductions</span>
               <Money amount={flow.fees.platform} currency={flow.currency} direction="out" emphasis />
             </div>
-            <DetailRow label="MantaPay costs">
+            <DetailRow label={`MantaPay costs · ${PROVIDER_FEE_SOURCE_LABELS[flow.fees.providerSource]}`}>
               <Money amount={flow.fees.provider} currency={flow.currency} direction="out" />
             </DetailRow>
+            {flow.fees.providerSource === 'estimated' && (
+              <p className="sub flow-fee-note">Calculated from the configured MantaPay rates. Actual provider fees have not been reported.</p>
+            )}
             <div className="flow-breakdown">
               {providerItems.map(([label, amount, rate]) => (
                 <DetailRow key={label} label={`MantaPay · ${rate ? rateLabel(label, rate, flow.currency) : label}`}>

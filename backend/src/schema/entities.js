@@ -37,9 +37,9 @@ const LINK_STATUS = ['active', 'pending', 'done', 'expired', 'cancelled', 'refun
 //   paid      the provider approved the charge
 //   failed    the provider declined it
 //   refunded  a paid charge was reversed, by refund or chargeback
-const PAYMENT_STATUS = ['paid', 'failed', 'refunded'];
+const PAYMENT_STATUS = ['pending', 'paid', 'failed', 'refunded'];
 const TRANSACTION_TYPE = ['payment', 'refund', 'chargeback', 'adjustment'];
-const TRANSACTION_STATUS = ['approved', 'declined', 'refunded', 'charged_back'];
+const TRANSACTION_STATUS = ['pending', 'approved', 'declined', 'refunded', 'charged_back'];
 const REVENUE_ENTRY_TYPE = ['sale', 'refund', 'chargeback'];
 const REVENUE_ENTRY_STATUS = ['locked', 'reversed'];
 const PAYEE_TYPE = ['account', 'agent', 'agency'];
@@ -63,6 +63,7 @@ const User = entity('users', {
     isPlatformAdmin:  bool().notNull().default('false'),  // above every workspace, not a workspace role
     twoFactorEnabled: bool().notNull().default('false'),
     twoFactorSecret:  text(),                  // base32 TOTP seed; must stay readable to verify codes
+    twoFactorRecoveryCodes: textArray().notNull().default("'{}'"), // SHA-256 hashes; plaintext is shown once
     lastLoginAt:      timestamp(),
   },
   timestamps: 'both',
@@ -76,6 +77,8 @@ const RefreshToken = entity('refresh_tokens', {
     familyId:  uuid().notNull().default('gen_random_uuid()'),
     tokenHash: text().unique().notNull(),
     expiresAt: timestamp().notNull(),
+    absoluteExpiresAt: timestamp().notNull(),
+    twoFactorAuthenticated: bool().notNull().default('false'),
     revokedAt: timestamp(),
     userAgent: text(),
     ip:        inet(),
@@ -366,6 +369,7 @@ const Transaction = entity('transactions', {
     status:                enumOf(TRANSACTION_STATUS).notNull(),
     gross:                 money().notNull().default('0'),
     fee:                   money().notNull().default('0'),   // the actual PSP fee, when reported
+    feeIsEstimate:         bool().notNull().default('true'),
     surcharge:             money().notNull().default('0'),
     net:                   money().notNull().default('0'),
     currency:              char(3).notNull(),
@@ -433,6 +437,7 @@ const RevenueEntry = entity('revenue_entries', {
     accountPaidAt:     timestamp(),
     agentPaidAt:       timestamp(),
   },
+  unique: [['transactionId', 'entryType']],
   indexes: ['workspaceId', 'transactionId', 'accountId'],
   timestamps: 'created',
 });
@@ -595,11 +600,12 @@ const WebhookEvent = entity('webhook_events', {
     providerEventId: text(),
     signatureValid:  bool(),
     processed:       bool().notNull().default('false'),
+    processingError: text(),
     payload:         jsonb().notNull(),
     receivedAt:      timestamp().notNull().default('now()'),
     processedAt:     timestamp(),
   },
-  unique: [['provider', 'providerEventId']],
+  unique: [['provider', 'providerEventId', 'eventType']],
   indexes: [{ columns: ['processed'], where: 'processed = false' }],
 });
 

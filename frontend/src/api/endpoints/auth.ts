@@ -6,6 +6,10 @@ export interface TwoFactorSetup {
   otpauthUrl: string;
 }
 
+export interface RecoveryCodes {
+  recoveryCodes: string[];
+}
+
 /** A signed-in device: one refresh-token family. */
 export interface Session {
   id: string;
@@ -13,6 +17,7 @@ export interface Session {
   ip: string | null;
   lastRefreshedAt: string;
   expiresAt: string;
+  absoluteExpiresAt: string;
   /** The session this browser is signed in on. */
   isCurrent: boolean;
 }
@@ -42,11 +47,16 @@ export const authApi = {
   },
 
   enableTwoFactor(code: string) {
-    return api.post<{ enabled: true }>('/auth/2fa/enable', { code }, { skipWorkspace: true });
+    return api.post<{ enabled: true; accessToken: string } & RecoveryCodes>(
+      '/auth/2fa/enable', { code }, { skipWorkspace: true });
   },
 
   disableTwoFactor(code: string) {
     return api.post<{ enabled: false }>('/auth/2fa/disable', { code }, { skipWorkspace: true });
+  },
+
+  regenerateRecoveryCodes(code: string) {
+    return api.post<RecoveryCodes>('/auth/2fa/recovery-codes', { code }, { skipWorkspace: true });
   },
 
   async listSessions(): Promise<Session[]> {

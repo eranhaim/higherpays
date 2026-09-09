@@ -34,6 +34,7 @@ function SecurityCard() {
   const { user } = useCurrentSession();
   const [enableOpen, setEnableOpen] = useState(false);
   const [disableOpen, setDisableOpen] = useState(false);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
   const enabled = user?.twoFactorEnabled ?? false;
 
   return (
@@ -44,12 +45,19 @@ function SecurityCard() {
           <div className="k">Two-factor authentication</div>
           <div className="d">Require a 6-digit code from an authenticator app at login, in addition to your password.</div>
         </div>
-        <button className={enabled ? 'btn ghost' : 'btn'} onClick={() => (enabled ? setDisableOpen(true) : setEnableOpen(true))}>
-          {enabled ? 'Disable 2FA' : 'Enable 2FA'}
-        </button>
+        <div className="controls">
+          {enabled && <button className="btn ghost" onClick={() => setRecoveryOpen(true)}>New recovery codes</button>}
+          <button className={enabled ? 'btn ghost' : 'btn'} onClick={() => (enabled ? setDisableOpen(true) : setEnableOpen(true))}>
+            {enabled ? 'Disable 2FA' : 'Enable 2FA'}
+          </button>
+        </div>
       </div>
+      {user?.isPlatformAdmin && !enabled && (
+        <div className="warnbar" role="status">Two-factor authentication is required before you can use platform administration.</div>
+      )}
       {enableOpen && <EnableTwoFactorModal onClose={() => setEnableOpen(false)} />}
       {disableOpen && <DisableTwoFactorModal onClose={() => setDisableOpen(false)} />}
+      {recoveryOpen && <RecoveryCodesModal onClose={() => setRecoveryOpen(false)} />}
     </div>
   );
 }
@@ -57,6 +65,7 @@ function SecurityCard() {
 function EnableTwoFactorModal({ onClose }: { onClose: () => void }) {
   const { enable } = useTwoFactor();
   const [code, setCode] = useState('');
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
 
   // Each setup call issues a new pending secret, so fetch once per modal open and never refetch.
   const setup = useQuery({
@@ -69,9 +78,23 @@ function EnableTwoFactorModal({ onClose }: { onClose: () => void }) {
 
   const verify = async () => {
     if (!/^\d{6}$/.test(code)) { toast('Enter the 6-digit code from your app.'); return; }
-    try { await enable.mutateAsync(code); toast('Two-factor authentication enabled.'); onClose(); }
+    try {
+      const result = await enable.mutateAsync(code);
+      setRecoveryCodes(result.recoveryCodes);
+      toast('Two-factor authentication enabled.');
+    }
     catch (err) { toast(codeErrorMessage(err)); }
   };
+
+  if (recoveryCodes) {
+    return (
+      <Modal open onClose={onClose} title="Save your recovery codes"
+        subtitle="Store these one-time codes somewhere safe. They will not be shown again.">
+        <RecoveryCodesView codes={recoveryCodes} />
+        <div className="modal-actions"><button className="btn" onClick={onClose}>Done</button></div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal open onClose={onClose} title="Enable two-factor authentication"
@@ -113,22 +136,71 @@ function DisableTwoFactorModal({ onClose }: { onClose: () => void }) {
   const [code, setCode] = useState('');
 
   const confirm = async () => {
-    if (!/^\d{6}$/.test(code)) { toast('Enter the 6-digit code from your app.'); return; }
+    if (!code.trim()) { toast('Enter a current authentication or recovery code.'); return; }
     try { await disable.mutateAsync(code); toast('Two-factor authentication disabled.'); onClose(); }
     catch (err) { toast(codeErrorMessage(err)); }
   };
 
   return (
-    <Modal open onClose={onClose} title="Disable two-factor?" subtitle="Your account will then be protected by password only. Enter a current code to confirm.">
+    <Modal open onClose={onClose} title="Disable two-factor?" subtitle="Your account will then be protected by password only. Enter a current authentication or recovery code to confirm.">
       <div className="field">
-        <label htmlFor="tfa-disable-code">6-digit code from your app</label>
-        <input id="tfa-disable-code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} />
+        <label htmlFor="tfa-disable-code">Authentication or recovery code</label>
+        <input id="tfa-disable-code" type="text" autoComplete="one-time-code" maxLength={21} value={code} onChange={(e) => setCode(e.target.value)} />
       </div>
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>Keep it on</button>
         <button className="btn danger" disabled={disable.isPending} onClick={confirm}>Disable</button>
       </div>
     </Modal>
+  );
+}
+
+function RecoveryCodesModal({ onClose }: { onClose: () => void }) {
+  const { regenerateRecoveryCodes } = useTwoFactor();
+  const [code, setCode] = useState('');
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+
+  const confirm = async () => {
+    if (!code.trim()) { toast('Enter a current authentication or recovery code.'); return; }
+    try {
+      const result = await regenerateRecoveryCodes.mutateAsync(code);
+      setRecoveryCodes(result.recoveryCodes);
+    } catch (err) {
+      toast(codeErrorMessage(err));
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Generate new recovery codes"
+      subtitle={recoveryCodes
+        ? 'Store these one-time codes somewhere safe. Your previous recovery codes no longer work.'
+        : 'Enter a current authentication or recovery code. This replaces all previous recovery codes.'}>
+      {recoveryCodes ? <RecoveryCodesView codes={recoveryCodes} /> : (
+        <div className="field">
+          <label htmlFor="tfa-recovery-code">Authentication or recovery code</label>
+          <input id="tfa-recovery-code" type="text" autoComplete="one-time-code" maxLength={21}
+            value={code} onChange={(e) => setCode(e.target.value)} />
+        </div>
+      )}
+      <div className="modal-actions">
+        {!recoveryCodes && <button className="btn ghost" onClick={onClose}>Cancel</button>}
+        <button className="btn" disabled={regenerateRecoveryCodes.isPending}
+          onClick={recoveryCodes ? onClose : confirm}>{recoveryCodes ? 'Done' : 'Generate codes'}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function RecoveryCodesView({ codes }: { codes: string[] }) {
+  const text = codes.join('\n');
+  return (
+    <div className="field">
+      <label htmlFor="tfa-recovery-codes">One-time recovery codes</label>
+      <div className="field-row">
+        <textarea id="tfa-recovery-codes" readOnly rows={5} value={text} onFocus={(e) => e.target.select()} />
+        <CopyButton value={text} />
+      </div>
+    </div>
   );
 }
 
