@@ -1,10 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { platformApi, type PlatformWorkspace, type PlatformOverview, type OnboardAgencyInput, type PlatformFeeRate } from '../../api/endpoints';
+import { useAuthStore } from '../../store/auth';
 
 export interface UsePlatformDataResult {
-  /** True while we still don't know whether the caller is a platform admin. */
-  isCheckingAccess: boolean;
   isPlatformAdmin: boolean;
+  requiresTwoFactor: boolean;
   overview: PlatformOverview | null;
   workspaces: PlatformWorkspace[];
   isLoading: boolean;
@@ -17,13 +17,13 @@ export interface UsePlatformDataResult {
 
 export function usePlatformData(): UsePlatformDataResult {
   const queryClient = useQueryClient();
-  // A 403 here is the answer "you are not a platform admin", not a failure,
-  // so it gates the rest rather than surfacing as an error card.
-  const me = useQuery({ queryKey: ['platform-me'], queryFn: () => platformApi.me(), retry: false });
-  const isPlatformAdmin = me.isSuccess;
+  const user = useAuthStore((state) => state.user);
+  const isPlatformAdmin = Boolean(user?.isPlatformAdmin);
+  const requiresTwoFactor = isPlatformAdmin && !user?.twoFactorEnabled;
+  const canLoadPlatform = isPlatformAdmin && !requiresTwoFactor;
 
-  const overview = useQuery({ queryKey: ['platform-overview'], queryFn: () => platformApi.overview(), enabled: isPlatformAdmin });
-  const workspaces = useQuery({ queryKey: ['platform-workspaces'], queryFn: () => platformApi.listWorkspaces(), enabled: isPlatformAdmin });
+  const overview = useQuery({ queryKey: ['platform-overview'], queryFn: () => platformApi.overview(), enabled: canLoadPlatform });
+  const workspaces = useQuery({ queryKey: ['platform-workspaces'], queryFn: () => platformApi.listWorkspaces(), enabled: canLoadPlatform });
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['platform-workspaces'] });
@@ -48,8 +48,8 @@ export function usePlatformData(): UsePlatformDataResult {
   });
 
   return {
-    isCheckingAccess: me.isPending,
     isPlatformAdmin,
+    requiresTwoFactor,
     overview: overview.data ?? null,
     workspaces: workspaces.data ?? [],
     isLoading: workspaces.isLoading,

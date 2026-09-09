@@ -29,7 +29,7 @@ function parseAmount(text: string): number {
  */
 export default function PlatformPage() {
   const {
-    isCheckingAccess, isPlatformAdmin, overview, workspaces, isLoading, isError,
+    isPlatformAdmin, requiresTwoFactor, overview, workspaces, isLoading, isError,
     onboardAgency, setStatus, setCurrency, setPlatformFee,
   } = usePlatformData();
   const [onboardOpen, setOnboardOpen] = useState(false);
@@ -73,12 +73,24 @@ export default function PlatformPage() {
     },
   ];
 
-  if (isCheckingAccess) return null;
   if (!isPlatformAdmin) {
     return (
       <div className="page">
         <div className="card">
           <EmptyState title="This console is for HigherPays operators." hint="Your account is not a platform admin." />
+        </div>
+      </div>
+    );
+  }
+  if (requiresTwoFactor) {
+    return (
+      <div className="page">
+        <div className="card">
+          <EmptyState
+            title="Two-factor authentication is required."
+            hint="Protect your platform-admin account before using operator controls."
+            action={<Link className="btn" to="/settings?tab=account">Enable 2FA</Link>}
+          />
         </div>
       </div>
     );
