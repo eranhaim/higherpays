@@ -24,9 +24,8 @@ echo "[entrypoint] Postgres reachable at ${DB_HOST}:${DB_PORT}."
 echo "[entrypoint] applying migrations..."
 DATABASE_URL="$MIGRATIONS_DATABASE_URL" node src/util/migrate.js
 
-# The migrations create new tables owned by the migrations user; we already
-# granted default privileges to hp_app in postgres-init.sql, so no extra
-# GRANT step is needed here. Seeds only run on-demand (SEED_ON_BOOT=true).
+# Migration 018 grants the restricted runtime role access and establishes
+# default privileges for tables added by later migrations.
 if [ "${SEED_ON_BOOT:-false}" = "true" ]; then
   echo "[entrypoint] seeding database..."
   DATABASE_URL="$MIGRATIONS_DATABASE_URL" node src/util/seed.js || \
