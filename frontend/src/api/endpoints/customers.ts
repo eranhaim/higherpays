@@ -37,6 +37,8 @@ export interface CustomerPayment {
   occurredAt: string;
   account: string;
   agent: string | null;
+  linkId: string | null;
+  linkReference: string | null;
 }
 
 export interface CustomerDetail extends Customer {
@@ -72,6 +74,11 @@ export interface UpdateCustomerInput {
   segment?: CustomerSegment;
 }
 
+export function customersFromResponse(raw: { customers?: Customer[] }): Customer[] {
+  if (!Array.isArray(raw.customers)) throw new Error('Invalid customers response.');
+  return raw.customers;
+}
+
 export const customersApi = {
   async list(query: ListCustomersQuery = {}): Promise<Customer[]> {
     const qs = new URLSearchParams();
@@ -82,8 +89,8 @@ export const customersApi = {
     if (query.limit != null) qs.set('limit', String(query.limit));
     if (query.offset != null) qs.set('offset', String(query.offset));
     const suffix = qs.toString() ? `/customers?${qs.toString()}` : '/customers';
-    const raw = await api.get<{ customers: Customer[] }>(workspacePath(suffix));
-    return raw.customers;
+    const raw = await api.get<{ customers?: Customer[] }>(workspacePath(suffix));
+    return customersFromResponse(raw);
   },
 
   get: (id: string) => api.get<CustomerDetail>(workspacePath(`/customers/${id}`)),

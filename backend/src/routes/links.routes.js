@@ -10,6 +10,7 @@ const { resolveDataScope, scopeParams } = require('../auth/dataScope');
 const { status: vocab } = require('../schema/entities');
 const config = require('../config');
 const linksService = require('../services/links.service');
+const { recordLinkEvent } = require('../services/linkEvents');
 const { resolveAttribution } = require('../services/attribution');
 const { generateOrderReference } = require('../lib/orderReference');
 
@@ -52,7 +53,8 @@ const publicLink = (l) => ({
   id: l.id, type: l.type, pricingMode: l.pricing_mode,
   amount: l.amount == null ? null : Number(l.amount), currency: l.currency,
   status: l.status, referenceId: l.reference_id, description: l.description,
-  checkoutUrl: l.checkout_url, expiresAt: l.expires_at, paidAt: l.paid_at, createdAt: l.created_at,
+  checkoutUrl: l.checkout_url, expiresAt: l.expires_at, paidAt: l.paid_at,
+  archivedAt: l.archived_at, createdAt: l.created_at,
   accountId: l.account_id, account: l.account,
   agentId: l.created_by_agent_id, agent: l.agent,
   latestProviderAttempt: l.provider_status ? {
@@ -78,6 +80,7 @@ function linkFilterParams(req, scope) {
     numberFilter(req.query.min), numberFilter(req.query.max),
     req.query.from || null, req.query.to || null,
     req.query.accountId || null, q, req.query.providerStatus || null,
+    req.query.showArchived === 'true',
   ];
 }
 
@@ -94,7 +97,8 @@ const LINK_FILTERS = `
   AND ($11::text IS NULL OR lower(pl.reference_id) LIKE $11::text
        OR lower(COALESCE(pl.provider_transaction_id, '')) LIKE $11::text
        OR lower(COALESCE(u.full_name, '')) LIKE $11::text)
-  AND ($12::text IS NULL OR pl.provider_status = $12::text)`;
+  AND ($12::text IS NULL OR pl.provider_status = $12::text)
+  AND ($13::boolean OR pl.archived_at IS NULL)`;
 
 // The public endpoint starts MantaPay's APM page and redirects the payer to
 // the returned CentroBill URL. No card data touches this server.
@@ -118,7 +122,7 @@ function sortFor(req) {
   return { ...LINK_SORTS[key], dir, after: dir === 'ASC' ? '>' : '<' };
 }
 
-// GET /?limit&cursor&sort&dir&status&type&min&max&from&to&q&accountId&providerStatus
+// GET /?limit&cursor&sort&dir&status&type&min&max&from&to&q&accountId&providerStatus&showArchived
 // Newest first by default. An agent sees the links they created; an owner the
 // links against their account; everyone else the workspace. Filtering happens
 // here, not in the browser: the list is cursor-paginated.
@@ -147,8 +151,8 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
          LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
          LEFT JOIN users u ON u.id = ag.user_id
         WHERE ${LINK_FILTERS}
-          AND ($13::text IS NULL OR (${sort.expr}, pl.id) ${sort.after} ($13::${sort.cast}, $14::uuid))
-        ORDER BY ${sort.expr} ${sort.dir}, pl.id ${sort.dir} LIMIT $15`,
+          AND ($14::text IS NULL OR (${sort.expr}, pl.id) ${sort.after} ($14::${sort.cast}, $15::uuid))
+        ORDER BY ${sort.expr} ${sort.dir}, pl.id ${sort.dir} LIMIT $16`,
       [...linkFilterParams(req, scope),
         cursor ? cursor.value : null, cursor ? cursor.id : null, limit + 1])).rows;
   });
@@ -172,7 +176,7 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
           WHERE pl.workspace_id = $1
        ),
        matching_links AS (
-         SELECT pl.id
+         SELECT pl.id, pl.amount
            FROM effective pl
            JOIN accounts a ON a.id = pl.account_id
            LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
@@ -195,6 +199,11 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
               COALESCE(SUM(successful.payment_count), 0)::int AS successful_payments,
               COALESCE(SUM(successful.gross), 0) AS gross_sales,
               COALESCE(SUM(successful.net), 0) AS net_after_fees,
+              COUNT(*) FILTER (WHERE matching_links.amount >= 0 AND matching_links.amount < 50)::int AS band_0_50,
+              COUNT(*) FILTER (WHERE matching_links.amount >= 50 AND matching_links.amount < 100)::int AS band_50_100,
+              COUNT(*) FILTER (WHERE matching_links.amount >= 100 AND matching_links.amount < 200)::int AS band_100_200,
+              COUNT(*) FILTER (WHERE matching_links.amount >= 200 AND matching_links.amount < 500)::int AS band_200_500,
+              COUNT(*) FILTER (WHERE matching_links.amount >= 500)::int AS band_500_plus,
               (SELECT currency FROM workspaces WHERE id = $1) AS currency
          FROM matching_links
          LEFT JOIN successful ON successful.payment_link_id = matching_links.id`,
@@ -206,6 +215,13 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
     successfulPayments: row.successful_payments,
     grossSales: Number(row.gross_sales),
     netAfterFees: Number(row.net_after_fees),
+    priceBands: [
+      { min: 0, max: 50, count: row.band_0_50 },
+      { min: 50, max: 100, count: row.band_50_100 },
+      { min: 100, max: 200, count: row.band_100_200 },
+      { min: 200, max: 500, count: row.band_200_500 },
+      { min: 500, max: null, count: row.band_500_plus },
+    ],
     currency: row.currency,
   });
 }));
@@ -227,10 +243,34 @@ router.get('/:id', requirePermission('links.view'), asyncHandler(async (req, res
           AND ($3::uuid IS NULL OR pl.created_by_agent_id = $3::uuid)
           AND ($4::uuid IS NULL OR pl.account_id = $4::uuid)`,
       [wid(req), req.params.id, ...scopeParams(scope)])).rows[0];
-    return row;
+    if (!row) return null;
+    const events = (await c.query(
+      `SELECT event_type, source, occurred_at
+         FROM payment_link_events
+        WHERE payment_link_id = $1
+        ORDER BY occurred_at, id`,
+      [row.id])).rows;
+    const opens = events.filter((event) => event.event_type === 'opened');
+    return {
+      row,
+      events,
+      firstOpenedAt: opens[0]?.occurred_at || null,
+      lastOpenedAt: opens[opens.length - 1]?.occurred_at || null,
+      openCount: opens.length,
+    };
   });
   if (!out) return res.status(404).json({ error: 'not_found' });
-  res.json(publicLink(out));
+  res.json({
+    ...publicLink(out.row),
+    events: out.events.map((event) => ({
+      type: event.event_type,
+      source: event.source,
+      occurredAt: event.occurred_at,
+    })),
+    firstOpenedAt: out.firstOpenedAt,
+    lastOpenedAt: out.lastOpenedAt,
+    openCount: out.openCount,
+  });
 }));
 
 // POST /  { accountId, type: 'single_use'|'reusable', amount, currency, description? }
@@ -238,6 +278,7 @@ router.get('/:id', requirePermission('links.view'), asyncHandler(async (req, res
 router.post('/', requirePermission('links.create'), asyncHandler(async (req, res) => {
   const { accountId, type, amount, currency, description } = req.body || {};
   if (!accountId) return badRequest(res, 'accountId is required', ['accountId']);
+  if (description != null && typeof description !== 'string') return badRequest(res, 'description must be text', ['description']);
   if (!vocab.LINK_TYPE.includes(type)) return badRequest(res, `type must be one of ${vocab.LINK_TYPE.join(', ')}`, ['type']);
   if (!/^[A-Za-z]{3}$/.test(currency || '')) return badRequest(res, 'currency must be a 3-letter code', ['currency']);
   const amt = Number(amount);
@@ -302,6 +343,10 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
        RETURNING *`,
       [wid(req), accountId, scope.kind === 'agent' ? scope.agentId : null,
         type, amt, checkoutFee, cur, referenceId, description || null, expiresAt, checkoutUrl])).rows[0];
+    await recordLinkEvent(c, {
+      workspaceId: wid(req), linkId: link.id, eventType: 'created',
+      source: 'higherpays', idempotencyKey: 'created',
+    });
     return { link };
   });
 
@@ -326,11 +371,79 @@ router.post('/:id/cancel', requirePermission('links.create'), asyncHandler(async
           AND ($3::uuid IS NULL OR created_by_agent_id = $3::uuid)
           AND ($4::uuid IS NULL OR account_id = $4::uuid)
         RETURNING *`, [wid(req), req.params.id, ...scopeParams(scope)])).rows[0];
+    if (row) {
+      await recordLinkEvent(c, {
+        workspaceId: wid(req), linkId: row.id, eventType: 'cancelled',
+        source: 'higherpays', idempotencyKey: 'cancelled',
+      });
+    }
     return row;
   });
   if (!out) return res.status(404).json({ error: 'not_found_or_not_active' });
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'link.cancel', entityType: 'payment_link', entityId: out.id });
   res.json(publicLink(out));
+}));
+
+router.patch('/:id/note', requirePermission('links.create'), asyncHandler(async (req, res) => {
+  const description = req.body?.description;
+  if (description != null && typeof description !== 'string') {
+    return badRequest(res, 'description must be text', ['description']);
+  }
+  const row = await withTransaction(async (c) => {
+    const scope = await resolveDataScope(c, req);
+    return (await c.query(
+      `UPDATE payment_links
+          SET description = $5
+        WHERE workspace_id = $1 AND id = $2
+          AND ($3::uuid IS NULL OR created_by_agent_id = $3::uuid)
+          AND ($4::uuid IS NULL OR account_id = $4::uuid)
+        RETURNING *`,
+      [wid(req), req.params.id, ...scopeParams(scope), description?.trim() || null])).rows[0];
+  });
+  if (!row) return res.status(404).json({ error: 'not_found' });
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'link.note_update',
+    entityType: 'payment_link', entityId: row.id,
+  });
+  res.json(publicLink(row));
+}));
+
+router.post('/:id/archive', requirePermission('links.create'), asyncHandler(async (req, res) => {
+  const row = await withTransaction(async (c) => {
+    const scope = await resolveDataScope(c, req);
+    return (await c.query(
+      `UPDATE payment_links SET archived_at = now()
+        WHERE workspace_id = $1 AND id = $2 AND archived_at IS NULL
+          AND ($3::uuid IS NULL OR created_by_agent_id = $3::uuid)
+          AND ($4::uuid IS NULL OR account_id = $4::uuid)
+        RETURNING *`,
+      [wid(req), req.params.id, ...scopeParams(scope)])).rows[0];
+  });
+  if (!row) return res.status(404).json({ error: 'not_found_or_archived' });
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'link.archive',
+    entityType: 'payment_link', entityId: row.id,
+  });
+  res.json(publicLink(row));
+}));
+
+router.post('/:id/reactivate', requirePermission('links.create'), asyncHandler(async (req, res) => {
+  const row = await withTransaction(async (c) => {
+    const scope = await resolveDataScope(c, req);
+    return (await c.query(
+      `UPDATE payment_links SET archived_at = NULL
+        WHERE workspace_id = $1 AND id = $2 AND archived_at IS NOT NULL
+          AND ($3::uuid IS NULL OR created_by_agent_id = $3::uuid)
+          AND ($4::uuid IS NULL OR account_id = $4::uuid)
+        RETURNING *`,
+      [wid(req), req.params.id, ...scopeParams(scope)])).rows[0];
+  });
+  if (!row) return res.status(404).json({ error: 'not_found_or_active' });
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'link.reactivate',
+    entityType: 'payment_link', entityId: row.id,
+  });
+  res.json(publicLink(row));
 }));
 
 // GET /:id/impact — how many past payments will remain unchanged. Read before

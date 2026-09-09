@@ -121,3 +121,44 @@ test('an active link can be cancelled once; filters are applied server-side', as
   const big = (await request(app).get(`/workspaces/${t.workspaceId}/links?min=25`).set(t.authHeaders).expect(200)).body.items;
   assert.deepEqual(big.map((l) => l.amount), [30]);
 });
+
+test('link operations keep an idempotent timeline, notes, archives, and price bands', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const make = async (amount) => (await request(app)
+    .post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+    .send({ accountId: account.id, type: 'single_use', amount, currency: 'EUR', description: 'Initial note' })
+    .expect(201)).body;
+  const links = [];
+  for (const amount of [25, 50, 100, 200, 500]) links.push(await make(amount));
+
+  const first = links[0];
+  await request(app).patch(`/workspaces/${t.workspaceId}/links/${first.id}/note`)
+    .set(t.authHeaders).send({ description: 'Internal follow-up' }).expect(200);
+  await request(app).post(`/workspaces/${t.workspaceId}/links/${first.id}/cancel`)
+    .set(t.authHeaders).expect(200);
+  await request(app).get(`/pay/${first.referenceId}`).expect(410);
+
+  const detail = (await request(app).get(`/workspaces/${t.workspaceId}/links/${first.id}`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(detail.description, 'Internal follow-up');
+  assert.equal(detail.openCount, 1);
+  assert.ok(detail.firstOpenedAt);
+  assert.deepEqual(detail.events.map((event) => event.type), ['created', 'cancelled', 'opened']);
+
+  await request(app).post(`/workspaces/${t.workspaceId}/links/${first.id}/archive`)
+    .set(t.authHeaders).expect(200);
+  const defaultList = (await request(app).get(`/workspaces/${t.workspaceId}/links`)
+    .set(t.authHeaders).expect(200)).body.items;
+  assert.equal(defaultList.some((link) => link.id === first.id), false);
+  const withArchived = (await request(app).get(`/workspaces/${t.workspaceId}/links?showArchived=true`)
+    .set(t.authHeaders).expect(200)).body.items;
+  assert.equal(withArchived.some((link) => link.id === first.id), true);
+
+  const summary = (await request(app).get(`/workspaces/${t.workspaceId}/links/summary?showArchived=true`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.deepEqual(summary.priceBands.map((band) => band.count), [1, 1, 1, 1, 1]);
+
+  await request(app).post(`/workspaces/${t.workspaceId}/links/${first.id}/reactivate`)
+    .set(t.authHeaders).expect(200);
+});

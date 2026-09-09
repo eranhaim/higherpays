@@ -21,6 +21,9 @@ export interface UsePaymentsDataResult {
   customers: Customer[];
   accounts: Account[];
   agents: Agent[];
+  areCustomersLoading: boolean;
+  hasCustomersError: boolean;
+  retryCustomers: () => void;
   isLoading: boolean;
   isError: boolean;
   isSummaryLoading: boolean;
@@ -72,8 +75,8 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     enabled: enabled && canScope,
   });
   const agents = useQuery({
-    queryKey: ['agents', activeWorkspaceId],
-    queryFn: () => agentsApi.list(),
+    queryKey: ['agents', activeWorkspaceId, 'include-archived'],
+    queryFn: () => agentsApi.list({ showArchived: true }),
     enabled: enabled && canScope,
   });
 
@@ -107,6 +110,9 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     customers: customers.data ?? [],
     accounts: accounts.data ?? [],
     agents: agents.data ?? [],
+    areCustomersLoading: customers.isLoading,
+    hasCustomersError: customers.isError,
+    retryCustomers: () => { void customers.refetch(); },
     isLoading: payments.isLoading,
     isError: payments.isError,
     isSummaryLoading: summary.isPending,

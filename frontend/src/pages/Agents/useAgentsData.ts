@@ -1,8 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
-  agentsApi, accountsApi, teamApi,
-  type Account, type Agent, type CreateAgentInput, type UpdateAgentInput, type MemberStatus,
+  agentsApi, accountsApi,
+  type Account, type Agent, type CreateAgentInput, type UpdateAgentInput,
 } from '../../api/endpoints';
 
 export interface UseAgentsDataResult {
@@ -12,7 +12,7 @@ export interface UseAgentsDataResult {
   isError: boolean;
   createAgent: (input: CreateAgentInput) => Promise<Agent>;
   updateAgent: (id: string, input: UpdateAgentInput) => Promise<void>;
-  setStatus: (agent: Agent, status: MemberStatus) => Promise<void>;
+  setArchived: (agent: Agent, archived: boolean) => Promise<void>;
   setAssignedAccounts: (agentId: string, currentIds: string[], nextIds: string[]) => Promise<void>;
 }
 
@@ -21,7 +21,11 @@ export function useAgentsData(): UseAgentsDataResult {
   const queryClient = useQueryClient();
   const enabled = Boolean(activeWorkspaceId);
 
-  const agents = useQuery({ queryKey: ['agents', activeWorkspaceId], queryFn: () => agentsApi.list(), enabled });
+  const agents = useQuery({
+    queryKey: ['agents', activeWorkspaceId, 'include-archived'],
+    queryFn: () => agentsApi.list({ showArchived: true }),
+    enabled,
+  });
   const accounts = useQuery({ queryKey: ['accounts', activeWorkspaceId], queryFn: () => accountsApi.list(), enabled });
 
   const invalidate = () => {
@@ -35,9 +39,11 @@ export function useAgentsData(): UseAgentsDataResult {
     mutationFn: ({ id, input }: { id: string; input: UpdateAgentInput }) => agentsApi.update(id, input),
     onSuccess: invalidate,
   });
-  // Suspending is an access change, so it goes through the team endpoint.
-  const status = useMutation({
-    mutationFn: ({ agent, status }: { agent: Agent; status: MemberStatus }) => teamApi.setStatus(agent.userId, status),
+  const archived = useMutation({
+    mutationFn: async ({ agent, archived }: { agent: Agent; archived: boolean }) => {
+      if (archived) await agentsApi.archive(agent.id);
+      else await agentsApi.reactivate(agent.id);
+    },
     onSuccess: invalidate,
   });
 
@@ -48,7 +54,7 @@ export function useAgentsData(): UseAgentsDataResult {
     isError: agents.isError,
     createAgent: async (input) => create.mutateAsync(input),
     updateAgent: async (id, input) => { await update.mutateAsync({ id, input }); },
-    setStatus: async (agent, next) => { await status.mutateAsync({ agent, status: next }); },
+    setArchived: async (agent, next) => { await archived.mutateAsync({ agent, archived: next }); },
     setAssignedAccounts: async (agentId, currentIds, nextIds) => {
       const current = new Set(currentIds);
       const next = new Set(nextIds);

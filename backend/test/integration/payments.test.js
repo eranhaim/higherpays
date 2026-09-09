@@ -34,6 +34,19 @@ test('a paid payment waits for details; completing it creates the customer and f
   const customer = (await pool.query('SELECT total_spend FROM customers WHERE id = $1', [done.customerId])).rows[0];
   assert.equal(Number(customer.total_spend), 40);
 
+  const customers = (await request(app).get(`/workspaces/${t.workspaceId}/customers`)
+    .set(agent.headers).expect(200)).body.customers;
+  assert.equal(customers.some((item) => item.id === done.customerId), true);
+  const customerDetail = (await request(app).get(`/workspaces/${t.workspaceId}/customers/${done.customerId}`)
+    .set(agent.headers).expect(200)).body;
+  assert.equal(customerDetail.payments[0].linkId, link.id);
+  assert.equal(customerDetail.payments[0].linkReference, link.referenceId);
+
+  const timeline = (await request(app).get(`/workspaces/${t.workspaceId}/links/${link.id}`)
+    .set(agent.headers).expect(200)).body.events;
+  assert.equal(timeline.filter((event) => event.type === 'provider_approved').length, 1);
+  assert.equal(timeline.filter((event) => event.type === 'details_completed').length, 1);
+
   const still = (await request(app).get(`/workspaces/${t.workspaceId}/payments?needsDetails=true`).set(agent.headers).expect(200)).body.items;
   assert.equal(still.length, 0);
 });

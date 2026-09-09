@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useDebounced } from '../../hooks/useDebounced';
 import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
@@ -131,6 +132,8 @@ export default function CustomersPage() {
         }
       />
 
+      {isError && <div className="warnbar" role="alert">Couldn't load customers. Reload or try again.</div>}
+
       <FilterBar>
         <input type="search" className="search-input" aria-label="Search customers"
           placeholder="Search name, Telegram, email or phone" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -161,7 +164,12 @@ export default function CustomersPage() {
       <Modal open={detailId !== null && editing === null && erasing === null} onClose={() => setDetailId(null)}
         title={detail.data?.name ?? 'Customer'} subtitle={detail.data?.telegramName ?? detail.data?.email ?? undefined}>
         {detail.isLoading && <p className="sub">Loading…</p>}
-        {detail.isError && <p className="sub">Couldn't load this customer.</p>}
+        {detail.isError && (
+          <div className="warnbar" role="alert">
+            Couldn't load this customer.{' '}
+            <button className="btn ghost small" onClick={() => detail.refetch()}>Try again</button>
+          </div>
+        )}
         {detail.data && (
           <>
             <DetailRow label="Email">{detail.data.email ?? '—'}</DetailRow>
@@ -176,6 +184,7 @@ export default function CustomersPage() {
                   <thead>
                     <tr>
                       <th scope="col">Date</th>
+                      <th scope="col">HigherPays Order</th>
                       <th scope="col">{labels.account}</th>
                       <th scope="col">{labels.agent}</th>
                       <th scope="col">Amount</th>
@@ -186,6 +195,11 @@ export default function CustomersPage() {
                     {detail.data.payments.map((p) => (
                       <tr key={p.id}>
                         <td><DateCell ts={p.occurredAt} /></td>
+                        <td>
+                          {p.linkReference
+                            ? <Link className="ref" to={`/links?q=${encodeURIComponent(p.linkReference)}`}>{p.linkReference}</Link>
+                            : '—'}
+                        </td>
                         <td>{p.account}</td>
                         <td>{p.agent ?? '—'}</td>
                         <td><Money amount={p.amount} currency={p.currency} direction={p.status === 'paid' ? 'in' : undefined} /></td>

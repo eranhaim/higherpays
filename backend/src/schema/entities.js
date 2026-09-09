@@ -34,6 +34,11 @@ const LINK_TYPE = ['single_use', 'reusable'];
 //   cancelled  closed by hand
 //   refunded   a paid link was later reversed
 const LINK_STATUS = ['active', 'pending', 'done', 'expired', 'cancelled', 'refunded'];
+const LINK_EVENT_TYPE = [
+  'created', 'opened', 'checkout_initiated', 'checkout_redirected',
+  'provider_pending', 'provider_approved', 'provider_declined',
+  'details_completed', 'cancelled', 'expired', 'refunded', 'chargeback',
+];
 //   paid      the provider approved the charge
 //   failed    the provider declined it
 //   refunded  a paid charge was reversed, by refund or chargeback
@@ -347,6 +352,7 @@ const PaymentLink = entity('payment_links', {
     checkoutUrl:           text(),
     expiresAt:             timestamp(),   // single_use only, set to creation + 24h
     paidAt:                timestamp(),   // single_use only; reusable links read payments
+    archivedAt:            timestamp(),   // hidden from the default operations list
   },
   checks: [
     "pricing_mode = 'open' OR (amount IS NOT NULL AND amount > 0)",
@@ -358,6 +364,25 @@ const PaymentLink = entity('payment_links', {
     { columns: ['workspaceId', 'referenceId'], unique: true, where: 'reference_id IS NOT NULL' },
   ],
   timestamps: 'both',
+});
+
+// HigherPays-visible link activity. Provider events are observations received
+// by HigherPays; actions inside CentroBill are not available to this system.
+const PaymentLinkEvent = entity('payment_link_events', {
+  fields: {
+    id:             uuid().primaryKey(),
+    workspaceId:    uuid().references('workspaces').notNull(),
+    paymentLinkId:  uuid().references('payment_links').notNull(),
+    paymentId:      uuid().references('payments', 'SET NULL'),
+    eventType:      enumOf(LINK_EVENT_TYPE).notNull(),
+    source:         enumOf(['higherpays', 'public_checkout', 'provider']).notNull(),
+    idempotencyKey: text(),
+    occurredAt:     timestamp().notNull().default('now()'),
+  },
+  indexes: [
+    { columns: ['paymentLinkId', 'occurredAt'] },
+    { columns: ['paymentLinkId', 'eventType', 'idempotencyKey'], unique: true, where: 'idempotency_key IS NOT NULL' },
+  ],
 });
 
 // One checkout attempt by a payer. The business event; a reusable link has
@@ -666,7 +691,7 @@ module.exports = {
   // commercial
   Account, Agent, AccountAgent, Category, Customer,
   // payment flow
-  PaymentLink, Payment, Transaction,
+  PaymentLink, PaymentLinkEvent, Payment, Transaction,
   // revenue
   RevenueRule, RevenueEntry, Payout,
   // settlement
@@ -678,7 +703,7 @@ module.exports = {
   status: {
     USER_STATUS, WORKSPACE_STATUS, WORKSPACE_ROLE, ACCESS_STATUS,
     ACCOUNT_STATUS, PAY_MODEL, CUSTOMER_SEGMENT, PRICING_MODE,
-    LINK_TYPE, LINK_STATUS,
+    LINK_TYPE, LINK_STATUS, LINK_EVENT_TYPE,
     PAYMENT_STATUS, TRANSACTION_TYPE, TRANSACTION_STATUS, REVENUE_ENTRY_TYPE,
     REVENUE_ENTRY_STATUS, PAYEE_TYPE, PAYOUT_STATUS, FEE_MODEL, CHANNEL_TYPE,
   },

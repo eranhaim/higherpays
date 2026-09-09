@@ -12,6 +12,7 @@ const { resolveDataScope, scopeParams } = require('../auth/dataScope');
 const { hasPermission } = require('../auth/permissions');
 const { resolveAttribution, repostSales } = require('../services/attribution');
 const paymentsService = require('../services/payments.service');
+const { recordLinkEvent } = require('../services/linkEvents');
 const config = require('../config');
 
 const router = express.Router({ mergeParams: true });
@@ -352,7 +353,16 @@ router.patch('/:id/details', requirePermission('payments.complete'), asyncHandle
     // A single-use link is finished once its one payment is complete.
     if (payment.payment_link_id) {
       await c.query(
-        "UPDATE payment_links SET status = 'done' WHERE id = $1 AND type = 'single_use' AND status = 'pending'", [payment.payment_link_id]);
+        "UPDATE payment_links SET status = 'done', customer_id = COALESCE(customer_id, $2) WHERE id = $1 AND type = 'single_use' AND status = 'pending'",
+        [payment.payment_link_id, resolvedCustomerId]);
+      await recordLinkEvent(c, {
+        workspaceId: wid(req),
+        linkId: payment.payment_link_id,
+        paymentId: payment.id,
+        eventType: 'details_completed',
+        source: 'higherpays',
+        idempotencyKey: payment.id,
+      });
     }
     return { row: await loadScoped(c, req, payment.id) };
   });

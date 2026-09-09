@@ -96,8 +96,8 @@ export function useAnalyticsData(filters: AnalyticsFilters, canScope: boolean) {
     enabled: canScope && Boolean(activeWorkspaceId),
   });
   const agents = useQuery({
-    queryKey: ['agents', activeWorkspaceId],
-    queryFn: () => agentsApi.list(),
+    queryKey: ['agents', activeWorkspaceId, 'include-archived'],
+    queryFn: () => agentsApi.list({ showArchived: true }),
     enabled: canScope && Boolean(activeWorkspaceId),
   });
 

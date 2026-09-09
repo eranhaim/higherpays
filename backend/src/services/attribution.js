@@ -13,7 +13,11 @@ async function resolveAttribution(c, workspaceId, { accountId, agentId }) {
 
   if (agentId) {
     const agent = (await c.query(
-      'SELECT id FROM agents WHERE id = $1 AND workspace_id = $2', [agentId, workspaceId])).rows[0];
+      `SELECT ag.id
+         FROM agents ag
+         JOIN workspace_users wu ON wu.workspace_id = ag.workspace_id AND wu.user_id = ag.user_id
+        WHERE ag.id = $1 AND ag.workspace_id = $2 AND wu.status = 'active'`,
+      [agentId, workspaceId])).rows[0];
     if (!agent) return { err: 'agent_not_found', fields: ['agentId'] };
     const assigned = (await c.query(
       'SELECT 1 FROM account_agents WHERE account_id = $1 AND agent_id = $2', [accountId, agentId])).rows[0];

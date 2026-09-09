@@ -14,6 +14,7 @@ const { query, withTransaction } = require('../db');
 const { log } = require('../lib/log');
 const provider = require('../providers/mantapay');
 const paymentsService = require('./payments.service');
+const { recordLinkEvent } = require('./linkEvents');
 
 const DEFAULT_GRACE_MINUTES = 10;
 const LOOP_INTERVAL_MS = 10 * 60_000;
@@ -61,6 +62,10 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
     // Anything short of approval leaves the link open until its deadline.
     if (link.is_expired) {
       await c.query("UPDATE payment_links SET status='expired' WHERE id=$1 AND status='active'", [link.id]);
+      await recordLinkEvent(c, {
+        workspaceId: ws.id, linkId: link.id, eventType: 'expired',
+        source: 'higherpays', idempotencyKey: 'expired',
+      });
       summary.updated.push({ linkId: link.id, to: 'expired', via: st });
       continue;
     }

@@ -49,12 +49,31 @@ export interface PaymentLink {
   checkoutUrl: string | null;
   expiresAt: string | null;
   paidAt: string | null;
+  archivedAt: string | null;
   createdAt: string;
   accountId: string;
   account: string;
   agentId: string | null;
   agent: string | null;
   latestProviderAttempt: ProviderAttempt | null;
+}
+
+export type LinkEventType =
+  | 'created' | 'opened' | 'checkout_initiated' | 'checkout_redirected'
+  | 'provider_pending' | 'provider_approved' | 'provider_declined'
+  | 'details_completed' | 'cancelled' | 'expired' | 'refunded' | 'chargeback';
+
+export interface LinkEvent {
+  type: LinkEventType;
+  source: 'higherpays' | 'public_checkout' | 'provider';
+  occurredAt: string;
+}
+
+export interface PaymentLinkDetail extends PaymentLink {
+  events: LinkEvent[];
+  firstOpenedAt: string | null;
+  lastOpenedAt: string | null;
+  openCount: number;
 }
 
 export type ProviderAttemptStatus = 'pending' | 'approved' | 'declined';
@@ -79,6 +98,8 @@ export interface LinksSummary {
   successfulPayments: number;
   grossSales: number;
   netAfterFees: number;
+  /** Non-overlapping bands: min inclusive, max exclusive. */
+  priceBands: Array<{ min: number; max: number | null; count: number }>;
   currency: string;
 }
 
@@ -121,6 +142,7 @@ export interface ListLinksQuery {
   q?: string;
   accountId?: string;
   providerStatus?: ProviderAttemptStatus;
+  showArchived?: boolean;
   sort?: LinkSort;
   dir?: 'asc' | 'desc';
 }
@@ -149,7 +171,16 @@ export const linksApi = {
 
   create: (input: CreateLinkInput) => api.post<PaymentLink>(workspacePath('/links'), input),
 
+  get: (id: string) => api.get<PaymentLinkDetail>(workspacePath(`/links/${id}`)),
+
   cancel: (id: string) => api.post<PaymentLink>(workspacePath(`/links/${id}/cancel`), {}),
+
+  updateNote: (id: string, description: string) =>
+    api.patch<PaymentLink>(workspacePath(`/links/${id}/note`), { description }),
+
+  archive: (id: string) => api.post<PaymentLink>(workspacePath(`/links/${id}/archive`), {}),
+
+  reactivate: (id: string) => api.post<PaymentLink>(workspacePath(`/links/${id}/reactivate`), {}),
 
   /** What reassigning this link would move, read before confirming it. */
   impact: (id: string) => api.get<ReassignImpact>(workspacePath(`/links/${id}/impact`)),

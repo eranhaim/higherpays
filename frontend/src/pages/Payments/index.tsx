@@ -85,6 +85,7 @@ export default function PaymentsPage() {
 
   const {
     payments, summary, categories, customers, accounts, agents,
+    areCustomersLoading, hasCustomersError, retryCustomers,
     isLoading, isError, isSummaryLoading, isSummaryError, hasMore, isLoadingMore, loadMore, complete, recordReversal, reassign, exportCsv,
   } = usePaymentsData(query, canScope);
 
@@ -299,7 +300,11 @@ export default function PaymentsPage() {
             <div className="modal-topline">
               <StatusPill payment={detail} />
             </div>
-            <DetailRow label="HigherPays Order"><span className="ref">{detail.linkReference ?? '—'}</span></DetailRow>
+            <DetailRow label="HigherPays Order">
+              {detail.linkReference
+                ? <Link className="ref" to={`/links?q=${encodeURIComponent(detail.linkReference)}`}>{detail.linkReference}</Link>
+                : '—'}
+            </DetailRow>
             <DetailRow label="MantaPay transaction ID">{detail.providerTransactionId ?? '—'}</DetailRow>
             <DetailRow label="Customer">{detail.customer ?? '—'}{detail.customerTelegram ? <span className="sub inline"> · {detail.customerTelegram}</span> : null}</DetailRow>
             <DetailRow label="Category">{detail.category ?? '—'}</DetailRow>
@@ -368,6 +373,9 @@ export default function PaymentsPage() {
           payment={completing}
           categories={categories}
           customers={customers}
+          areCustomersLoading={areCustomersLoading}
+          hasCustomersError={hasCustomersError}
+          retryCustomers={retryCustomers}
           onClose={() => setCompleting(null)}
           onSubmit={async (input) => {
             await complete(completing.id, input);
@@ -628,12 +636,17 @@ interface CompleteDetailsModalProps {
   payment: Payment;
   categories: { id: string; name: string }[];
   customers: { id: string; name: string; telegramName: string | null }[];
+  areCustomersLoading: boolean;
+  hasCustomersError: boolean;
+  retryCustomers: () => void;
   onClose: () => void;
   onSubmit: (input: { categoryId: string; customerId?: string; customer?: { name: string; telegramName?: string } }) => Promise<void>;
 }
 
 /** The agent says who paid and what for. An existing customer or a new one. */
-function CompleteDetailsModal({ payment, categories, customers, onClose, onSubmit }: CompleteDetailsModalProps) {
+function CompleteDetailsModal({
+  payment, categories, customers, areCustomersLoading, hasCustomersError, retryCustomers, onClose, onSubmit,
+}: CompleteDetailsModalProps) {
   const [categoryId, setCategoryId] = useState(categories[0]?.id ?? '');
   const [customerId, setCustomerId] = useState(payment.customerId ?? '');
   const [name, setName] = useState('');
@@ -642,6 +655,7 @@ function CompleteDetailsModal({ payment, categories, customers, onClose, onSubmi
   const typingNew = customerId === '';
 
   const submit = async () => {
+    if (areCustomersLoading || hasCustomersError) { toast('Wait for the customer list to load.'); return; }
     if (!categoryId) { toast('Pick a category.'); return; }
     if (typingNew && !name.trim()) { toast('Enter the customer name.'); return; }
     setIsSaving(true);
@@ -661,11 +675,18 @@ function CompleteDetailsModal({ payment, categories, customers, onClose, onSubmi
 
   return (
     <Modal open onClose={onClose} title="Complete payment details" subtitle={`${formatMoney(payment.amount, payment.currency)} · ${payment.account}`}>
-      <Select id="complete-customer" label="Customer" value={customerId} onChange={setCustomerId}>
-        <option value="">New customer…</option>
+      {hasCustomersError && (
+        <div className="warnbar" role="alert">
+          Existing customers could not be loaded. Retry before creating a new one.{' '}
+          <button className="btn ghost small" onClick={retryCustomers}>Try again</button>
+        </div>
+      )}
+      <Select id="complete-customer" label="Customer" value={customerId} onChange={setCustomerId}
+        disabled={areCustomersLoading || hasCustomersError}>
+        <option value="">{areCustomersLoading ? 'Loading customers…' : hasCustomersError ? 'Customers unavailable' : 'New customer…'}</option>
         {customers.map((c) => <option key={c.id} value={c.id}>{c.name}{c.telegramName ? ` · ${c.telegramName}` : ''}</option>)}
       </Select>
-      {typingNew && (
+      {typingNew && !areCustomersLoading && !hasCustomersError && (
         <div className="form-row">
           <div className="field">
             <label htmlFor="complete-name">Customer name</label>
@@ -691,7 +712,10 @@ function CompleteDetailsModal({ payment, categories, customers, onClose, onSubmi
       </Select>
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>Cancel</button>
-        <button className="btn" onClick={submit} disabled={isSaving || !categoryId}>{isSaving ? 'Saving…' : 'Save details'}</button>
+        <button className="btn" onClick={submit}
+          disabled={isSaving || !categoryId || areCustomersLoading || hasCustomersError}>
+          {isSaving ? 'Saving…' : 'Save details'}
+        </button>
       </div>
     </Modal>
   );

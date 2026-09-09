@@ -27,6 +27,7 @@ export {
   PROVIDER_ATTEMPT_STATUSES, PROVIDER_ATTEMPT_STATUS_LABELS, isShareable,
   type ListLinksQuery, type PaymentLink, type LinkStatus, type LinkType, type LinkSort, type CreateLinkInput,
   type ReassignImpact, type ReassignInput, type ProviderAttempt, type ProviderAttemptStatus, type LinksSummary,
+  type LinkEvent, type LinkEventType, type PaymentLinkDetail,
 } from './links';
 export {
   paymentsApi, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, PAYMENT_EXPORT_COLUMNS,

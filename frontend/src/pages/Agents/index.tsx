@@ -31,26 +31,26 @@ export default function AgentsPage() {
   const { labels } = useCurrentSession();
   const canManage = can('agents.manage');
   const canViewCommission = can('revenue.view');
-  const { agents, accounts, isLoading, isError, createAgent, updateAgent, setStatus, setAssignedAccounts } = useAgentsData();
+  const { agents, accounts, isLoading, isError, createAgent, updateAgent, setArchived, setAssignedAccounts } = useAgentsData();
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Agent | null>(null);
-  const [suspending, setSuspending] = useState<Agent | null>(null);
+  const [archiving, setArchiving] = useState<Agent | null>(null);
   const [isChangingStatus, setIsChangingStatus] = useState(false);
   const [search, setSearch] = useState('');
-  const [access, setAccess] = useState<'' | 'active' | 'suspended'>('');
+  const [showArchived, setShowArchived] = useState(false);
   const [sort, setSort] = useState<SortState>({ key: 'name', dir: 'asc' });
   const toggleSort = (key: string) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
 
   useUnsavedChanges('agent-form', createOpen || editing !== null);
 
-  const changeStatus = async (a: Agent, status: 'active' | 'suspended') => {
+  const changeArchived = async (a: Agent, archived: boolean) => {
     setIsChangingStatus(true);
     try {
-      await setStatus(a, status);
-      setSuspending(null);
-      toast(status === 'active' ? `${a.name} can sign in again.` : `${a.name} suspended. Their history stays.`);
+      await setArchived(a, archived);
+      setArchiving(null);
+      toast(archived ? `${a.name} archived. Their history stays.` : `${a.name} reactivated.`);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not change access.');
     } finally {
@@ -60,7 +60,7 @@ export default function AgentsPage() {
 
   const query = search.trim().toLowerCase();
   const matching = query ? agents.filter((a) => `${a.name} ${a.email}`.toLowerCase().includes(query)) : agents;
-  const shown = access ? matching.filter((a) => a.status === access) : matching;
+  const shown = showArchived ? matching : matching.filter((a) => a.status === 'active');
   // The server returns every agent at once, so the order is decided here.
   const visible = useMemo(() => sortRows(shown, sort, SORT_VALUES), [shown, sort]);
 
@@ -78,16 +78,8 @@ export default function AgentsPage() {
       ),
     },
     {
-      key: 'status', header: 'Access', sortKey: 'status',
-      render: (a) => a.status === 'active' ? <Pill tone="ok">Active</Pill> : <Pill tone="muted">Suspended</Pill>,
-      isFiltered: access !== '',
-      filter: (
-        <Select label="Access" hideLabel value={access} onChange={(v) => setAccess(v as '' | 'active' | 'suspended')}>
-          <option value="">All access</option>
-          <option value="active">Active</option>
-          <option value="suspended">Suspended</option>
-        </Select>
-      ),
+      key: 'status', header: 'Status', sortKey: 'status',
+      render: (a) => a.status === 'active' ? <Pill tone="ok">Active</Pill> : <Pill tone="muted">Archived</Pill>,
     },
     { key: 'accounts', header: labels.accounts, sortKey: 'accounts', render: (a) => <span className="mono">{a.accountsAssigned}</span> },
     ...(canViewCommission ? [{
@@ -105,10 +97,10 @@ export default function AgentsPage() {
       key: 'actions', header: 'Actions', hideHeader: true, align: 'right' as const,
       render: (a: Agent) => (
         <div className="cell-actions">
-          <button className="btn ghost small" onClick={() => setEditing(a)}>Edit</button>
+          {a.status === 'active' && <button className="btn ghost small" onClick={() => setEditing(a)}>Edit</button>}
           {a.status === 'active'
-            ? <button className="btn ghost small" onClick={() => setSuspending(a)}>Suspend</button>
-            : <button className="btn ghost small" onClick={() => changeStatus(a, 'active')} disabled={isChangingStatus}>Reactivate</button>}
+            ? <button className="btn ghost small" onClick={() => setArchiving(a)}>Archive</button>
+            : <button className="btn ghost small" onClick={() => changeArchived(a, false)} disabled={isChangingStatus}>Reactivate</button>}
         </div>
       ),
     }] : []),
@@ -125,7 +117,11 @@ export default function AgentsPage() {
         <FilterBar>
           <input type="search" className="search-input" aria-label={`Search ${labels.agents}`}
             placeholder="Search name or email" value={search} onChange={(e) => setSearch(e.target.value)} />
-          <button className="btn ghost" onClick={() => { setSearch(''); setAccess(''); }}>Clear filters</button>
+          <label className="check-row">
+            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+            <span>Show archived</span>
+          </label>
+          <button className="btn ghost" onClick={() => { setSearch(''); setShowArchived(false); }}>Clear filters</button>
           <span className="sub">{visible.length} of {agents.length}</span>
           <ViewPicker label="Edit columns" view={columnsView} />
         </FilterBar>
@@ -174,13 +170,13 @@ export default function AgentsPage() {
         />
       )}
 
-      <Modal open={suspending !== null} onClose={() => setSuspending(null)} title={suspending ? `Suspend ${suspending.name}?` : ''}
-        subtitle="They are signed out everywhere and cannot sign in again until reactivated. Their links, payments and commission are all kept.">
-        {suspending && (
+      <Modal open={archiving !== null} onClose={() => setArchiving(null)} title={archiving ? `Archive ${archiving.name}?` : ''}
+        subtitle="They are signed out and hidden from new assignments and links until reactivated. Their links, payments and commission are kept.">
+        {archiving && (
           <div className="modal-actions">
-            <button className="btn ghost" onClick={() => setSuspending(null)}>Keep</button>
-            <button className="btn danger" disabled={isChangingStatus} onClick={() => changeStatus(suspending, 'suspended')}>
-              {isChangingStatus ? 'Suspending…' : 'Suspend'}
+            <button className="btn ghost" onClick={() => setArchiving(null)}>Keep active</button>
+            <button className="btn danger" disabled={isChangingStatus} onClick={() => changeArchived(archiving, true)}>
+              {isChangingStatus ? 'Archiving…' : 'Archive'}
             </button>
           </div>
         )}

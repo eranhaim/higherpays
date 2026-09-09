@@ -18,15 +18,16 @@ export interface LinksFilters {
   from: string;
   to: string;
   search: string;
+  showArchived: boolean;
 }
 
 export const DEFAULT_FILTERS: LinksFilters = {
-  accountId: '', type: '', status: '', providerStatus: '', min: '', max: '', from: '', to: '', search: '',
+  accountId: '', type: '', status: '', providerStatus: '', min: '', max: '', from: '', to: '', search: '', showArchived: false,
 };
 
 /** True when the user has narrowed the list at all. */
 export function hasActiveFilters(f: LinksFilters): boolean {
-  return Object.values(f).some((v) => v !== '');
+  return Object.values(f).some((v) => v !== '' && v !== false);
 }
 
 /** The one rule the server cannot infer: an inverted range matches nothing. */

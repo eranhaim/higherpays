@@ -215,6 +215,7 @@ test('direct APM links use the provider currency id and signed request', () => {
   assert.equal(params.get('CPM'), '743');
   assert.equal(params.get('Amount'), '20.00');
   assert.equal(params.get('ExtraCostAmount'), '0.1');
+  assert.equal(params.get('Email'), 'customer@higherpays.com');
   assert.equal(params.has('EC'), false);
   assert.equal(params.get('RetURL'), 'https://higherpays.com/payment-complete');
   assert.equal(params.get('signature'), sig.digest('37710970120.002' + KEY));

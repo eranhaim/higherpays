@@ -98,6 +98,30 @@ test('suspending a member ends their access but keeps the profile; removal is re
   assert.equal(still, 1);
 });
 
+test('archiving an agent suspends access and hides new assignments until reactivation', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const agent = await createAgent(app, t);
+
+  await request(app).post(`/workspaces/${t.workspaceId}/agents/${agent.id}/archive`)
+    .set(t.authHeaders).expect(200);
+  await request(app).get(`/workspaces/${t.workspaceId}/links`).set(agent.headers).expect(403);
+
+  const active = (await request(app).get(`/workspaces/${t.workspaceId}/agents`)
+    .set(t.authHeaders).expect(200)).body.agents;
+  assert.equal(active.some((item) => item.id === agent.id), false);
+  const archived = (await request(app).get(`/workspaces/${t.workspaceId}/agents?showArchived=true`)
+    .set(t.authHeaders).expect(200)).body.agents;
+  assert.equal(archived.find((item) => item.id === agent.id).status, 'suspended');
+
+  await request(app).post(`/workspaces/${t.workspaceId}/accounts/${account.id}/agents`)
+    .set(t.authHeaders).send({ agentId: agent.id }).expect(404);
+  await request(app).post(`/workspaces/${t.workspaceId}/agents/${agent.id}/reactivate`)
+    .set(t.authHeaders).expect(200);
+  await request(app).post(`/workspaces/${t.workspaceId}/accounts/${account.id}/agents`)
+    .set(t.authHeaders).send({ agentId: agent.id }).expect(201);
+});
+
 test('the last admin cannot be suspended, and an analyst cannot manage the team', async () => {
   const t = await createTenant(app);
   const analyst = await addMember(app, t, 'analyst');

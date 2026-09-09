@@ -2,7 +2,7 @@ import { useQuery, useInfiniteQuery, useMutation, useQueryClient, keepPreviousDa
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
   linksApi, accountsApi, workspacesApi,
-  type ListLinksQuery, type PaymentLink, type LinksSummary, type Account, type LinkLimits, type LinkType, type ReassignInput,
+  type ListLinksQuery, type PaymentLink, type PaymentLinkDetail, type LinksSummary, type Account, type LinkLimits, type LinkType, type ReassignInput,
 } from '../../api/endpoints';
 
 export interface CreateLinkFormInput {
@@ -26,6 +26,8 @@ export interface UseLinksDataResult {
   loadMore: () => void;
   createLink: (input: CreateLinkFormInput) => Promise<PaymentLink>;
   cancelLink: (id: string) => Promise<void>;
+  updateNote: (id: string, description: string) => Promise<void>;
+  setArchived: (id: string, archived: boolean) => Promise<void>;
   /** Moves the link and every payment on it to another creator or agent. */
   reassignLink: (id: string, input: ReassignInput) => Promise<void>;
 }
@@ -64,6 +66,7 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
   const invalidateLinks = () => {
     queryClient.invalidateQueries({ queryKey: ['links', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['links-summary', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['link', activeWorkspaceId] });
   };
 
   const create = useMutation({
@@ -71,6 +74,15 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     onSuccess: invalidateLinks,
   });
   const cancel = useMutation({ mutationFn: (id: string) => linksApi.cancel(id), onSuccess: invalidateLinks });
+  const note = useMutation({
+    mutationFn: ({ id, description }: { id: string; description: string }) => linksApi.updateNote(id, description),
+    onSuccess: invalidateLinks,
+  });
+  const archive = useMutation({
+    mutationFn: ({ id, archived }: { id: string; archived: boolean }) =>
+      archived ? linksApi.archive(id) : linksApi.reactivate(id),
+    onSuccess: invalidateLinks,
+  });
   // Link reassignment changes only the attribution for future payments.
   const reassign = useMutation({
     mutationFn: ({ id, input }: { id: string; input: ReassignInput }) => linksApi.reassign(id, input),
@@ -90,6 +102,17 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     loadMore: () => { void links.fetchNextPage(); },
     createLink: (input) => create.mutateAsync(input),
     cancelLink: async (id) => { await cancel.mutateAsync(id); },
+    updateNote: async (id, description) => { await note.mutateAsync({ id, description }); },
+    setArchived: async (id, archived) => { await archive.mutateAsync({ id, archived }); },
     reassignLink: async (id, input) => { await reassign.mutateAsync({ id, input }); },
   };
+}
+
+export function useLinkDetail(id: string | null) {
+  const { activeWorkspaceId } = useCurrentSession();
+  return useQuery<PaymentLinkDetail>({
+    queryKey: ['link', activeWorkspaceId, id],
+    queryFn: () => linksApi.get(id as string),
+    enabled: Boolean(activeWorkspaceId && id),
+  });
 }

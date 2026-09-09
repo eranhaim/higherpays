@@ -45,6 +45,8 @@ function buildApmUrl({
     ['Payments', '1'],
     ['Amount', value],
     ['Currency', currencyValue],
+    // MantaPay requires an email to start APM. It is never used to create a
+    // HigherPays customer; the payer can replace it on the hosted page.
     ['Email', 'customer@higherpays.com'],
     ['ClientIP', clientIp(ip)],
     ['Order', String(order)],

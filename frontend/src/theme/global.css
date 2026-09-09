@@ -309,6 +309,15 @@ input.amount-input { width: 110px; }
   border-radius: var(--radius-lg); padding: 12px; margin-bottom: 16px;
 }
 .filters select { width: auto; min-width: 150px; }
+.price-bands {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.timeline { border-top: 1px solid var(--rule-soft); }
+.timeline-row {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 8px 0; border-bottom: 1px solid var(--rule-soft);
+}
 .range-picker, .view-picker { position: relative; }
 .rangepop, .viewpop {
   position: absolute; top: 100%; left: 0; margin-top: 6px;

@@ -7,6 +7,7 @@ const { audit } = require('../util/audit');
 const { isStr, badRequest } = require('../util/validate');
 const { maxAccountSplitPct } = require('../services/splits');
 const { grantWorkspaceRole } = require('../services/people');
+const { revokeUserSessions } = require('../auth/sessions');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -41,7 +42,12 @@ async function commissionTooHigh(c, workspaceId, pct) {
 
 // GET /
 router.get('/', requirePermission('agents.view'), asyncHandler(async (req, res) => {
-  const rows = (await query(`${SELECT} WHERE ag.workspace_id = $1 ORDER BY u.full_name`, [wid(req)])).rows;
+  const rows = (await query(
+    `${SELECT}
+      WHERE ag.workspace_id = $1
+        AND ($2::boolean OR wu.status = 'active')
+      ORDER BY u.full_name`,
+    [wid(req), req.query.showArchived === 'true'])).rows;
   res.json({ agents: rows.map(publicAgent) });
 }));
 
@@ -112,6 +118,46 @@ router.patch('/:id', requirePermission('agents.manage'), asyncHandler(async (req
   if (out.err) return badRequest(res, out.err, ['commissionPct']);
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'agent.update', entityType: 'agent', entityId: out.row.id, metadata: body });
   res.json(publicAgent(out.row));
+}));
+
+router.post('/:id/archive', requirePermission('agents.manage'), asyncHandler(async (req, res) => {
+  const out = await withTransaction(async (c) => {
+    const row = (await c.query(
+      `UPDATE workspace_users wu
+          SET status = 'suspended'
+         FROM agents ag
+        WHERE ag.id = $1 AND ag.workspace_id = $2
+          AND wu.workspace_id = ag.workspace_id AND wu.user_id = ag.user_id
+          AND wu.status = 'active'
+        RETURNING ag.id, ag.user_id`,
+      [req.params.id, wid(req)])).rows[0];
+    return row;
+  });
+  if (!out) return res.status(404).json({ error: 'not_found_or_archived' });
+  await revokeUserSessions(out.user_id);
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'agent.archive',
+    entityType: 'agent', entityId: out.id,
+  });
+  res.json({ id: out.id, status: 'suspended' });
+}));
+
+router.post('/:id/reactivate', requirePermission('agents.manage'), asyncHandler(async (req, res) => {
+  const row = (await query(
+    `UPDATE workspace_users wu
+        SET status = 'active'
+       FROM agents ag
+      WHERE ag.id = $1 AND ag.workspace_id = $2
+        AND wu.workspace_id = ag.workspace_id AND wu.user_id = ag.user_id
+        AND wu.status = 'suspended'
+      RETURNING ag.id`,
+    [req.params.id, wid(req)])).rows[0];
+  if (!row) return res.status(404).json({ error: 'not_found_or_active' });
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'agent.reactivate',
+    entityType: 'agent', entityId: row.id,
+  });
+  res.json({ id: row.id, status: 'active' });
 }));
 
 module.exports = router;

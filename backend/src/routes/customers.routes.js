@@ -112,10 +112,12 @@ router.get('/:id', requirePermission('customers.view'), asyncHandler(async (req,
       params)).rows[0];
     if (!row) return null;
     const payments = (await c.query(
-      `SELECT p.id, p.amount, p.currency, p.status, p.occurred_at, a.name AS account, u.full_name AS agent
+      `SELECT p.id, p.amount, p.currency, p.status, p.occurred_at, a.name AS account, u.full_name AS agent,
+              p.payment_link_id AS link_id, pl.reference_id AS link_reference
          FROM payments p
          JOIN accounts a ON a.id = p.account_id
          LEFT JOIN agents ag ON ag.id = p.agent_id LEFT JOIN users u ON u.id = ag.user_id
+         LEFT JOIN payment_links pl ON pl.id = p.payment_link_id
         WHERE p.workspace_id = $1 AND p.customer_id = $2
           AND ($3::text = 'workspace'
             OR ($3::text = 'agent' AND (p.agent_id = $4::uuid OR p.account_id IN (
@@ -131,7 +133,7 @@ router.get('/:id', requirePermission('customers.view'), asyncHandler(async (req,
     ...publicCustomer(row),
     payments: payments.map((p) => ({
       id: p.id, amount: Number(p.amount), currency: p.currency, status: p.status, occurredAt: p.occurred_at,
-      account: p.account, agent: p.agent,
+      account: p.account, agent: p.agent, linkId: p.link_id, linkReference: p.link_reference,
     })),
   });
 }));

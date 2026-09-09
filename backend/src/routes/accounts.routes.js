@@ -81,8 +81,12 @@ router.get('/:id', requirePermission('accounts.view'), asyncHandler(async (req, 
     if (scope.kind === 'workspace') {
       account.agents = (await c.query(
         `SELECT ag.id AS agent_id, u.full_name AS name, u.email
-           FROM account_agents aa JOIN agents ag ON ag.id = aa.agent_id JOIN users u ON u.id = ag.user_id
-          WHERE aa.account_id = $1 ORDER BY u.full_name`, [row.id])).rows.map((r) => ({ agentId: r.agent_id, name: r.name, email: r.email }));
+           FROM account_agents aa
+           JOIN agents ag ON ag.id = aa.agent_id
+           JOIN users u ON u.id = ag.user_id
+           JOIN workspace_users wu ON wu.workspace_id = ag.workspace_id AND wu.user_id = ag.user_id
+          WHERE aa.account_id = $1 AND wu.status = 'active'
+          ORDER BY u.full_name`, [row.id])).rows.map((r) => ({ agentId: r.agent_id, name: r.name, email: r.email }));
     }
     return account;
   });
@@ -189,7 +193,11 @@ router.post('/:id/agents', requirePermission('accounts.manage'), asyncHandler(as
   if (!isStr(agentId)) return badRequest(res, 'agentId is required', ['agentId']);
   const ok = (await query(
     `SELECT (SELECT 1 FROM accounts WHERE id=$1 AND workspace_id=$3) AS acct,
-            (SELECT 1 FROM agents WHERE id=$2 AND workspace_id=$3) AS ag`, [req.params.id, agentId, wid(req)])).rows[0];
+            (SELECT 1
+               FROM agents ag
+               JOIN workspace_users wu ON wu.workspace_id = ag.workspace_id AND wu.user_id = ag.user_id
+              WHERE ag.id=$2 AND ag.workspace_id=$3 AND wu.status='active') AS ag`,
+    [req.params.id, agentId, wid(req)])).rows[0];
   if (!ok.acct) return res.status(404).json({ error: 'account_not_found' });
   if (!ok.ag) return res.status(404).json({ error: 'agent_not_found' });
   await query(

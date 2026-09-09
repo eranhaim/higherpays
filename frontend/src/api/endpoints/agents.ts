@@ -33,12 +33,17 @@ export interface UpdateAgentInput {
 }
 
 export const agentsApi = {
-  async list(): Promise<Agent[]> {
-    const raw = await api.get<{ agents: Agent[] }>(workspacePath('/agents'));
+  async list(options: { showArchived?: boolean } = {}): Promise<Agent[]> {
+    const suffix = options.showArchived ? '/agents?showArchived=true' : '/agents';
+    const raw = await api.get<{ agents: Agent[] }>(workspacePath(suffix));
     return raw.agents;
   },
 
   create: (input: CreateAgentInput) => api.post<Agent>(workspacePath('/agents'), input),
 
   update: (id: string, input: UpdateAgentInput) => api.patch<Agent>(workspacePath(`/agents/${id}`), input),
+
+  archive: (id: string) => api.post<{ id: string; status: 'suspended' }>(workspacePath(`/agents/${id}/archive`), {}),
+
+  reactivate: (id: string) => api.post<{ id: string; status: 'active' }>(workspacePath(`/agents/${id}/reactivate`), {}),
 };

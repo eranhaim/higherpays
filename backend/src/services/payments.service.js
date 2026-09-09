@@ -13,6 +13,7 @@
 
 const notifier = require('../notify');
 const { log } = require('../lib/log');
+const { recordLinkEvent } = require('./linkEvents');
 
 /**
  * @param {import('pg').PoolClient} client  a client inside an open transaction
@@ -118,6 +119,15 @@ async function recordPaymentOutcome(client, workspaceId, params) {
      RETURNING id, status`,
     [workspaceId, payment.id, status, grossValue, feeValue, feeIsEstimate, surcharge,
      grossValue - feeValue, currency, providerTransactionId, rawPayload])).rows[0];
+
+  await recordLinkEvent(client, {
+    workspaceId,
+    linkId: link.id,
+    paymentId: payment.id,
+    eventType: `provider_${status}`,
+    source: 'provider',
+    idempotencyKey: providerTransactionId,
+  });
 
   // 4) A paid single-use link waits for the agent to complete the details.
   //    A reusable link stays open; a declined attempt leaves either untouched
@@ -248,6 +258,14 @@ async function recordPaymentReversal(client, workspaceId, {
   await client.query("UPDATE payments SET status = 'refunded' WHERE id = $1", [p.id]);
   if (p.payment_link_id) {
     await client.query("UPDATE payment_links SET status='refunded' WHERE id=$1 AND type='single_use'", [p.payment_link_id]);
+    await recordLinkEvent(client, {
+      workspaceId,
+      linkId: p.payment_link_id,
+      paymentId: p.id,
+      eventType: kind === 'refund' ? 'refunded' : 'chargeback',
+      source: 'provider',
+      idempotencyKey: `${p.id}:${kind}`,
+    });
   }
   await notifySafely(client, p.id, () => notifier.notify(client, workspaceId, {
     event: kind === 'refund' ? 'payment.refunded' : 'payment.chargeback',

@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useDebounced } from '../../hooks/useDebounced';
 import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
@@ -11,16 +11,16 @@ import ReassignFields from '../../components/ReassignFields';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DateCell, CopyButton, DetailRow, Select,
-  DataTable, FilterBar, Calendar, ViewPicker,
+  DataTable, FilterBar, DateRangePicker, ViewPicker,
   type Column, type DateRange, type SortState,
 } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import {
   LINK_TYPES, LINK_TYPE_LABELS, LINK_STATUSES, LINK_STATUS_LABELS,
   PROVIDER_ATTEMPT_STATUSES, PROVIDER_ATTEMPT_STATUS_LABELS, isShareable,
-  type PaymentLink, type LinkStatus, type LinkType, type LinkSort, type ProviderAttemptStatus,
+  type PaymentLink, type LinkEventType, type LinkStatus, type LinkType, type LinkSort, type ProviderAttemptStatus,
 } from '../../api/endpoints';
-import { useLinksData } from './useLinksData';
+import { useLinkDetail, useLinksData } from './useLinksData';
 import { DEFAULT_FILTERS, hasActiveFilters, rangeIsInverted, type LinksFilters } from './filters';
 
 const STATUS_TONE: Record<LinkStatus, 'ok' | 'no' | 'warn' | 'muted'> = {
@@ -38,6 +38,21 @@ const PROVIDER_STATUS_TONE: Record<ProviderAttemptStatus, 'ok' | 'no' | 'warn'> 
   declined: 'no',
 };
 
+const EVENT_LABELS: Record<LinkEventType, string> = {
+  created: 'Created',
+  opened: 'Checkout opened',
+  checkout_initiated: 'Checkout initiated',
+  checkout_redirected: 'Redirect produced',
+  provider_pending: 'Provider pending',
+  provider_approved: 'Provider approved',
+  provider_declined: 'Provider declined',
+  details_completed: 'Details completed',
+  cancelled: 'Cancelled',
+  expired: 'Expired',
+  refunded: 'Refunded',
+  chargeback: 'Chargeback',
+};
+
 export default function LinksPage() {
   const can = useCan();
   const { labels } = useCurrentSession();
@@ -45,7 +60,11 @@ export default function LinksPage() {
   const canCreate = can('links.create');
   const canComplete = can('payments.complete');
   const canReassign = can('revenue.manage');
-  const [filters, setFilters] = useState<LinksFilters>(DEFAULT_FILTERS);
+  const [params] = useSearchParams();
+  const [filters, setFilters] = useState<LinksFilters>(() => ({
+    ...DEFAULT_FILTERS,
+    search: params.get('q') ?? '',
+  }));
 
   const [sort, setSort] = useState<SortState>({ key: 'created', dir: 'desc' });
   // A fresh column starts at its most useful end: newest, largest, first status.
@@ -68,21 +87,27 @@ export default function LinksPage() {
     q: search.trim() || undefined,
     accountId: filters.accountId || undefined,
     providerStatus: filters.providerStatus || undefined,
+    showArchived: filters.showArchived || undefined,
     sort: sort.key as LinkSort,
     dir: sort.dir,
-  }), [filters.status, filters.type, min, max, filters.from, filters.to, filters.accountId, filters.providerStatus, search, sort]);
+  }), [filters.status, filters.type, min, max, filters.from, filters.to, filters.accountId, filters.providerStatus, filters.showArchived, search, sort]);
 
   const {
     links, summary, accounts, linkLimits, isLoading, isError, isSummaryLoading, isSummaryError, hasMore, isLoadingMore, loadMore,
-    createLink, cancelLink, reassignLink,
+    createLink, cancelLink, updateNote, setArchived, reassignLink,
   } = useLinksData(query);
   const [createOpen, setCreateOpen] = useState(false);
   const [accountId, setAccountId] = useState('');
   const [type, setType] = useState<LinkType>('single_use');
   const [amountText, setAmountText] = useState('');
+  const [description, setDescription] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [createdUrl, setCreatedUrl] = useState<string | null>(null);
   const [detail, setDetail] = useState<PaymentLink | null>(null);
+  const detailQuery = useLinkDetail(detail?.id ?? null);
+  const detailData = detailQuery.data ?? detail;
+  const [detailNote, setDetailNote] = useState('');
+  const [isSavingNote, setIsSavingNote] = useState(false);
   const [cancelling, setCancelling] = useState<PaymentLink | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
 
@@ -118,6 +143,7 @@ export default function LinksPage() {
     setAccountId(activeAccounts[0]?.id ?? '');
     setType('single_use');
     setAmountText('');
+    setDescription('');
     setCreateOpen(true);
   };
 
@@ -127,13 +153,41 @@ export default function LinksPage() {
     if (aboveMax) { toast(`Maximum link amount is ${formatMoney(maxAmount ?? 0)}.`); return; }
     setIsCreating(true);
     try {
-      const created = await createLink({ accountId, type, amount });
+      const created = await createLink({ accountId, type, amount, description: description.trim() || undefined });
       setCreateOpen(false);
       setCreatedUrl(created.checkoutUrl);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not create the link.');
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const openDetail = (link: PaymentLink) => {
+    setDetail(link);
+    setDetailNote(link.description ?? '');
+  };
+
+  const saveNote = async () => {
+    if (!detailData) return;
+    setIsSavingNote(true);
+    try {
+      await updateNote(detailData.id, detailNote);
+      toast('Internal note saved.');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not save the note.');
+    } finally {
+      setIsSavingNote(false);
+    }
+  };
+
+  const changeArchived = async (link: PaymentLink, archived: boolean) => {
+    try {
+      await setArchived(link.id, archived);
+      setDetail(null);
+      toast(archived ? 'Link archived.' : 'Link restored.');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not update the link.');
     }
   };
 
@@ -152,51 +206,24 @@ export default function LinksPage() {
   };
 
   const columns: Column<PaymentLink>[] = [
-    { key: 'ref', header: 'HigherPays Order', render: (l) => <span className="ref" title={l.referenceId}>{l.referenceId}</span> },
     {
-      key: 'type', header: 'Type', render: (l) => <Pill>{LINK_TYPE_LABELS[l.type]}</Pill>,
-      isFiltered: filters.type !== '',
-      filter: (
-        <Select label="Type" hideLabel value={filters.type} onChange={(v) => setFilters((f) => ({ ...f, type: v as LinksFilters['type'] }))}>
-          <option value="">All types</option>
-          {LINK_TYPES.map((t) => <option key={t} value={t}>{LINK_TYPE_LABELS[t]}</option>)}
-        </Select>
+      key: 'ref', header: 'HigherPays Order', render: (l) => (
+        <div>
+          <span className="ref" title={l.referenceId}>{l.referenceId}</span>
+          {l.archivedAt && <div className="sub">Archived</div>}
+        </div>
       ),
     },
-    {
-      key: 'account', header: labels.account, render: (l) => l.account,
-      isFiltered: filters.accountId !== '',
-      filter: (
-        <Select label={labels.account} hideLabel value={filters.accountId} onChange={(v) => setFilters((f) => ({ ...f, accountId: v }))}>
-          <option value="">All {labels.accounts.toLowerCase()}</option>
-          {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </Select>
-      ),
-    },
+    { key: 'type', header: 'Type', render: (l) => <Pill>{LINK_TYPE_LABELS[l.type]}</Pill> },
+    { key: 'account', header: labels.account, render: (l) => l.account },
     { key: 'agent', header: labels.agent, render: (l) => l.agent ?? '—' },
     {
       key: 'amount', header: 'Amount', sortKey: 'amount',
       render: (l) => l.amount == null ? '—' : <Money amount={l.amount} currency={l.currency} />,
-      isFiltered: filters.min !== '' || filters.max !== '',
-      filter: (
-        <div className="field-row">
-          <input type="number" className="amount-input" aria-label="Minimum amount" placeholder="Min" value={filters.min}
-            aria-invalid={inverted || undefined} onChange={(e) => setFilters((f) => ({ ...f, min: e.target.value }))} />
-          <input type="number" className="amount-input" aria-label="Maximum amount" placeholder="Max" value={filters.max}
-            aria-invalid={inverted || undefined} onChange={(e) => setFilters((f) => ({ ...f, max: e.target.value }))} />
-        </div>
-      ),
     },
     {
       key: 'status', header: 'Status', sortKey: 'status',
       render: (l) => <Pill tone={STATUS_TONE[l.status]}>{LINK_STATUS_LABELS[l.status]}</Pill>,
-      isFiltered: filters.status !== '',
-      filter: (
-        <Select label="Status" hideLabel value={filters.status} onChange={(v) => setFilters((f) => ({ ...f, status: v as LinksFilters['status'] }))}>
-          <option value="">All statuses</option>
-          {LINK_STATUSES.map((st) => <option key={st} value={st}>{LINK_STATUS_LABELS[st]}</option>)}
-        </Select>
-      ),
     },
     {
       key: 'provider', header: 'Provider attempt',
@@ -211,22 +238,8 @@ export default function LinksPage() {
           </div>
         </div>
       ) : '—',
-      isFiltered: filters.providerStatus !== '',
-      filter: (
-        <Select label="Provider attempt" hideLabel value={filters.providerStatus}
-          onChange={(v) => setFilters((f) => ({ ...f, providerStatus: v as LinksFilters['providerStatus'] }))}>
-          <option value="">All provider attempts</option>
-          {PROVIDER_ATTEMPT_STATUSES.map((status) => (
-            <option key={status} value={status}>{PROVIDER_ATTEMPT_STATUS_LABELS[status]}</option>
-          ))}
-        </Select>
-      ),
     },
-    {
-      key: 'created', header: 'Created', sortKey: 'created', render: (l) => <DateCell ts={l.createdAt} />,
-      isFiltered: filters.from !== '' || filters.to !== '',
-      filter: <Calendar value={range} onChange={setRange} />,
-    },
+    { key: 'created', header: 'Created', sortKey: 'created', render: (l) => <DateCell ts={l.createdAt} /> },
   ];
 
   const columnsView = useViewLayout('links.columns', columns.map((c) => ({ key: c.key, label: c.header })));
@@ -273,10 +286,49 @@ export default function LinksPage() {
       <StatGrid>
         {orderBy(statCards, statsView.visibleKeys).map((c) => <Fragment key={c.key}>{c.card}</Fragment>)}
       </StatGrid>
+      {summary && (
+        <div className="callout price-bands">
+          <span className="field-label">Link price bands</span>
+          {summary.priceBands.map((band) => (
+            <span key={band.min} className="sub">
+              {band.max == null ? `${band.min}+` : `${band.min}–<${band.max}`}: <b>{band.count}</b>
+            </span>
+          ))}
+        </div>
+      )}
 
       <FilterBar>
         <input type="search" className="search-input" aria-label="Search links" placeholder="Search HigherPays Order, MantaPay ID, agent"
           value={filters.search} onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))} />
+        <Select label="Type" hideLabel value={filters.type} onChange={(v) => setFilters((f) => ({ ...f, type: v as LinksFilters['type'] }))}>
+          <option value="">All types</option>
+          {LINK_TYPES.map((t) => <option key={t} value={t}>{LINK_TYPE_LABELS[t]}</option>)}
+        </Select>
+        <Select label="Status" hideLabel value={filters.status} onChange={(v) => setFilters((f) => ({ ...f, status: v as LinksFilters['status'] }))}>
+          <option value="">All statuses</option>
+          {LINK_STATUSES.map((status) => <option key={status} value={status}>{LINK_STATUS_LABELS[status]}</option>)}
+        </Select>
+        <Select label="Provider attempt" hideLabel value={filters.providerStatus}
+          onChange={(v) => setFilters((f) => ({ ...f, providerStatus: v as LinksFilters['providerStatus'] }))}>
+          <option value="">All provider attempts</option>
+          {PROVIDER_ATTEMPT_STATUSES.map((status) => <option key={status} value={status}>{PROVIDER_ATTEMPT_STATUS_LABELS[status]}</option>)}
+        </Select>
+        <Select label={labels.account} hideLabel value={filters.accountId} onChange={(v) => setFilters((f) => ({ ...f, accountId: v }))}>
+          <option value="">All {labels.accounts.toLowerCase()}</option>
+          {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+        </Select>
+        <DateRangePicker value={range} onChange={setRange} />
+        <div className="field-row">
+          <input type="number" className="amount-input" aria-label="Minimum amount" placeholder="Min amount" value={filters.min}
+            aria-invalid={inverted || undefined} onChange={(e) => setFilters((f) => ({ ...f, min: e.target.value }))} />
+          <input type="number" className="amount-input" aria-label="Maximum amount" placeholder="Max amount" value={filters.max}
+            aria-invalid={inverted || undefined} onChange={(e) => setFilters((f) => ({ ...f, max: e.target.value }))} />
+        </div>
+        <label className="check-row">
+          <input type="checkbox" checked={filters.showArchived}
+            onChange={(e) => setFilters((f) => ({ ...f, showArchived: e.target.checked }))} />
+          <span>Show archived</span>
+        </label>
         <button className="btn ghost" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear filters</button>
         <ViewPicker label="Edit columns" view={columnsView} />
       </FilterBar>
@@ -285,7 +337,7 @@ export default function LinksPage() {
         columns={shownColumns}
         rows={links}
         rowKey={(l) => l.id}
-        onRowClick={setDetail}
+        onRowClick={openDetail}
         sort={sort}
         onSort={toggleSort}
         isLoading={isLoading}
@@ -304,71 +356,102 @@ export default function LinksPage() {
       />
 
       <Modal open={detail !== null && cancelling === null} onClose={() => setDetail(null)} title="Payment link">
-        {detail && (
+        {detailQuery.isError && <div className="warnbar" role="alert">Couldn't load the full link history. Try again.</div>}
+        {detailData && (
           <>
             <div className="modal-topline">
-              <Pill tone={STATUS_TONE[detail.status]}>{LINK_STATUS_LABELS[detail.status]}</Pill>
+              <Pill tone={STATUS_TONE[detailData.status]}>{LINK_STATUS_LABELS[detailData.status]}</Pill>
+              {detailData.archivedAt && <Pill tone="muted">Archived</Pill>}
             </div>
-            <DetailRow label="HigherPays Order"><span className="ref">{detail.referenceId}</span></DetailRow>
-            <DetailRow label="Type">{LINK_TYPE_LABELS[detail.type]}</DetailRow>
-            {canReassign && detail.status !== 'refunded' ? (
+            <DetailRow label="HigherPays Order"><span className="ref">{detailData.referenceId}</span></DetailRow>
+            <DetailRow label="Type">{LINK_TYPE_LABELS[detailData.type]}</DetailRow>
+            {canReassign && detailData.status !== 'refunded' ? (
               <ReassignFields
-                key={detail.id}
+                key={detailData.id}
                 kind="link"
-                id={detail.id}
-                accountId={detail.accountId}
-                agentId={detail.agentId}
+                id={detailData.id}
+                accountId={detailData.accountId}
+                agentId={detailData.agentId}
                 accounts={reassignableAccounts}
                 onSave={async (input) => {
-                  await reassignLink(detail.id, input);
+                  await reassignLink(detailData.id, input);
                   setDetail(null);
                   toast('Link reassigned.');
                 }}
               />
             ) : (
               <>
-                <DetailRow label={labels.account}>{detail.account}</DetailRow>
-                <DetailRow label={labels.agent}>{detail.agent ?? '—'}</DetailRow>
+                <DetailRow label={labels.account}>{detailData.account}</DetailRow>
+                <DetailRow label={labels.agent}>{detailData.agent ?? '—'}</DetailRow>
               </>
             )}
-            <DetailRow label="Amount">{detail.amount == null ? '—' : <Money amount={detail.amount} currency={detail.currency} emphasis />}</DetailRow>
-            <DetailRow label="Created"><DateCell ts={detail.createdAt} /></DetailRow>
-            {detail.paidAt && <DetailRow label="Paid"><DateCell ts={detail.paidAt} /></DetailRow>}
-            {detail.latestProviderAttempt && (
+            <DetailRow label="Amount">{detailData.amount == null ? '—' : <Money amount={detailData.amount} currency={detailData.currency} emphasis />}</DetailRow>
+            <DetailRow label="Created"><DateCell ts={detailData.createdAt} /></DetailRow>
+            {detailData.paidAt && <DetailRow label="Paid"><DateCell ts={detailData.paidAt} /></DetailRow>}
+            {detailQuery.data && (
+              <>
+                <DetailRow label="Checkout opens">{detailQuery.data.openCount}</DetailRow>
+                <DetailRow label="First opened"><DateCell ts={detailQuery.data.firstOpenedAt} /></DetailRow>
+                <DetailRow label="Last opened"><DateCell ts={detailQuery.data.lastOpenedAt} /></DetailRow>
+              </>
+            )}
+            {detailData.latestProviderAttempt && (
               <>
                 <DetailRow label="Provider attempt">
-                  <Pill tone={PROVIDER_STATUS_TONE[detail.latestProviderAttempt.status]}>
-                    {PROVIDER_ATTEMPT_STATUS_LABELS[detail.latestProviderAttempt.status]}
+                  <Pill tone={PROVIDER_STATUS_TONE[detailData.latestProviderAttempt.status]}>
+                    {PROVIDER_ATTEMPT_STATUS_LABELS[detailData.latestProviderAttempt.status]}
                   </Pill>
                 </DetailRow>
-                <DetailRow label="MantaPay transaction ID">{detail.latestProviderAttempt.transactionId ?? '—'}</DetailRow>
+                <DetailRow label="MantaPay transaction ID">{detailData.latestProviderAttempt.transactionId ?? '—'}</DetailRow>
                 <DetailRow label="MantaPay reply">
-                  {[detail.latestProviderAttempt.replyCode, detail.latestProviderAttempt.replyDescription].filter(Boolean).join(' · ') || '—'}
+                  {[detailData.latestProviderAttempt.replyCode, detailData.latestProviderAttempt.replyDescription].filter(Boolean).join(' · ') || '—'}
                 </DetailRow>
-                <DetailRow label="Provider attempt time"><DateCell ts={detail.latestProviderAttempt.occurredAt} /></DetailRow>
+                <DetailRow label="Provider attempt time"><DateCell ts={detailData.latestProviderAttempt.occurredAt} /></DetailRow>
               </>
             )}
-            {isShareable(detail.status) && detail.checkoutUrl && (
+            <div className="field">
+              <label htmlFor="detail-note">Internal note</label>
+              <textarea id="detail-note" value={detailNote} readOnly={!canCreate} onChange={(e) => setDetailNote(e.target.value)} />
+              {canCreate && <button className="btn ghost small" onClick={saveNote} disabled={isSavingNote}>{isSavingNote ? 'Saving…' : 'Save note'}</button>}
+            </div>
+            {detailQuery.data && (
+              <div className="field">
+                <div className="field-label">Timeline</div>
+                <div className="timeline">
+                  {detailQuery.data.events.map((event, index) => (
+                    <div className="timeline-row" key={`${event.type}-${event.occurredAt}-${index}`}>
+                      <span>{EVENT_LABELS[event.type]}</span>
+                      <DateCell ts={event.occurredAt} />
+                    </div>
+                  ))}
+                </div>
+                <p className="sub">This shows activity visible to HigherPays. Internal actions inside CentroBill are not available.</p>
+              </div>
+            )}
+            {isShareable(detailData.status) && detailData.checkoutUrl && (
               <div className="field">
                 <label htmlFor="detail-url">Checkout URL</label>
                 <div className="field-row">
-                  <input id="detail-url" type="text" readOnly value={detail.checkoutUrl} onFocus={(e) => e.target.select()} />
-                  <CopyButton value={detail.checkoutUrl} />
+                  <input id="detail-url" type="text" readOnly value={detailData.checkoutUrl} onFocus={(e) => e.target.select()} />
+                  <CopyButton value={detailData.checkoutUrl} />
                 </div>
               </div>
             )}
-            {detail.status === 'pending' && (
+            {detailData.status === 'pending' && (
               <div className="callout">
                 <p className="sub">The customer has paid. The payment needs its details — who paid and what for — before it counts as revenue.</p>
               </div>
             )}
             <div className="modal-actions">
-              {detail.status === 'pending' && canComplete && (
-                <Link className="btn" to={`/payments?needs_details=1&q=${encodeURIComponent(detail.referenceId)}`}>Complete on Payments</Link>
+              {detailData.status === 'pending' && canComplete && (
+                <Link className="btn" to={`/payments?needs_details=1&q=${encodeURIComponent(detailData.referenceId)}`}>Complete on Payments</Link>
               )}
-              {isShareable(detail.status) && canCreate && (
-                <button className="btn danger" onClick={() => setCancelling(detail)}>Cancel link</button>
+              {isShareable(detailData.status) && canCreate && (
+                <button className="btn danger" onClick={() => setCancelling(detailData)}>Cancel link</button>
               )}
+              {canCreate && (detailData.archivedAt
+                ? <button className="btn ghost" onClick={() => changeArchived(detailData, false)}>Restore link</button>
+                : <button className="btn ghost" onClick={() => changeArchived(detailData, true)}>Archive link</button>)}
               <span className="spacer" />
               <button className="btn ghost" onClick={() => setDetail(null)}>Close</button>
             </div>
@@ -396,6 +479,11 @@ export default function LinksPage() {
               : aboveMax ? <span className="text-neg">Above the {formatMoney(maxAmount ?? 0)} maximum.</span>
                 : [`Minimum ${formatMoney(minAmount)}`, maxAmount != null ? `Maximum ${formatMoney(maxAmount)}` : null].filter(Boolean).join(' · ')}
           </p>
+        </div>
+        <div className="field">
+          <label htmlFor="link-note">Internal note</label>
+          <textarea id="link-note" value={description} onChange={(e) => setDescription(e.target.value)}
+            placeholder="Visible only inside HigherPays" />
         </div>
 
         <div className={`pl-fees${fees && fees.effectivePct >= 18 ? ' hot' : fees && fees.effectivePct >= 15 ? ' warm' : ''}`}>
