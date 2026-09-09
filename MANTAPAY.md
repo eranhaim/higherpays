@@ -16,8 +16,8 @@ Three different hosts, three different authentication schemes.
 
 | Purpose | Host | Auth |
 |---|---|---|
-| Hosted checkout page | `uiservices.mantapay.biz` | signed URL (hash key) |
-| Status polling | `process.mantapay.biz` | signed query (hash key) |
+| Payer hosted page | `uiservices.mantapay.biz` | provider-generated redirect |
+| APM start and status polling | `process.mantapay.biz` | signed query (hash key) |
 | Transaction Search (fees) | `webservices.mantapay.biz` | login → session token + body signature |
 
 Credentials live in env only:
@@ -29,6 +29,7 @@ MANTAPAY_APP_TOKEN        issued by support, sent on every webservices call
 MANTAPAY_API_EMAIL        API user (role 50)
 MANTAPAY_API_PASSWORD
 MANTAPAY_SEARCH_SALT      salt for the search body signature
+MANTAPAY_FEE_MODE         additive (default) or included
 MANTAPAY_REFUND_ENABLED   false today
 ```
 
@@ -40,12 +41,14 @@ leaks no signing material.
 
 ## 2. Adapter surface
 
-`backend/src/providers/mantapay.js` is the only file the routes import:
+`backend/src/providers/mantapay.js` is the only provider entry point the routes
+import:
 
 ```
 resolveApiKey        per-workspace hash key
 resolveMerchantId    per-workspace MID
 createCheckout       build the hosted-page URL
+apm.startApm          start the public payment page and return its redirect
 parseWebhook         inbound notification -> our vocabulary
 verifyWebhookSignature
 getPaymentStatus     poll by our order reference
@@ -66,75 +69,72 @@ Everything else is behind it:
 
 ---
 
-## 3. Creating a payment link (outbound)
+## 3. Starting public checkout (outbound)
 
-`createCheckout(ws, {...})` makes **no HTTP call**. It builds a signed URL and
-returns it. There is no provider-side link id until someone pays, so
-`providerLinkId` is `null` and our own `reference_id` is the join key.
+The public route calls `apm.startApm` in `mantapay-apm.js`. It sends a signed
+request to `process.mantapay.biz/member/remote_charge.asp`, receives
+`D3Redirect`, then redirects the payer to MantaPay's hosted CentroBill page.
+Our `payment_links.reference_id` is sent as `Order`.
 
-Fields sent (`mantapay-checkout.js`):
-
-| Field | Value |
-|---|---|
-| `merchantID` | workspace MID |
-| `trans_type` | `0` — debit (auth + capture) |
-| `trans_installments` | `1` — regular, non-instalment |
-| `trans_amount` | 2dp |
-| `trans_currency` | ISO code |
-| `trans_refNum` | **our reference** |
-| `disp_payFor` | description (max 40) |
-| `disp_lng` | `en-US` |
-| `client_fullName` / `client_email` / `client_phoneNum` | payer details |
-| `notification_url` | our webhook endpoint |
-| `url_redirect` | thank-you page |
-| `Brand` | attribution tag |
-| `ExpiredOn` | **epoch seconds**, GMT — omitted entirely when the link has no expiry; sending it empty is rejected |
-| `EC` | optional surcharge, `price\|Name\|Description`, 50-char cap |
-
-### Signature
+The request signature is:
 
 ```
-urlencode( base64( SHA256_raw( concat(values) + hashKey ) ) )
+base64(SHA256(CompanyNum + TransType + TypeCredit + Amount + Currency + hashKey))
 ```
 
-* base64 of the **raw 32 digest bytes**, not of the hex string
-* values concatenated with **no delimiter**; empty values contribute nothing
-  but still hold their position in the order
-* the order of the signature must match the order of the request string
-* POST sends the un-encoded base64 instead
+`Amount`, `Currency`, and the signature all come from the same calculated
+request values. Currency uses MantaPay's numeric ids: USD `1`, EUR `2`, GBP `3`.
 
-Two traps, both fatal because the hash is byte-exact, both handled:
+### Checkout fee modes
 
-* **Hash input** is the raw value, **verbatim** — spaces stay spaces, nothing is
-  escaped. All three of MantaPay's sources disagree here and two are wrong: the
-  Signature page shows fully URL-encoded values, the Validator page says raw
-  values, and the Validator's field-by-field output shows spaces as `+`. We
-  followed the Validator's output and the live hosted page rejected the links
-  with *"Cannot proceed, missing or invalid signature."* Isolated field by field
-  against the live page (Sep 2026); the live page is the authority.
-* **Wire encoding** is .NET `HttpUtility.UrlEncode`, not `encodeURIComponent`:
-  space → `+`, hex escapes lowercase (`%2b`, not `%2B`).
+`MANTAPAY_FEE_MODE` controls how the customer-paid checkout fee is represented:
 
-So the hashed string and the transmitted string **differ**, on purpose.
+| Mode | `Amount` | `ExtraCostAmount` | Status |
+|---|---|---|---|
+| `additive` | content amount | fee / content amount | Default; proven live behavior |
+| `included` | content + fee | fee / customer total | Gated; not confirmed live |
 
-`buildCheckout` derives the query string and the signature from **one ordered
-array**, so they cannot drift.
+`ExtraCostAmount` is a ratio, not a currency amount. The live endpoint rejects
+values greater than or equal to `1`, and the current request
+`Amount=100.00&ExtraCostAmount=0.02` displays a customer total of `102.00`.
+Therefore included mode keeps the proven ratio semantics: for €100 content +
+€2 fee it sends `Amount=102.00&ExtraCostAmount=0.01960784`. For €3 + €2 it
+sends `Amount=5.00&ExtraCostAmount=0.4`.
 
-### Verified vectors
+No second fee field is sent. With no checkout fee, `ExtraCostAmount` is omitted.
+Amounts are calculated in cents, emitted with two decimals, and the ratio is
+limited to eight decimals.
 
-Asserted in the test suite:
+The legacy `mantapay-checkout.js` hosted-page builder still uses its separate
+`EC` field, but the public payment route does not use that path. `EC` and
+`ExtraCostAmount` must not be mixed.
 
-```
-Generator  : 377109718015EURProduct-name0en-gbjohn+smith...
-             -> uaPyTpm63hyv0bdYfkfLspPXxr2lW6KOlfy4CExuRnQ=
-Hosted page: 168-char concat -> GaioKE8QDXXb2Oal10o09GQYDz8ouymFCCqmWfgqd84=
-```
+### Gated rollout
 
-The Generator vector only exercises `digest()`. The second is the one that
-matters: it is the concatenation the live hosted page accepts.
+1. Keep production at `MANTAPAY_FEE_MODE=additive`.
+2. Obtain MantaPay's written confirmation listed below.
+3. Set `MANTAPAY_FEE_MODE=included` in a non-production environment and restart
+   the API. Confirm the startup integration log reports `feeMode: included`.
+4. Run €100 + €2 and €3 + €2 payments. Confirm the request, CentroBill display,
+   amount charged, signed webhook amount, and transaction search record.
+5. If MantaPay adds the fee again or reports inconsistent values, restore
+   `additive` and restart.
+6. Only after both vectors pass, set production to `included`, restart, and
+   monitor the first real transactions. This repository does not enable or
+   deploy included mode by default.
 
-If MantaPay ever changes the scheme, `npm test` fails instead of production
-silently emitting links that get reply 500.
+Exact confirmation still required from MantaPay:
+
+* their bank-side display fix is live for the production merchant;
+* the direct APM fee field is still named `ExtraCostAmount`;
+* that field remains a ratio when `Amount` already contains the fee;
+* the ratio denominator must be the full customer total;
+* the fee is displayed as included and is not added to `Amount` again;
+* whether the signed webhook `trans_amount` returns content or customer total.
+
+Public documentation searches found no authoritative MantaPay page for this
+contract. Until all points above are confirmed and the two vectors pass,
+`additive` is the safe production mode.
 
 ---
 
@@ -161,6 +161,12 @@ Fields returned: `trans_id`, `trans_order`, `reply_code`, `reply_desc`,
 `fee: null, net: null`; the payout engine prices the sale from our own rate
 card, and reconciliation is supposed to replace the estimate later with the
 provider's actual figure.
+
+During the fee-mode transition, `validateProviderMoney` accepts the signed
+`trans_amount` as either the link content amount or content plus checkout fee.
+It rejects every other amount. The ledger always records the link's stored
+content as gross and its stored checkout fee as surcharge; provider display and
+webhook variation cannot change the agency split.
 
 ### Reply codes
 
@@ -268,27 +274,19 @@ Any amount below 1.00 that is not in this table returns 596
 
 ## 9. Open issues
 
-Verified by reading the code and running `node --test test/mantapay.test.js`
-(34/34 pass). **Not** verified against the vendor spec — see §11.
+Verified by the backend unit suite. The included fee mode is **not** verified
+against the live provider contract — see §3 and §11.
 
 ### Money-affecting
 
-**1. Inbound chargebacks are dropped.**
-`parseWebhook` fully parses a chargeback and returns `status: 'chargeback'`.
-`webhooks.routes.js:66` then matches only `approved` / `declined` and answers
-`ignored: 'non_final_status'`. The ledger has `fn_post_chargeback` and
-`POST /transactions/:txId/chargeback`, but only an operator can trigger it by
-hand. The provider notification never reaches it.
+**1. Attribution rests on an unconfirmed field mapping.**
+The public APM request sends our reference as `Order`. We read it back as
+`trans_order`, and `payments.service.js` looks the link up by
+`reference_id = trans_order`. MantaPay has not confirmed that `Order` is echoed
+there. If it is not, every payment arrives unattributed. The signature can
+still verify because an empty `trans_order` contributes nothing to the hash.
 
-**2. Attribution rests on an unconfirmed field name.**
-We send our reference as `trans_refNum`. We read it back as `trans_order`, and
-`payments.service.js:51` looks the link up by `reference_id = trans_order`.
-Which request field actually populates `trans_order` is unconfirmed. If it is
-any other name, every payment arrives unattributed — and the signature still
-verifies, because an empty `trans_order` contributes nothing to the hash. The
-status poll makes the same assumption via its `Order=` parameter.
-
-**3. `resolveApiKey` falls back silently.**
+**2. `resolveApiKey` falls back silently.**
 `mantapay.js:33` — if a workspace has `provider_config_ref` set but that env
 var is missing, it drops to the platform-wide `MANTAPAY_HASH_KEY` instead of
 failing. A misconfigured tenant signs with the wrong merchant's key and gets
@@ -296,19 +294,13 @@ reply 500.
 
 ### Incomplete
 
-**4. The Search API is dead code.**
+**3. The Search API is dead code.**
 `mantapay-search.js` is written and unit-tested, but nothing calls
 `searchTransactions`. Per-transaction fees are the one thing MantaPay gives us
 that the webhook does not, and we never fetch them. `getStatusById` is also
 exported and uncalled.
 
-**5. `refundPayment` argument mismatch.**
-`payouts.routes.js:308` calls `provider.refundPayment(apiKey, paymentRequestId,
-amount)`; the adapter takes no parameters and always throws. Harmless while
-refunds are disabled, but the call site encodes a signature that does not
-exist.
-
-**6. Two unused order constants.**
+**4. Two unused order constants.**
 `HOSTED_FIELD_ORDER_REQUEST` / `HOSTED_FIELD_ORDER_JS` in
 `mantapay-signature.js` use lowercase `client_billaddress1`, while
 `mantapay-checkout.js` uses `client_billAddress1`. Checkout always passes its
@@ -321,12 +313,11 @@ anything did use them.
 
 Unconfirmed points, flagged inline in the code. Worth sending back to them.
 
-1. **Which request field populates `trans_order` in the notification?**
-   We send `trans_refNum`. See open issue 2 — this one is load-bearing.
-2. **Does the notification's `trans_amount` include the `EC` surcharge, or only
-   the base amount?** Their worked example (100 + 100 + 10 = 210) shows extras
-   are added on top of `trans_amount` in the request, but says nothing about the
-   reply.
+1. **Does direct APM `Order` populate `trans_order` in the notification?**
+   See open issue 1 — this mapping is load-bearing.
+2. **In direct APM included mode, does `trans_amount` return content or customer
+   total?** Both are accepted during cutover, but MantaPay must confirm which is
+   contractual.
 3. **Is the `Signature` field in the login response the salt the Search API
    signs bodies with?** `mantapay-search.js` assumes so, falling back to
    `MANTAPAY_SEARCH_SALT`.
@@ -346,7 +337,3 @@ There is no vendor documentation in this repo, and `mantapay.biz` /
 `docs.mantapay.biz` do not resolve publicly — the integration hosts are
 private. Everything above was derived from the code, its tests, and vectors
 captured from MantaPay's own Signature Generator and Validator pages.
-
-`OPEN-QUESTIONS-MANTAPAY.md` is referenced twice in `mantapay.js`. It has never
-existed in this repository. §10 replaces it — update the two comments to point
-here.

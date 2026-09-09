@@ -133,7 +133,12 @@ app.use(errorHandler);
 
 if (require.main === module) {
   for (const i of config.integrations) {
-    log.info({ integration: i.name, enabled: i.enabled, needs: i.enabled ? undefined : i.needs }, 'integration');
+    log.info({
+      integration: i.name,
+      enabled: i.enabled,
+      needs: i.enabled ? undefined : i.needs,
+      feeMode: i.feeMode,
+    }, 'integration');
   }
   app.listen(config.port, () => log.info({ port: config.port }, 'HigherPays API listening'));
   // A payment whose webhook never arrived is invisible until someone asks the

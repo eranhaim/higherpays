@@ -7,6 +7,10 @@ const sig = require('./mantapay-signature');
 
 const APM_PATH = '/member/remote_charge.asp';
 const CURRENCY_IDS = { USD: '1', EUR: '2', GBP: '3' };
+const FEE_MODES = {
+  ADDITIVE: 'additive',
+  INCLUDED: 'included',
+};
 
 function currencyId(currency) {
   const id = CURRENCY_IDS[String(currency || '').toUpperCase()];
@@ -19,31 +23,62 @@ function clientIp(ip) {
   return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(value) ? value : '127.0.0.1';
 }
 
+function toMinorUnits(value, errorCode) {
+  const number = Number(value);
+  const minor = Math.round(number * 100);
+  if (!Number.isFinite(number) || Math.abs(number * 100 - minor) >= 0.000001) {
+    throw Object.assign(new Error(errorCode), { status: 400 });
+  }
+  return minor;
+}
+
+function calculateApmMoney(contentAmount, checkoutFee, feeMode) {
+  const contentMinor = toMinorUnits(contentAmount, 'invalid_amount');
+  const feeMinor = toMinorUnits(checkoutFee || 0, 'invalid_checkout_fee');
+  if (contentMinor <= 0) throw Object.assign(new Error('invalid_amount'), { status: 400 });
+  if (feeMinor < 0) throw Object.assign(new Error('invalid_checkout_fee'), { status: 400 });
+  if (!Object.values(FEE_MODES).includes(feeMode)) {
+    throw Object.assign(new Error('invalid_mantapay_fee_mode'), { status: 500 });
+  }
+
+  // MantaPay has only proven ExtraCostAmount as a ratio. Included mode changes
+  // its denominator with Amount so the fee is represented inside the total.
+  const amountMinor = feeMode === FEE_MODES.INCLUDED
+    ? contentMinor + feeMinor
+    : contentMinor;
+  const extraCostRate = feeMinor / amountMinor;
+  if (extraCostRate >= 1) {
+    throw Object.assign(new Error('mantapay_extra_cost_must_be_less_than_amount'), { status: 400 });
+  }
+
+  return {
+    amount: (amountMinor / 100).toFixed(2),
+    extraCostRate: feeMinor > 0 ? String(Number(extraCostRate.toFixed(8))) : null,
+  };
+}
+
 function buildApmUrl({
-  merchantId, hashKey, amount, currency, order, notificationUrl, returnUrl, clientIp: ip, cpm,
-  extraCostAmount,
+  merchantId, hashKey, contentAmount, checkoutFee, currency, order, notificationUrl, returnUrl,
+  clientIp: ip, cpm, feeMode = config.mantapayFeeMode,
 }) {
   if (!merchantId) throw Object.assign(new Error('mantapay_merchant_id_missing'), { status: 500 });
   if (!hashKey) throw Object.assign(new Error('mantapay_hash_key_missing'), { status: 500 });
-  if (!(Number(amount) > 0)) throw Object.assign(new Error('invalid_amount'), { status: 400 });
 
   const companyNum = String(merchantId);
   const transType = '0';
   const typeCredit = '1';
-  const value = Number(amount).toFixed(2);
+  const money = calculateApmMoney(contentAmount, checkoutFee, feeMode);
   const currencyValue = currencyId(currency);
-  const extraCostRate = Number(extraCostAmount || 0) / Number(amount);
-  if (extraCostRate >= 1) {
-    throw Object.assign(new Error('mantapay_extra_cost_must_be_less_than_amount'), { status: 400 });
-  }
-  const signature = sig.digest(companyNum + transType + typeCredit + value + currencyValue + hashKey);
+  const signature = sig.digest(
+    companyNum + transType + typeCredit + money.amount + currencyValue + hashKey,
+  );
   const fields = [
     ['CompanyNum', companyNum],
     ['TransType', transType],
     ['Member', 'Customer'],
     ['TypeCredit', typeCredit],
     ['Payments', '1'],
-    ['Amount', value],
+    ['Amount', money.amount],
     ['Currency', currencyValue],
     // MantaPay requires an email to start APM. It is never used to create a
     // HigherPays customer; the payer can replace it on the hosted page.
@@ -51,8 +86,8 @@ function buildApmUrl({
     ['ClientIP', clientIp(ip)],
     ['Order', String(order)],
     ['CPM', String(cpm || config.mantapayCpm)],
-    ...((extraCostRate > 0)
-      ? [['ExtraCostAmount', String(Number(extraCostRate.toFixed(8)))]]
+    ...(money.extraCostRate
+      ? [['ExtraCostAmount', money.extraCostRate]]
       : []),
     ...(returnUrl ? [['RetURL', returnUrl]] : []),
     ...(notificationUrl ? [['notification_url', notificationUrl]] : []),
@@ -90,4 +125,6 @@ async function startApm(o = {}) {
   return { reply, redirect, fields };
 }
 
-module.exports = { APM_PATH, CURRENCY_IDS, currencyId, buildApmUrl, parseResponse, startApm };
+module.exports = {
+  APM_PATH, CURRENCY_IDS, FEE_MODES, currencyId, calculateApmMoney, buildApmUrl, parseResponse, startApm,
+};

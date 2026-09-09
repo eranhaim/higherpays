@@ -204,27 +204,76 @@ test('checkout refuses invalid input', () => {
   assert.throws(() => checkout.buildCheckout({ ...baseCheckout, hashKey: '' }), /hash_key_missing/);
 });
 
-test('direct APM links use the provider currency id and signed request', () => {
-  const url = apm.buildApmUrl({
-    merchantId: '3771097', hashKey: KEY, amount: 20, currency: 'EUR', order: 'ord-1',
-    notificationUrl: 'https://api.example.com/webhooks/payment/abc', extraCostAmount: 2,
-    returnUrl: 'https://higherpays.com/payment-complete', cpm: '743',
+const apmFeeVectors = [
+  { mode: 'additive', content: 100, fee: 2, amount: '100.00', rate: '0.02' },
+  { mode: 'included', content: 100, fee: 2, amount: '102.00', rate: '0.01960784' },
+  { mode: 'additive', content: 3, fee: 2, amount: '3.00', rate: '0.66666667' },
+  { mode: 'included', content: 3, fee: 2, amount: '5.00', rate: '0.4' },
+];
+
+for (const vector of apmFeeVectors) {
+  test(`direct APM ${vector.mode} fee mode sends €${vector.content} + €${vector.fee} consistently`, () => {
+    const url = apm.buildApmUrl({
+      merchantId: '3771097',
+      hashKey: KEY,
+      contentAmount: vector.content,
+      checkoutFee: vector.fee,
+      feeMode: vector.mode,
+      currency: 'EUR',
+      order: 'ord-1',
+      notificationUrl: 'https://api.example.com/webhooks/payment/abc',
+      returnUrl: 'https://higherpays.com/payment-complete',
+      cpm: '743',
+    });
+    const params = new URL(url).searchParams;
+    assert.equal(params.get('Amount'), vector.amount);
+    assert.equal(params.get('ExtraCostAmount'), vector.rate);
+    assert.equal(params.get('Currency'), '2');
+    assert.equal(params.get('signature'), sig.digest(`377109701${vector.amount}2${KEY}`));
+    assert.equal(params.getAll('ExtraCostAmount').length, 1);
+    assert.equal(params.has('EC'), false);
+    assert.equal(params.get('CPM'), '743');
+    assert.equal(params.get('Email'), 'customer@higherpays.com');
+    assert.equal(params.get('RetURL'), 'https://higherpays.com/payment-complete');
   });
-  const params = new URL(url).searchParams;
-  assert.equal(params.get('Currency'), '2');
-  assert.equal(params.get('CPM'), '743');
-  assert.equal(params.get('Amount'), '20.00');
-  assert.equal(params.get('ExtraCostAmount'), '0.1');
-  assert.equal(params.get('Email'), 'customer@higherpays.com');
-  assert.equal(params.has('EC'), false);
-  assert.equal(params.get('RetURL'), 'https://higherpays.com/payment-complete');
-  assert.equal(params.get('signature'), sig.digest('37710970120.002' + KEY));
+}
+
+test('direct APM defaults to the proven additive fee mode', () => {
+  const params = new URL(apm.buildApmUrl({
+    merchantId: '3771097', hashKey: KEY, contentAmount: 100, checkoutFee: 2,
+    currency: 'EUR', order: 'ord-1',
+  })).searchParams;
+  assert.equal(params.get('Amount'), '100.00');
+  assert.equal(params.get('ExtraCostAmount'), '0.02');
 });
 
-test('direct APM checkout fee must be less than the content amount', () => {
+test('direct APM omits the fee field in both modes when there is no fee', () => {
+  for (const feeMode of Object.values(apm.FEE_MODES)) {
+    const params = new URL(apm.buildApmUrl({
+      merchantId: '3771097', hashKey: KEY, contentAmount: 100, checkoutFee: 0,
+      feeMode, currency: 'EUR', order: 'ord-1',
+    })).searchParams;
+    assert.equal(params.get('Amount'), '100.00');
+    assert.equal(params.has('ExtraCostAmount'), false);
+    assert.equal(params.get('signature'), sig.digest('377109701100.002' + KEY));
+  }
+});
+
+test('direct APM currency ids and signatures use the emitted values', () => {
+  for (const [currency, currencyValue] of Object.entries(apm.CURRENCY_IDS)) {
+    const params = new URL(apm.buildApmUrl({
+      merchantId: '3771097', hashKey: KEY, contentAmount: 100, checkoutFee: 2,
+      feeMode: 'included', currency, order: 'ord-1',
+    })).searchParams;
+    assert.equal(params.get('Currency'), currencyValue);
+    assert.equal(params.get('signature'), sig.digest(`377109701102.00${currencyValue}${KEY}`));
+  }
+});
+
+test('direct APM additive fee must be less than the content amount', () => {
   assert.throws(() => apm.buildApmUrl({
-    merchantId: '3771097', hashKey: KEY, amount: 2, extraCostAmount: 2,
-    currency: 'EUR', order: 'ord-1',
+    merchantId: '3771097', hashKey: KEY, contentAmount: 2, checkoutFee: 2,
+    feeMode: 'additive', currency: 'EUR', order: 'ord-1',
   }), /extra_cost_must_be_less_than_amount/);
 });
 

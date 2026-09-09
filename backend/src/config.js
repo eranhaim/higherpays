@@ -15,6 +15,14 @@ function required(name, fallback) {
   return v;
 }
 
+function oneOf(name, fallback, choices) {
+  const value = String(process.env[name] || fallback).trim().toLowerCase();
+  if (!choices.includes(value)) {
+    throw new Error(`${name} must be one of: ${choices.join(', ')}`);
+  }
+  return value;
+}
+
 const config = {
   env: process.env.NODE_ENV || 'development',
   port: parseInt(process.env.PORT || '3000', 10),
@@ -40,6 +48,9 @@ const config = {
   mantapaySearchBase: process.env.MANTAPAY_SEARCH_BASE || 'https://webservices.mantapay.biz',
   mantapayProcessBase: process.env.MANTAPAY_PROCESS_BASE || 'https://process.mantapay.biz',
   mantapayCpm: process.env.MANTAPAY_CPM || '743',
+  // `additive` is the proven live contract. `included` must remain opt-in until
+  // MantaPay confirms its bank-side fix and exact fee-field contract are live.
+  mantapayFeeMode: oneOf('MANTAPAY_FEE_MODE', 'additive', ['additive', 'included']),
   // Webservices login credentials (Search API + payouts). Use their API-user
   // role so a human rotating their portal password doesn't break the link.
   mantapayApiEmail: process.env.MANTAPAY_API_EMAIL || null,
@@ -87,7 +98,7 @@ if (config.env === 'production' && String(config.jwtSecret || '').length < MIN_J
 // Optional integrations, with the env var that turns each one on. Logged at
 // boot so a missing value is a visible line in the logs, not a silent gap.
 config.integrations = [
-  { name: 'MantaPay checkout', enabled: Boolean(config.mantapayMerchantId && config.mantapayHashKey), needs: 'MANTAPAY_MERCHANT_ID, MANTAPAY_HASH_KEY' },
+  { name: 'MantaPay checkout', enabled: Boolean(config.mantapayMerchantId && config.mantapayHashKey), needs: 'MANTAPAY_MERCHANT_ID, MANTAPAY_HASH_KEY', feeMode: config.mantapayFeeMode },
   { name: 'MantaPay webhook URL', enabled: Boolean(config.webhookPublicBase), needs: 'WEBHOOK_PUBLIC_BASE' },
   { name: 'MantaPay fee reconciliation', enabled: Boolean(config.mantapayApiEmail && config.mantapayApiPassword && config.mantapayAppToken), needs: 'MANTAPAY_API_EMAIL, MANTAPAY_API_PASSWORD, MANTAPAY_APP_TOKEN' },
   { name: 'MantaPay refunds', enabled: config.mantapayRefundEnabled, needs: 'MANTAPAY_REFUND_ENABLED=true' },

@@ -106,8 +106,8 @@ function parseWebhook(raw) {
     kind: 'payment',
     providerEventId: p.trans_id || null,
     transactionId: p.trans_id || null,
-    // `trans_order` is our own reference echoed back. WHICH request field
-    // populates it is unconfirmed — see OPEN-QUESTIONS-MANTAPAY.md #1.
+    // `trans_order` should echo the direct APM `Order`; MantaPay has not
+    // confirmed that mapping. See MANTAPAY.md §10.
     referenceId: p.trans_order || null,
     merchantId: p.merchant_id || null,
     replyCode: code != null ? String(code) : null,
@@ -117,8 +117,8 @@ function parseWebhook(raw) {
           : (mapped === 'declined' || mapped === 'abandoned') ? 'declined'
           : mapped,
     // `gross` is the name the routes read; `grossAmount` kept as an alias.
-    // NOTE: whether trans_amount includes the EC surcharge is unconfirmed —
-    // see OPEN-QUESTIONS-MANTAPAY.md #2.
+    // Whether trans_amount is content or customer total during the fee-mode
+    // cutover is unconfirmed. Both signed values are validated downstream.
     gross: p.trans_amount != null ? Number(p.trans_amount) : null,
     grossAmount: p.trans_amount != null ? Number(p.trans_amount) : null,
     // MantaPay does NOT report the fee or the net in the notification — unlike
