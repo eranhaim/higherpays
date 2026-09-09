@@ -67,14 +67,17 @@ async function verifySecondFactor(user, code) {
 
 // Every workspace the user may sign into, with the vocabulary that workspace
 // uses so the console can label itself before loading anything else.
-async function workspacesFor(userId) {
+async function workspacesFor(userId, onlyWorkspaceId = null) {
   return (await query(
-    `SELECT w.id, w.name, w.currency, wu.role, w.status,
+    `SELECT w.id, w.name, w.currency, wu.role, wr.name AS role_name, w.status,
             w.account_label, w.account_label_plural, w.agent_label, w.agent_label_plural
-       FROM workspace_users wu JOIN workspaces w ON w.id = wu.workspace_id
+       FROM workspace_users wu
+       JOIN workspaces w ON w.id = wu.workspace_id
+       JOIN workspace_roles wr ON wr.workspace_id=wu.workspace_id AND wr.key=wu.role
       WHERE wu.user_id = $1 AND wu.status = 'active' AND w.status = 'active'
-      ORDER BY w.name`, [userId])).rows.map((w) => ({
-    id: w.id, name: w.name, currency: w.currency, role: w.role, status: w.status,
+        AND ($2::uuid IS NULL OR w.id=$2)
+      ORDER BY w.name`, [userId, onlyWorkspaceId])).rows.map((w) => ({
+    id: w.id, name: w.name, currency: w.currency, role: w.role, roleName: w.role_name, status: w.status,
     labels: { account: w.account_label, accounts: w.account_label_plural, agent: w.agent_label, agents: w.agent_label_plural },
   }));
 }
@@ -290,7 +293,14 @@ router.get('/me', requireAuth, asyncHandler(async (req, res) => {
   const user = (await query(
     'SELECT id, email, full_name, is_platform_admin, two_factor_enabled FROM users WHERE id = $1', [req.user.id])).rows[0];
   if (!user) return res.status(401).json({ error: 'invalid_token' });
-  res.json({ user: publicUser(user), workspaces: await workspacesFor(user.id) });
+  res.json({
+    user: publicUser(user),
+    workspaces: await workspacesFor(user.id, req.user.impersonationWorkspaceId),
+    impersonating: req.user.actorId ? {
+      actorUserId: req.user.actorId,
+      workspaceId: req.user.impersonationWorkspaceId,
+    } : null,
+  });
 }));
 
 module.exports = router;

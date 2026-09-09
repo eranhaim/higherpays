@@ -6,13 +6,12 @@
 
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../store/auth';
 import { useSessionStore } from '../store/session';
 import { useCurrentSession } from '../hooks/useCurrentSession';
 import { useCan } from '../hooks/usePermission';
-import { authApi } from '../api/endpoints';
-import { WORKSPACE_ROLE_LABELS } from '../api/types';
+import { authApi, platformApi } from '../api/endpoints';
 import { NAV, navLabel, type NavGroup } from '../rbac/nav';
 import { hasUnsavedChanges, clearUnsavedChanges } from '../lib/unsavedChanges';
 import Modal from './Modal';
@@ -50,15 +49,72 @@ function NavSection({ group, onNavigate }: NavSectionProps) {
 }
 
 export default function Layout() {
-  const { user, role, workspaces, activeWorkspaceId } = useCurrentSession();
+  const { user, roleName, workspaces, activeWorkspaceId } = useCurrentSession();
   const setActiveWorkspaceId = useSessionStore((s) => s.setActiveWorkspaceId);
   const clearAuth = useAuthStore((s) => s.clear);
+  const originalSession = useAuthStore((s) => s.originalSession);
+  const originalWorkspaceId = useAuthStore((s) => s.originalWorkspaceId);
+  const impersonationExpiresAt = useAuthStore((s) => s.impersonationExpiresAt);
+  const beginImpersonation = useAuthStore((s) => s.beginImpersonation);
+  const endImpersonation = useAuthStore((s) => s.endImpersonation);
   const clearSession = useSessionStore((s) => s.clear);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { pathname } = useLocation();
   const mainRef = useRef<HTMLElement>(null);
   const [pendingPath, setPendingPath] = useState<string | null>(null);
+  const [impersonationOpen, setImpersonationOpen] = useState(false);
+  const [impersonationTarget, setImpersonationTarget] = useState('');
+
+  const targets = useQuery({
+    queryKey: ['impersonation-targets'],
+    queryFn: () => platformApi.listImpersonationTargets(),
+    enabled: impersonationOpen && Boolean(user?.isPlatformAdmin) && !originalSession,
+  });
+
+  const restorePlatformSession = () => {
+    const workspaceId = originalWorkspaceId;
+    endImpersonation();
+    if (workspaceId) setActiveWorkspaceId(workspaceId);
+    queryClient.clear();
+    navigate('/platform', { replace: true });
+  };
+
+  const exitImpersonation = async () => {
+    try {
+      await platformApi.stopImpersonation();
+    } finally {
+      restorePlatformSession();
+    }
+  };
+
+  useEffect(() => {
+    if (!originalSession || !impersonationExpiresAt) return;
+    const remaining = Date.parse(impersonationExpiresAt) - Date.now();
+    if (remaining <= 0) {
+      restorePlatformSession();
+      return;
+    }
+    const timer = window.setTimeout(restorePlatformSession, remaining);
+    return () => window.clearTimeout(timer);
+  // restorePlatformSession reads current store values when the timer fires.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [originalSession, impersonationExpiresAt]);
+
+  const startImpersonation = useMutation({
+    mutationFn: async () => {
+      const target = targets.data?.find((item) => `${item.workspaceId}:${item.userId}` === impersonationTarget);
+      if (!target) throw new Error('Select a user.');
+      return platformApi.startImpersonation(target.workspaceId, target.userId);
+    },
+    onSuccess: (session) => {
+      beginImpersonation({ ...session, originalWorkspaceId: activeWorkspaceId });
+      setActiveWorkspaceId(session.workspace.id);
+      queryClient.clear();
+      setImpersonationOpen(false);
+      navigate('/', { replace: true });
+    },
+  });
 
   // Leaving the page throws away whatever the current form is holding, so ask
   // first. Registered by useUnsavedChanges in the forms themselves.
@@ -96,7 +152,13 @@ export default function Layout() {
   });
 
   return (
-    <div className="app">
+    <div className={`app${originalSession ? ' is-impersonating' : ''}`}>
+      {originalSession && (
+        <div className="impersonation-banner">
+          Viewing as {user?.fullName} · {roleName}
+          <button className="btn small" onClick={exitImpersonation}>Exit impersonation</button>
+        </div>
+      )}
       <aside className="side">
         <div className="brand">
           <img className="brand-logo" src="/logo-mark.png" alt="" />
@@ -134,6 +196,7 @@ export default function Layout() {
                 <NavIcon name="settings" />
                 Platform
               </NavLink>
+              <button className="btn ghost full-width" onClick={() => setImpersonationOpen(true)}>Impersonate user</button>
             </div>
           )}
         </nav>
@@ -143,7 +206,7 @@ export default function Layout() {
             <div className="user-block">
               <div className="user-name">
                 {user.fullName}
-                {role && <span className="rolebadge">{WORKSPACE_ROLE_LABELS[role]}</span>}
+                {roleName && <span className="rolebadge">{roleName}</span>}
               </div>
               <div className="user-email">{user.email}</div>
             </div>
@@ -171,6 +234,31 @@ export default function Layout() {
         <div className="modal-actions">
           <button className="btn ghost" onClick={() => setPendingPath(null)}>Stay on this page</button>
           <button className="btn danger" onClick={leaveWithoutSaving}>Discard and leave</button>
+        </div>
+      </Modal>
+
+      <Modal open={impersonationOpen} onClose={() => setImpersonationOpen(false)}
+        title="Impersonate a workspace user"
+        subtitle="You will act with this user's exact access for up to 15 minutes. Every action records both identities.">
+        <div className="field">
+          <label htmlFor="impersonation-target">User</label>
+          <select id="impersonation-target" value={impersonationTarget}
+            onChange={(event) => setImpersonationTarget(event.target.value)}>
+            <option value="">Select a user</option>
+            {(targets.data ?? []).map((target) => (
+              <option key={`${target.workspaceId}:${target.userId}`} value={`${target.workspaceId}:${target.userId}`}>
+                {target.workspaceName} · {target.fullName} · {target.roleName}
+              </option>
+            ))}
+          </select>
+        </div>
+        {startImpersonation.isError && <p className="field-error">{startImpersonation.error.message}</p>}
+        <div className="modal-actions">
+          <button className="btn ghost" onClick={() => setImpersonationOpen(false)}>Cancel</button>
+          <button className="btn" disabled={!impersonationTarget || startImpersonation.isPending}
+            onClick={() => startImpersonation.mutate()}>
+            {startImpersonation.isPending ? 'Starting…' : 'Start impersonation'}
+          </button>
         </div>
       </Modal>
     </div>

@@ -16,6 +16,7 @@ export interface CurrentSession {
   user: AuthUser | null;
   /** null when no workspace is resolved yet — grants nothing until it is. */
   role: WorkspaceRole | null;
+  roleName: string | null;
   activeWorkspaceId: string | null;
   activeWorkspace: AuthWorkspace | null;
   workspaces: AuthWorkspace[];
@@ -38,6 +39,7 @@ export function useCurrentSession(): CurrentSession {
     // No workspace means no role. Defaulting to a real role here would hand a
     // half-loaded or tampered session that role's whole sidebar.
     role: activeWorkspace?.role ?? null,
+    roleName: activeWorkspace?.roleName ?? null,
     activeWorkspaceId: activeWorkspace?.id ?? null,
     activeWorkspace,
     workspaces,

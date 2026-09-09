@@ -16,7 +16,7 @@ const {
 // ---------------------------------------------------------------------------
 const USER_STATUS = ['active', 'suspended', 'invited'];
 const WORKSPACE_STATUS = ['active', 'suspended', 'archived'];
-const WORKSPACE_ROLE = ['workspace_admin', 'analyst', 'agent', 'account_owner'];
+const WORKSPACE_ROLE = ['workspace_owner', 'workspace_admin', 'analyst', 'agent', 'account_owner'];
 const ACCESS_STATUS = ['active', 'suspended'];
 
 const ACCOUNT_STATUS = [ 'active', 'paused', 'archived'];
@@ -155,18 +155,42 @@ const PlatformFeeRate = entity('platform_fee_rates', {
 // about the business — an agent's rate lives on `agents`, an account's terms on
 // `accounts`. A platform admin holds a row in every workspace, so creating a
 // workspace must also create one for each platform admin.
+const WorkspaceRole = entity('workspace_roles', {
+  fields: {
+    workspaceId: uuid().references('workspaces').notNull(),
+    key:         text().notNull(),
+    name:        text().notNull(),
+    permissions: textArray().notNull().default("'{}'"),
+    isSystem:    bool().notNull().default('false'),
+  },
+  primaryKey: ['workspaceId', 'key'],
+  unique: [['workspaceId', 'name']],
+  checks: [
+    "key ~ '^[a-z][a-z0-9_]{2,63}$'",
+    'length(trim(name)) BETWEEN 1 AND 80',
+  ],
+  timestamps: 'both',
+});
+
 const WorkspaceUser = entity('workspace_users', {
   fields: {
     workspaceId: uuid().references('workspaces').notNull(),
     userId:      uuid().references('users').notNull(),
-    role:        enumOf(WORKSPACE_ROLE).notNull(),
+    role:        text().notNull(),
     status:      enumOf(ACCESS_STATUS).notNull().default("'active'"),
   },
   primaryKey: ['workspaceId', 'userId'],
+  foreignKeys: [
+    { columns: ['workspaceId', 'role'], table: 'workspace_roles',
+      references: ['workspaceId', 'key'], onDelete: 'RESTRICT' },
+  ],
   // Redundant on its own — accounts and agents point at it to prove the user
   // holds the matching role in that workspace.
   unique: [['workspaceId', 'userId', 'role']],
-  indexes: ['userId'],
+  indexes: [
+    'userId',
+    { columns: ['workspaceId'], unique: true, where: "role = 'workspace_owner'" },
+  ],
   timestamps: 'both',
 });
 
@@ -176,12 +200,16 @@ const Invite = entity('invites', {
     id:              uuid().primaryKey(),
     workspaceId:     uuid().references('workspaces').notNull(),
     email:           citext().notNull(),
-    role:            enumOf(WORKSPACE_ROLE).notNull(),
+    role:            text().notNull(),
     tokenHash:       text().unique().notNull(),
     invitedByUserId: uuid().references('users', 'SET NULL'),
     expiresAt:       timestamp().notNull(),
     acceptedAt:      timestamp(),
   },
+  foreignKeys: [
+    { columns: ['workspaceId', 'role'], table: 'workspace_roles',
+      references: ['workspaceId', 'key'], onDelete: 'RESTRICT' },
+  ],
   indexes: ['workspaceId'],
   timestamps: 'created',
 });
@@ -615,6 +643,7 @@ const AuditLog = entity('audit_log', {
     id:          bigIdentity(),
     workspaceId: uuid().references('workspaces', 'SET NULL'),
     actorUserId: uuid().references('users', 'SET NULL'),
+    effectiveUserId: uuid().references('users', 'SET NULL'),
     action:      text().notNull(),              // e.g. 'customer.export', 'link.create'
     entityType:  text(),
     entityId:    uuid(),
@@ -624,6 +653,7 @@ const AuditLog = entity('audit_log', {
   indexes: [
     { columns: ['workspaceId', 'createdAt'] },
     { columns: ['actorUserId', 'createdAt'] },
+    { columns: ['effectiveUserId', 'createdAt'] },
   ],
   timestamps: 'created',
 });
@@ -632,7 +662,7 @@ module.exports = {
   // global
   User, RefreshToken, Workspace, PlatformFeeRate,
   // access
-  WorkspaceUser, Invite,
+  WorkspaceRole, WorkspaceUser, Invite,
   // commercial
   Account, Agent, AccountAgent, Category, Customer,
   // payment flow

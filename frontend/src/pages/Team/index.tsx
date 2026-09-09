@@ -8,8 +8,11 @@ import { toast } from '../../lib/toast';
 import { PageHeader, DateCell, DataTable, FilterBar, Pill, Select, ViewPicker, type Column, type SortState } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import { sortRows, type SortValues } from '../../lib/sortRows';
-import { WORKSPACE_ROLES, WORKSPACE_ROLE_LABELS, type WorkspaceRole } from '../../api/types';
-import { INVITABLE_ROLES, type Member, type Invite, type InvitableRole } from '../../api/endpoints';
+import {
+  ROLE_PERMISSION_GROUPS, toggleRolePermission,
+  type Member, type Invite, type InvitableRole, type RoleDefinition,
+} from '../../api/endpoints';
+import type { Permission } from '../../rbac/permissions';
 import { useTeamData } from './useTeamData';
 
 const SORT_VALUES: SortValues<Member> = {
@@ -27,9 +30,14 @@ function isExpired(i: Invite): boolean {
 
 export default function TeamPage() {
   const can = useCan();
-  const { labels } = useCurrentSession();
-  const { members, pendingInvites, isLoading, isError, setStatus, removeMember, invite, cancelInvite } = useTeamData();
+  const { labels, role: currentRole } = useCurrentSession();
+  const {
+    members, roles, pendingInvites, isLoading, isError,
+    setStatus, setRole: assignRole, transferOwner, removeMember,
+    createRole, updateRole, removeRole, invite, cancelInvite,
+  } = useTeamData();
   const canManage = can('team.manage');
+  const canManageRoles = can('roles.manage');
 
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -40,15 +48,47 @@ export default function TeamPage() {
   const [isBusy, setIsBusy] = useState(false);
   const [search, setSearch] = useState('');
   const [cancelling, setCancelling] = useState<Invite | null>(null);
-  const [role, setRole] = useState<'' | WorkspaceRole>('');
+  const [role, setRole] = useState('');
+  const [editingRole, setEditingRole] = useState<RoleDefinition | 'new' | null>(null);
+  const [roleName, setRoleName] = useState('');
+  const [rolePermissions, setRolePermissions] = useState<Permission[]>([]);
+  const [deletingRole, setDeletingRole] = useState<RoleDefinition | null>(null);
   const [access, setAccess] = useState<'' | 'active' | 'suspended'>('');
   const [sort, setSort] = useState<SortState>({ key: 'name', dir: 'asc' });
   const toggleSort = (key: string) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
 
   // The role names an agency uses for its own people.
-  const roleLabel = (role: WorkspaceRole) =>
-    role === 'agent' ? labels.agent : role === 'account_owner' ? `${labels.account} owner` : WORKSPACE_ROLE_LABELS[role];
+  const roleLabel = (key: string) => {
+    if (key === 'agent') return labels.agent;
+    if (key === 'account_owner') return `${labels.account} owner`;
+    return roles.find((item) => item.key === key)?.name ?? key;
+  };
+
+  const openRoleEditor = (target: RoleDefinition | 'new') => {
+    setEditingRole(target);
+    setRoleName(target === 'new' ? '' : target.name);
+    setRolePermissions(target === 'new' ? ['data.view_all'] : target.permissions);
+  };
+
+  const togglePermission = (permission: Permission) => {
+    if (permission === 'data.view_all') return;
+    setRolePermissions((current) => toggleRolePermission(current, permission));
+  };
+
+  const saveRole = async () => {
+    setIsBusy(true);
+    try {
+      if (editingRole === 'new') await createRole(roleName.trim(), rolePermissions);
+      else if (editingRole) await updateRole(editingRole.key, { name: roleName.trim(), permissions: rolePermissions });
+      setEditingRole(null);
+      toast('Role saved.');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not save the role.');
+    } finally {
+      setIsBusy(false);
+    }
+  };
 
   const changeStatus = async (m: Member, status: 'active' | 'suspended') => {
     setIsBusy(true);
@@ -127,15 +167,15 @@ export default function TeamPage() {
       key: 'role', header: 'Role', sortKey: 'role',
       render: (m) => (
         <>
-          <span className="rolebadge">{roleLabel(m.role)}</span>
+          <span className="rolebadge">{['agent', 'account_owner'].includes(m.role) ? roleLabel(m.role) : m.roleName}</span>
           {m.accountName ? <span className="sub inline"> · {m.accountName}</span> : null}
         </>
       ),
       isFiltered: role !== '',
       filter: (
-        <Select label="Role" hideLabel value={role} onChange={(v) => setRole(v as '' | WorkspaceRole)}>
+        <Select label="Role" hideLabel value={role} onChange={setRole}>
           <option value="">All roles</option>
-          {WORKSPACE_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
+          {roles.map((item) => <option key={item.key} value={item.key}>{roleLabel(item.key)}</option>)}
         </Select>
       ),
     },
@@ -162,6 +202,35 @@ export default function TeamPage() {
       key: 'actions', header: 'Actions', hideHeader: true, align: 'right' as const,
       render: (m: Member) => m.isSelf ? null : (
         <div className="cell-actions">
+          {canManageRoles && m.role !== 'workspace_owner' && (
+            <select
+              aria-label={`Role for ${m.name}`}
+              value={m.role}
+              onChange={async (event) => {
+                try {
+                  await assignRole(m.userId, event.target.value);
+                  toast(`${m.name}'s role changed.`);
+                } catch (err) {
+                  toast(err instanceof Error ? err.message : 'Could not change role.');
+                }
+              }}
+            >
+              {roles
+                .filter((item) => item.key !== 'workspace_owner')
+                .filter((item) => m.agentId ? item.key === 'agent' : m.accountId ? item.key === 'account_owner' : !['agent', 'account_owner'].includes(item.key))
+                .map((item) => <option key={item.key} value={item.key}>{roleLabel(item.key)}</option>)}
+            </select>
+          )}
+          {canManageRoles && currentRole === 'workspace_owner' && m.status === 'active' && !m.agentId && !m.accountId && !m.isSelf && (
+            <button className="btn ghost small" onClick={async () => {
+              try {
+                await transferOwner(m.userId);
+                toast(`Ownership transferred to ${m.name}.`);
+              } catch (err) {
+                toast(err instanceof Error ? err.message : 'Could not transfer ownership.');
+              }
+            }}>Make owner</button>
+          )}
           {m.status === 'active'
             ? <button className="btn ghost small" onClick={() => setSuspending(m)}>Suspend</button>
             : <button className="btn ghost small" disabled={isBusy} onClick={() => changeStatus(m, 'active')}>Reactivate</button>}
@@ -182,7 +251,7 @@ export default function TeamPage() {
 
   const inviteColumns: Column<Invite>[] = [
     { key: 'email', header: 'Email', render: (i) => <span className="cemail">{i.email}</span> },
-    { key: 'role', header: 'Role', render: (i) => <span className="rolebadge">{WORKSPACE_ROLE_LABELS[i.role]}</span> },
+    { key: 'role', header: 'Role', render: (i) => <span className="rolebadge">{roleLabel(i.role)}</span> },
     { key: 'expires', header: 'Expires', render: (i) => isExpired(i) ? <Pill tone="muted">Expired</Pill> : <DateCell ts={i.expiresAt} /> },
     ...(canManage ? [{
       key: 'cancel', header: 'Cancel invite', hideHeader: true, align: 'right' as const,
@@ -194,8 +263,31 @@ export default function TeamPage() {
     <div>
       <PageHeader
         title="Team"
-        actions={canManage ? <button className="btn" onClick={() => setInviteOpen(true)}>Invite admin or analyst</button> : null}
+        actions={canManage ? <button className="btn" onClick={() => setInviteOpen(true)}>Invite team member</button> : null}
       />
+
+      {canManageRoles && (
+        <div className="section">
+          <div className="sechead">
+            Roles
+            <button className="btn small" onClick={() => openRoleEditor('new')}>Create role</button>
+          </div>
+          <div className="card">
+            {roles.map((item) => (
+              <div className="settings-row" key={item.key}>
+                <div>
+                  <div className="cname">{roleLabel(item.key)}</div>
+                  <div className="sub">{item.memberCount} members · {item.permissions.length} permissions</div>
+                </div>
+                <div className="cell-actions">
+                  {!item.permissionsFixed && <button className="btn ghost small" onClick={() => openRoleEditor(item)}>Edit</button>}
+                  {!item.isSystem && <button className="btn ghost small" onClick={() => setDeletingRole(item)}>Delete</button>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {members.length > 0 && (
         <FilterBar>
@@ -233,12 +325,61 @@ export default function TeamPage() {
         <div className="field">
           <label htmlFor="invite-role">Role</label>
           <select id="invite-role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as InvitableRole)}>
-            {INVITABLE_ROLES.map((r) => <option key={r} value={r}>{WORKSPACE_ROLE_LABELS[r]}</option>)}
+            {roles.filter((item) => !['workspace_owner', 'agent', 'account_owner'].includes(item.key))
+              .map((item) => <option key={item.key} value={item.key}>{roleLabel(item.key)}</option>)}
           </select>
         </div>
         <div className="modal-actions">
           <button className="btn ghost" onClick={closeInvite}>Cancel</button>
           <button className="btn" onClick={submitInvite} disabled={isInviting}>{isInviting ? 'Sending…' : 'Send invite'}</button>
+        </div>
+      </Modal>
+
+      <Modal open={editingRole !== null} onClose={() => setEditingRole(null)}
+        title={editingRole === 'new' ? 'Create role' : `Edit ${roleName}`}>
+        <div className="field">
+          <label htmlFor="role-name">Name</label>
+          <input id="role-name" value={roleName} disabled={editingRole !== 'new' && editingRole?.isSystem}
+            onChange={(event) => setRoleName(event.target.value)} />
+        </div>
+        <div className="permission-matrix">
+          {ROLE_PERMISSION_GROUPS.map((group) => (
+            <fieldset key={group.label}>
+              <legend>{group.label}</legend>
+              {group.permissions.map((permission) => (
+                <label key={permission.key}>
+                  <input type="checkbox" checked={rolePermissions.includes(permission.key)}
+                    disabled={permission.key === 'data.view_all'}
+                    onChange={() => togglePermission(permission.key)} />
+                  {permission.label}
+                </label>
+              ))}
+            </fieldset>
+          ))}
+        </div>
+        <div className="modal-actions">
+          <button className="btn ghost" onClick={() => setEditingRole(null)}>Cancel</button>
+          <button className="btn" disabled={isBusy || !roleName.trim()} onClick={saveRole}>Save role</button>
+        </div>
+      </Modal>
+
+      <Modal open={deletingRole !== null} onClose={() => setDeletingRole(null)}
+        title={deletingRole ? `Delete ${deletingRole.name}?` : ''} subtitle="A role with members or pending invites cannot be deleted.">
+        <div className="modal-actions">
+          <button className="btn ghost" onClick={() => setDeletingRole(null)}>Cancel</button>
+          <button className="btn danger" disabled={isBusy} onClick={async () => {
+            if (!deletingRole) return;
+            setIsBusy(true);
+            try {
+              await removeRole(deletingRole.key);
+              setDeletingRole(null);
+              toast('Role deleted.');
+            } catch (err) {
+              toast(err instanceof Error ? err.message : 'Could not delete the role.');
+            } finally {
+              setIsBusy(false);
+            }
+          }}>Delete role</button>
         </div>
       </Modal>
 

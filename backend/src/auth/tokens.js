@@ -23,6 +23,23 @@ function verifyAccessToken(token) {
   return jwt.verify(token, config.jwtSecret); // throws if invalid/expired
 }
 
+function signImpersonationToken({ actor, subject, workspaceId, role }) {
+  return jwt.sign(
+    {
+      sub: subject.id,
+      email: subject.email,
+      name: subject.full_name,
+      actor: actor.id,
+      workspace: workspaceId,
+      role,
+      impersonation: true,
+      mfa: true,
+    },
+    config.jwtSecret,
+    { expiresIn: '15m' }
+  );
+}
+
 // Refresh token: an opaque random string given to the client; only its SHA-256
 // hash is stored in the DB, so a DB leak can't be used to mint sessions.
 function generateRefreshToken() {
@@ -34,6 +51,7 @@ function hashRefreshToken(token) {
 
 module.exports = {
   signAccessToken,
+  signImpersonationToken,
   verifyAccessToken,
   generateRefreshToken,
   hashRefreshToken,

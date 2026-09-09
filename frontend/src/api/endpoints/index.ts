@@ -4,6 +4,7 @@ export {
   platformApi,
   type PlatformWorkspace, type PlatformOverview, type OnboardAgencyInput,
   type PlatformFeeRate, type SettlementFee, type PlatformWorkspaceDetail,
+  type ImpersonationTarget, type ImpersonationSession,
 } from './platform';
 export { revenueApi, type RevenueRule } from './revenue';
 export {
@@ -12,6 +13,10 @@ export {
 } from './accounts';
 export { agentsApi, type Agent, type CreateAgentInput, type UpdateAgentInput } from './agents';
 export { teamApi, type Member, type MemberStatus } from './team';
+export {
+  rolesApi, ROLE_PERMISSION_GROUPS, PERMISSION_DEPENDENCIES, toggleRolePermission,
+  type RoleDefinition,
+} from './roles';
 export { categoriesApi, type Category } from './categories';
 export {
   customersApi, CUSTOMER_SEGMENTS, CUSTOMER_SEGMENT_LABELS,

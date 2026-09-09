@@ -22,7 +22,9 @@ export function useCan(): (perm: Permission) => boolean {
 
   let perms: readonly string[] = [];
   if (query.isSuccess) perms = query.data.permissions;
-  else if (query.isPending && role) perms = ROLE_PERMISSIONS[role] ?? [];
+  else if (query.isPending && role && role in ROLE_PERMISSIONS) {
+    perms = ROLE_PERMISSIONS[role as keyof typeof ROLE_PERMISSIONS];
+  }
 
   return (perm) => perms.includes(perm);
 }

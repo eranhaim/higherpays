@@ -54,6 +54,7 @@ export interface LinkLimits {
 export interface WorkspacePermissions {
   workspaceId: string;
   role: WorkspaceRole;
+  roleName: string;
   permissions: string[];
 }
 
@@ -67,6 +68,7 @@ export interface AuditEntry {
   ip: string | null;
   createdAt: string;
   actor: { name: string; email: string } | null;
+  effectiveUser: { name: string; email: string } | null;
 }
 
 export const workspacesApi = {

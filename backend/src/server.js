@@ -17,6 +17,7 @@ const payoutsRoutes = require('./routes/payouts.routes');
 const workspaceRoutes = require('./routes/workspace.routes');
 const analyticsRoutes = require('./routes/analytics.routes');
 const teamRoutes = require('./routes/team.routes');
+const rolesRoutes = require('./routes/roles.routes');
 const notificationsRoutes = require('./routes/notifications.routes');
 const settlementsRoutes = require('./routes/settlements.routes');
 const feesRoutes = require('./routes/fees.routes');
@@ -25,7 +26,8 @@ const webhooksRoutes = require('./routes/webhooks.routes');
 const publicPaymentRoutes = require('./routes/public-payment.routes');
 const { wsRouter: invitesWsRoutes, publicRouter: invitesPublicRoutes } = require('./routes/invites.routes');
 const { startReconcileLoop } = require('./services/links.service');
-const { requireAuth, requireWorkspace, requirePlatformAdmin, errorHandler } = require('./middleware');
+const { requireAuth, requireWorkspace, errorHandler } = require('./middleware');
+const { auditRequestContext } = require('./util/audit');
 const { asyncHandler } = require('./lib/http');
 
 const app = express();
@@ -36,6 +38,7 @@ app.set('trust proxy', 1);
 app.disable('x-powered-by');
 
 app.use(requestLogger);
+app.use(auditRequestContext);
 
 // The API only ever returns JSON; these headers stop a browser treating a
 // response as anything else, or framing it.
@@ -91,7 +94,7 @@ app.get('/health', asyncHandler(async (req, res) => {
 app.use('/auth', authRoutes);
 
 // The operator console, above any single workspace.
-app.use('/platform', requireAuth, requirePlatformAdmin, platformRoutes);
+app.use('/platform', requireAuth, platformRoutes);
 
 // Every workspace router runs behind auth + access resolution. Routes inside
 // then gate on specific permissions.
@@ -106,6 +109,7 @@ app.use('/workspaces/:workspaceId/revenue', ws, revenueRoutes);
 app.use('/workspaces/:workspaceId/payouts', ws, payoutsRoutes);
 app.use('/workspaces/:workspaceId/analytics', ws, analyticsRoutes);
 app.use('/workspaces/:workspaceId/team', ws, teamRoutes);
+app.use('/workspaces/:workspaceId/roles', ws, rolesRoutes);
 app.use('/workspaces/:workspaceId/notifications', ws, notificationsRoutes);
 app.use('/workspaces/:workspaceId/settlements', ws, settlementsRoutes);
 app.use('/workspaces/:workspaceId/fees', ws, feesRoutes);
@@ -115,7 +119,12 @@ app.use('/invites', invitesPublicRoutes);
 
 // Effective permissions for the current user in a workspace (used by the UI).
 app.get('/workspaces/:workspaceId/permissions', ws, (req, res) => {
-  res.json({ workspaceId: req.access.workspaceId, role: req.access.role, permissions: [...req.access.permissions] });
+  res.json({
+    workspaceId: req.access.workspaceId,
+    role: req.access.role,
+    roleName: req.access.roleName,
+    permissions: [...req.access.permissions],
+  });
 });
 
 app.use('/workspaces/:workspaceId', ws, workspaceRoutes);

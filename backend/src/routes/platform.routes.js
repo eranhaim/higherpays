@@ -7,6 +7,9 @@ const crypto = require('crypto');
 const { query, withTransaction } = require('../db');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
+const { requirePlatformAdmin } = require('../middleware');
+const { signImpersonationToken } = require('../auth/tokens');
+const { ensureWorkspaceRoles } = require('../services/workspaceRoles');
 const { isStr, badRequest } = require('../util/validate');
 const { sendEmail } = require('../util/email');
 const { status: vocab } = require('../schema/entities');
@@ -17,6 +20,101 @@ const { uid } = require('../lib/scope');
 const pct = (v) => typeof v === 'number' && v >= 0 && v <= 100;
 const n = (v) => Number(v || 0);
 const r2 = (v) => Math.round(v * 100) / 100;
+
+router.post('/impersonation/stop', asyncHandler(async (req, res) => {
+  if (!req.user.actorId) return res.status(400).json({ error: 'not_impersonating' });
+  await audit({
+    workspaceId: req.user.impersonationWorkspaceId,
+    actorUserId: req.user.id,
+    action: 'platform.impersonation.stop',
+    entityType: 'user',
+    entityId: req.user.id,
+  });
+  res.status(204).end();
+}));
+
+router.use(requirePlatformAdmin);
+
+router.get('/impersonation/targets', asyncHandler(async (req, res) => {
+  const params = [uid(req)];
+  const workspaceFilter = req.query.workspaceId ? 'AND wu.workspace_id=$2' : '';
+  if (req.query.workspaceId) params.push(req.query.workspaceId);
+  const rows = (await query(
+    `SELECT wu.workspace_id, w.name AS workspace_name, wu.user_id,
+            u.full_name, u.email, wu.role, wr.name AS role_name
+       FROM workspace_users wu
+       JOIN users u ON u.id=wu.user_id
+       JOIN workspaces w ON w.id=wu.workspace_id
+       JOIN workspace_roles wr ON wr.workspace_id=wu.workspace_id AND wr.key=wu.role
+      WHERE wu.status='active' AND w.status='active'
+        AND u.is_platform_admin=false AND wu.user_id<>$1
+        ${workspaceFilter}
+      ORDER BY w.name, u.full_name`,
+    params)).rows;
+  res.json({
+    targets: rows.map((row) => ({
+      workspaceId: row.workspace_id,
+      workspaceName: row.workspace_name,
+      userId: row.user_id,
+      fullName: row.full_name,
+      email: row.email,
+      role: row.role,
+      roleName: row.role_name,
+    })),
+  });
+}));
+
+router.post('/impersonation/start', asyncHandler(async (req, res) => {
+  const workspaceId = String(req.body?.workspaceId || '');
+  const userId = String(req.body?.userId || '');
+  if (!workspaceId || !userId) return res.status(400).json({ error: 'target_required' });
+  const target = (await query(
+    `SELECT u.id, u.email, u.full_name, u.is_platform_admin, u.two_factor_enabled,
+            wu.role, wr.name AS role_name, w.name AS workspace_name, w.currency,
+            w.account_label, w.account_label_plural, w.agent_label, w.agent_label_plural
+       FROM workspace_users wu
+       JOIN users u ON u.id=wu.user_id
+       JOIN workspaces w ON w.id=wu.workspace_id
+       JOIN workspace_roles wr ON wr.workspace_id=wu.workspace_id AND wr.key=wu.role
+      WHERE wu.workspace_id=$1 AND wu.user_id=$2
+        AND wu.status='active' AND u.status='active' AND w.status='active'`,
+    [workspaceId, userId])).rows[0];
+  if (!target) return res.status(404).json({ error: 'target_not_found' });
+  if (target.is_platform_admin || target.id === uid(req)) {
+    return res.status(403).json({ error: 'impersonation_target_forbidden' });
+  }
+  const actor = (await query('SELECT id FROM users WHERE id=$1', [uid(req)])).rows[0];
+  const token = signImpersonationToken({ actor, subject: target, workspaceId, role: target.role });
+  await audit({
+    workspaceId, actorUserId: uid(req), action: 'platform.impersonation.start',
+    entityType: 'user', entityId: target.id, metadata: { role: target.role },
+  });
+  res.json({
+    accessToken: token,
+    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    user: {
+      id: target.id,
+      email: target.email,
+      fullName: target.full_name,
+      isPlatformAdmin: !!target.is_platform_admin,
+      twoFactorEnabled: !!target.two_factor_enabled,
+    },
+    workspace: {
+      id: workspaceId,
+      name: target.workspace_name,
+      currency: target.currency,
+      role: target.role,
+      roleName: target.role_name,
+      status: 'active',
+      labels: {
+        account: target.account_label,
+        accounts: target.account_label_plural,
+        agent: target.agent_label,
+        agents: target.agent_label_plural,
+      },
+    },
+  });
+}));
 
 const publicFee = (f) => ({
   feeModel: f.fee_model, pspRatePct: n(f.psp_rate_pct), mdrPct: f.mdr_pct == null ? null : n(f.mdr_pct),
@@ -37,7 +135,8 @@ async function grantPlatformAdminsAccess(c, workspaceId) {
   await c.query(
     `INSERT INTO workspace_users (workspace_id, user_id, role)
      SELECT $1, id, 'workspace_admin' FROM users WHERE is_platform_admin
-     ON CONFLICT (workspace_id, user_id) DO NOTHING`, [workspaceId]);
+     ON CONFLICT (workspace_id, user_id)
+     DO UPDATE SET role='workspace_admin', status='active'`, [workspaceId]);
 }
 
 router.get('/me', (req, res) => res.json({ isPlatformAdmin: true }));
@@ -177,6 +276,7 @@ router.post('/agencies', asyncHandler(async (req, res) => {
     const ws = (await c.query(
       'INSERT INTO workspaces (name, currency, merchant_id) VALUES ($1,$2,$3) RETURNING id, webhook_endpoint_id',
       [b.name.trim(), currency, b.merchantId || null])).rows[0];
+    await ensureWorkspaceRoles(c, ws.id);
     // Effective from the beginning of time so any backfilled history is priced.
     await c.query(
       `INSERT INTO platform_fee_rates (workspace_id, fee_model, psp_rate_pct, mdr_pct, settlement_pct, psp_fixed_fee, margin_rate_pct, checkout_fee, effective_from, created_by_user_id)
@@ -194,7 +294,7 @@ router.post('/agencies', asyncHandler(async (req, res) => {
     await grantPlatformAdminsAccess(c, ws.id);
     await c.query(
       'INSERT INTO invites (workspace_id, email, role, token_hash, invited_by_user_id, expires_at) VALUES ($1,$2,$3,$4,$5,$6)',
-      [ws.id, b.adminEmail, 'workspace_admin', hashToken(token), uid(req), new Date(Date.now() + 7 * 86400 * 1000)]);
+      [ws.id, b.adminEmail, 'workspace_owner', hashToken(token), uid(req), new Date(Date.now() + 7 * 86400 * 1000)]);
     return ws;
   });
 
@@ -214,15 +314,24 @@ router.patch('/users/:id/platform-admin', asyncHandler(async (req, res) => {
   const on = !!(req.body || {}).isPlatformAdmin;
   if (req.params.id === uid(req) && !on) return res.status(403).json({ error: 'cannot_demote_self' });
   const user = await withTransaction(async (c) => {
+    if (on) {
+      const profile = (await c.query(
+        `SELECT 1 FROM agents WHERE user_id=$1
+         UNION ALL SELECT 1 FROM accounts WHERE user_id=$1 LIMIT 1`,
+        [req.params.id])).rows[0];
+      if (profile) return { error: 'profile_user_cannot_be_platform_admin' };
+    }
     const u = (await c.query('UPDATE users SET is_platform_admin=$2 WHERE id=$1 RETURNING id, email, is_platform_admin', [req.params.id, on])).rows[0];
     if (!u) return null;
     if (on) {
       await c.query(
         `INSERT INTO workspace_users (workspace_id, user_id, role) SELECT id, $1, 'workspace_admin' FROM workspaces
-         ON CONFLICT (workspace_id, user_id) DO NOTHING`, [u.id]);
+         ON CONFLICT (workspace_id, user_id)
+         DO UPDATE SET role='workspace_admin', status='active'`, [u.id]);
     }
     return u;
   });
+  if (user?.error) return res.status(409).json({ error: user.error });
   if (!user) return res.status(404).json({ error: 'not_found' });
   await audit({ actorUserId: uid(req), action: 'platform.admin.grant', entityType: 'user', entityId: user.id, metadata: { isPlatformAdmin: on } });
   res.json({ id: user.id, email: user.email, isPlatformAdmin: user.is_platform_admin });
@@ -231,8 +340,13 @@ router.patch('/users/:id/platform-admin', asyncHandler(async (req, res) => {
 // GET /platform/activity — recent actions across all agencies
 router.get('/activity', asyncHandler(async (req, res) => {
   const rows = (await query(
-    `SELECT a.action, a.entity_type, a.created_at, w.name AS workspace, u.email AS actor, u.full_name AS actor_name
-       FROM audit_log a LEFT JOIN workspaces w ON w.id = a.workspace_id LEFT JOIN users u ON u.id = a.actor_user_id
+    `SELECT a.action, a.entity_type, a.created_at, w.name AS workspace,
+            actor.email AS actor, actor.full_name AS actor_name,
+            effective.email AS effective_user, effective.full_name AS effective_user_name
+       FROM audit_log a
+       LEFT JOIN workspaces w ON w.id = a.workspace_id
+       LEFT JOIN users actor ON actor.id = a.actor_user_id
+       LEFT JOIN users effective ON effective.id = a.effective_user_id
       ORDER BY a.created_at DESC LIMIT 100`)).rows;
   res.json({ activity: rows });
 }));

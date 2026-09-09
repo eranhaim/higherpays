@@ -2,7 +2,7 @@ import { api } from '../http';
 import { workspacePath } from '../workspacePath';
 
 /** Agents and account owners are created directly, login included. */
-export type InvitableRole = 'workspace_admin' | 'analyst';
+export type InvitableRole = string;
 export const INVITABLE_ROLES: InvitableRole[] = ['workspace_admin', 'analyst'];
 
 export interface Invite {

@@ -10,6 +10,7 @@ export interface Member {
   name: string;
   email: string;
   role: WorkspaceRole;
+  roleName: string;
   status: MemberStatus;
   agentId: string | null;
   accountId: string | null;
@@ -27,6 +28,12 @@ export const teamApi = {
   /** Suspending ends the sign-in but keeps the agent or account record. */
   setStatus: (userId: string, status: MemberStatus) =>
     api.patch<{ userId: string; status: MemberStatus }>(workspacePath(`/team/${userId}/status`), { status }),
+
+  setRole: (userId: string, role: string) =>
+    api.patch<{ userId: string; role: string }>(workspacePath(`/team/${userId}/role`), { role }),
+
+  transferOwner: (userId: string) =>
+    api.post<{ ownerUserId: string }>(workspacePath('/team/owner-transfer'), { userId }),
 
   /** Removes access entirely. Refused while an agent or account record exists. */
   remove: (userId: string) => api.del<void>(workspacePath(`/team/${userId}`)),

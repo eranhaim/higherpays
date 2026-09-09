@@ -55,6 +55,12 @@ async function send(path: string, opts: HttpOptions): Promise<Response> {
     signal: opts.signal,
     credentials: 'include',
   });
+  if (res.status === 401 && useAuthStore.getState().originalSession) {
+    const originalWorkspaceId = useAuthStore.getState().originalWorkspaceId;
+    useAuthStore.getState().endImpersonation();
+    if (originalWorkspaceId) useSessionStore.getState().setActiveWorkspaceId(originalWorkspaceId);
+    return res;
+  }
   if (res.status === 401 && !opts.skipRefresh && useAuthStore.getState().refreshToken) {
     const refreshed = await tryRefresh();
     if (refreshed) return send(path, { ...opts, skipRefresh: true });

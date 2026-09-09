@@ -14,14 +14,30 @@ const PERMISSIONS = [
   'revenue.view', 'revenue.manage',
   'fees.view',
   'team.view', 'team.manage',
+  'roles.manage',
   'settings.view', 'settings.edit',
   'data.view_all',
 ];
+
+const PERMISSION_DEPENDENCIES = {
+  'payments.complete': ['payments.view'],
+  'payments.export': ['payments.view'],
+  'links.create': ['links.view'],
+  'accounts.manage': ['accounts.view'],
+  'agents.manage': ['agents.view'],
+  'customers.manage': ['customers.view'],
+  'customers.export': ['customers.view'],
+  'revenue.manage': ['revenue.view'],
+  'team.manage': ['team.view'],
+  'roles.manage': ['team.view', 'team.manage'],
+  'settings.edit': ['settings.view'],
+};
 
 // `data.view_all` is the scope marker: a role that holds it sees the whole
 // workspace. Without it a caller is narrowed to their own rows — an agent to
 // the accounts they work, an account owner to their own account.
 const ROLE_PERMISSIONS = {
+  workspace_owner: new Set(PERMISSIONS),
   workspace_admin: new Set(PERMISSIONS),
 
   analyst: new Set([
@@ -65,4 +81,23 @@ function hasPermission(access, permission) {
   return access.permissions.has(permission);
 }
 
-module.exports = { PERMISSIONS, ROLE_PERMISSIONS, WORKSPACE_ROLE: status.WORKSPACE_ROLE, can, hasPermission };
+function validatePermissions(permissions, allowedPermissions = PERMISSIONS) {
+  if (!Array.isArray(permissions) || new Set(permissions).size !== permissions.length) {
+    return 'permissions_invalid';
+  }
+  const allowed = new Set(allowedPermissions);
+  for (const permission of permissions) {
+    if (!PERMISSIONS.includes(permission)) return 'permission_unknown';
+    if (!allowed.has(permission)) return 'permission_not_grantable';
+    const dependencies = PERMISSION_DEPENDENCIES[permission] || [];
+    if (dependencies.some((dependency) => !permissions.includes(dependency))) {
+      return 'permission_dependency_missing';
+    }
+  }
+  return null;
+}
+
+module.exports = {
+  PERMISSIONS, PERMISSION_DEPENDENCIES, ROLE_PERMISSIONS,
+  WORKSPACE_ROLE: status.WORKSPACE_ROLE, can, hasPermission, validatePermissions,
+};

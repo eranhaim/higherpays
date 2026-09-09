@@ -63,7 +63,7 @@ export default function AcceptInvitePage() {
     body = (
       <>
         <h2>Join {invite.workspace}</h2>
-        <p className="sub">You were invited as <strong>{WORKSPACE_ROLE_LABELS[invite.role]}</strong>, signing in as {invite.email}.</p>
+        <p className="sub">You were invited as <strong>{WORKSPACE_ROLE_LABELS[invite.role as keyof typeof WORKSPACE_ROLE_LABELS] ?? invite.role}</strong>, signing in as {invite.email}.</p>
         <form onSubmit={submit} noValidate>
           <div className="field">
             <label htmlFor="invite-name">Your name</label>

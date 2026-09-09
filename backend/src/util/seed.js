@@ -14,6 +14,7 @@
 const { Pool } = require('pg');
 const config = require('../config');
 const { hashPassword } = require('../auth/passwords');
+const { ensureWorkspaceRoles } = require('../services/workspaceRoles');
 
 const PASSWORD = process.env.SEED_PASSWORD || 'higherpays123';
 const PLATFORM_ADMIN_EMAIL = process.env.SEED_PLATFORM_ADMIN || 'platform@higherpays.test';
@@ -174,6 +175,7 @@ async function seedOnce(c, table, columns, values, workspaceId) {
 
 async function seedAgency(c, agency, passwordHash, platformAdminId) {
   const workspace = await upsertWorkspace(c, agency);
+  await ensureWorkspaceRoles(c, workspace.id);
   const logins = [];
 
   const person = async (key, fullName, role, status = 'active') => {
@@ -187,7 +189,7 @@ async function seedAgency(c, agency, passwordHash, platformAdminId) {
   // A platform admin needs access in every workspace to see anything in it.
   await upsertAccess(c, workspace.id, platformAdminId, 'workspace_admin');
 
-  const adminId = await person('admin', `${agency.name} Admin`, 'workspace_admin');
+  const adminId = await person('admin', `${agency.name} Admin`, 'workspace_owner');
   await person('analyst', `${agency.name} Analyst`, 'analyst');
 
   const accountIds = {};

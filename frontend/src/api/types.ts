@@ -5,12 +5,14 @@
  * actually sends, as opposed to UI-facing shapes derived in hooks.
  */
 
-/** Mirrors WORKSPACE_ROLE in backend/src/schema/entities.js. */
-export type WorkspaceRole = 'workspace_admin' | 'analyst' | 'agent' | 'account_owner';
+/** System roles have stable keys; custom role keys are workspace data. */
+export type SystemWorkspaceRole = 'workspace_owner' | 'workspace_admin' | 'analyst' | 'agent' | 'account_owner';
+export type WorkspaceRole = SystemWorkspaceRole | (string & {});
 
-export const WORKSPACE_ROLES: WorkspaceRole[] = ['workspace_admin', 'analyst', 'agent', 'account_owner'];
+export const WORKSPACE_ROLES: SystemWorkspaceRole[] = ['workspace_owner', 'workspace_admin', 'analyst', 'agent', 'account_owner'];
 
-export const WORKSPACE_ROLE_LABELS: Record<WorkspaceRole, string> = {
+export const WORKSPACE_ROLE_LABELS: Record<SystemWorkspaceRole, string> = {
+  workspace_owner: 'Owner',
   workspace_admin: 'Admin',
   analyst: 'Analyst',
   agent: 'Agent',
@@ -37,6 +39,7 @@ export interface AuthWorkspace {
   id: string;
   name: string;
   role: WorkspaceRole;
+  roleName: string;
   status: string;
   currency: string;
   labels: WorkspaceLabels;

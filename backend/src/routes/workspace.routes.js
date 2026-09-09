@@ -134,8 +134,11 @@ router.get('/audit', requirePermission('settings.view'), asyncHandler(async (req
   const cursor = decodeCursor(req.query.cursor);
   const rows = (await query(
     `SELECT a.id, a.action, a.entity_type, a.entity_id, a.metadata, a.ip, a.created_at,
-            u.full_name AS actor_name, u.email AS actor_email
-       FROM audit_log a LEFT JOIN users u ON u.id = a.actor_user_id
+            actor.full_name AS actor_name, actor.email AS actor_email,
+            effective.full_name AS effective_name, effective.email AS effective_email
+       FROM audit_log a
+       LEFT JOIN users actor ON actor.id = a.actor_user_id
+       LEFT JOIN users effective ON effective.id = a.effective_user_id
       WHERE a.workspace_id = $1
         AND ($2::timestamptz IS NULL OR (a.created_at, a.id) < ($2::timestamptz, $3::bigint))
       ORDER BY a.created_at DESC, a.id DESC LIMIT $4`,
@@ -146,6 +149,7 @@ router.get('/audit', requirePermission('settings.view'), asyncHandler(async (req
       id: r.id, action: r.action, entityType: r.entity_type, entityId: r.entity_id,
       metadata: r.metadata, ip: r.ip, createdAt: r.created_at,
       actor: r.actor_email ? { name: r.actor_name, email: r.actor_email } : null,
+      effectiveUser: r.effective_email ? { name: r.effective_name, email: r.effective_email } : null,
     })),
     nextCursor: result.nextCursor,
   });

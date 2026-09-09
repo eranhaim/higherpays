@@ -4,7 +4,7 @@
  * the UI shows.
  */
 
-import type { WorkspaceRole } from '../api/types';
+import type { SystemWorkspaceRole } from '../api/types';
 
 export type Permission =
   | 'payments.view' | 'payments.complete' | 'payments.export'
@@ -16,6 +16,7 @@ export type Permission =
   | 'revenue.view' | 'revenue.manage'
   | 'fees.view'
   | 'team.view' | 'team.manage'
+  | 'roles.manage'
   | 'settings.view' | 'settings.edit'
   | 'data.view_all';
 
@@ -29,6 +30,7 @@ const ALL: Permission[] = [
   'revenue.view', 'revenue.manage',
   'fees.view',
   'team.view', 'team.manage',
+  'roles.manage',
   'settings.view', 'settings.edit',
   'data.view_all',
 ];
@@ -37,7 +39,8 @@ const ALL: Permission[] = [
  * Built-in matrix, used only until the workspace's `/permissions` answer has
  * loaded. Keep in sync with the backend.
  */
-export const ROLE_PERMISSIONS: Record<WorkspaceRole, Permission[]> = {
+export const ROLE_PERMISSIONS: Record<SystemWorkspaceRole, Permission[]> = {
+  workspace_owner: ALL,
   workspace_admin: ALL,
   analyst: [
     'payments.view', 'payments.export', 'links.view', 'analytics.view',

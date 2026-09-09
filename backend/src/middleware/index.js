@@ -1,6 +1,6 @@
 'use strict';
 const { verifyAccessToken } = require('../auth/tokens');
-const { ROLE_PERMISSIONS, hasPermission } = require('../auth/permissions');
+const { hasPermission } = require('../auth/permissions');
 const { query } = require('../db');
 const { asyncHandler } = require('../lib/http');
 const { log } = require('../lib/log');
@@ -21,6 +21,9 @@ const requireAuth = (req, _res, next) => {
       name: payload.name,
       sessionId: payload.sid || null,
       twoFactorAuthenticated: payload.mfa === true,
+      actorId: payload.impersonation === true ? payload.actor : null,
+      impersonationWorkspaceId: payload.impersonation === true ? payload.workspace : null,
+      impersonatedRole: payload.impersonation === true ? payload.role : null,
     };
     next();
   } catch {
@@ -38,14 +41,24 @@ const requireWorkspace = asyncHandler(async (req, _res, next) => {
   if (fromHeader && fromPath && fromHeader !== fromPath) throw new BadRequestError('workspace_mismatch');
   const workspaceId = fromHeader || fromPath;
   if (!workspaceId) throw new BadRequestError('missing_workspace');
+  if (req.user.impersonationWorkspaceId && req.user.impersonationWorkspaceId !== workspaceId) {
+    throw new ForbiddenError('impersonation_workspace_mismatch');
+  }
 
   const row = (await query(
-    `SELECT role FROM workspace_users
-      WHERE workspace_id = $1 AND user_id = $2 AND status = 'active'`,
+    `SELECT wu.role, wr.name AS role_name, wr.permissions
+       FROM workspace_users wu
+       JOIN workspace_roles wr ON wr.workspace_id=wu.workspace_id AND wr.key=wu.role
+      WHERE wu.workspace_id = $1 AND wu.user_id = $2 AND wu.status = 'active'`,
     [workspaceId, req.user.id])).rows[0];
   if (!row) throw new ForbiddenError('not_a_member');
 
-  req.access = { workspaceId, role: row.role, permissions: ROLE_PERMISSIONS[row.role] };
+  req.access = {
+    workspaceId,
+    role: row.role,
+    roleName: row.role_name,
+    permissions: new Set(row.permissions),
+  };
   next();
 });
 
@@ -61,6 +74,7 @@ const requirePermission = (permission) => (req, _res, next) => {
 
 // 4) requirePlatformAdmin — HigherPays operator gate, above any single workspace.
 const requirePlatformAdmin = asyncHandler(async (req, _res, next) => {
+  if (req.user.actorId) throw new ForbiddenError('impersonation_platform_forbidden');
   const { rows } = await query(
     'SELECT is_platform_admin, two_factor_enabled FROM users WHERE id = $1',
     [req.user.id]);

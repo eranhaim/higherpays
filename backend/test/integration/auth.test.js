@@ -14,7 +14,8 @@ test('POST /auth/login accepts correct credentials and lists the workspace with 
   assert.ok(res.body.accessToken);
   assert.equal(res.body.user.isPlatformAdmin, false);
   const ws = res.body.workspaces.find((w) => w.id === t.workspaceId);
-  assert.equal(ws.role, 'workspace_admin');
+  assert.equal(ws.role, 'workspace_owner');
+  assert.equal(ws.roleName, 'Owner');
   assert.deepEqual(ws.labels, { account: 'Creator', accounts: 'Creators', agent: 'Agent', agents: 'Agents' });
 });
 

@@ -10,6 +10,7 @@ const { audit } = require('../util/audit');
 const { hashPassword } = require('../auth/passwords');
 const { isStr, badRequest } = require('../util/validate');
 const { createInvite, hashToken } = require('../services/invites');
+const { PROFILE_ROLES } = require('../services/workspaceRoles');
 
 const { wid, uid } = require('../lib/scope');
 const INVITABLE_ROLES = ['workspace_admin', 'analyst'];
@@ -20,7 +21,16 @@ const wsRouter = express.Router({ mergeParams: true });
 wsRouter.post('/', requireAuth, requireWorkspace, requirePermission('team.manage'), asyncHandler(async (req, res) => {
   const { email, role } = req.body || {};
   if (!isStr(email, 100) || !email.includes('@')) return badRequest(res, 'a valid email is required', ['email']);
-  if (!INVITABLE_ROLES.includes(role)) return badRequest(res, `role must be one of ${INVITABLE_ROLES.join(', ')}`, ['role']);
+  if (!role || PROFILE_ROLES.has(role) || role === 'workspace_owner') {
+    return badRequest(res, 'role is not invitable', ['role']);
+  }
+  const roleRow = (await query(
+    'SELECT permissions FROM workspace_roles WHERE workspace_id=$1 AND key=$2',
+    [wid(req), role])).rows[0];
+  if (!roleRow) return badRequest(res, 'unknown role', ['role']);
+  if (roleRow.permissions.some((permission) => !req.access.permissions.has(permission))) {
+    return res.status(403).json({ error: 'role_not_assignable' });
+  }
   const row = await withTransaction((c) => createInvite(c, {
     workspaceId: wid(req), email, role, invitedByUserId: uid(req),
   }));
@@ -93,6 +103,12 @@ publicRouter.post('/:token/accept', asyncHandler(async (req, res) => {
     await c.query('UPDATE invites SET accepted_at=now() WHERE id=$1', [inv.id]);
     if (seat && seat.role !== inv.role) return { err: 'already_a_member' };
     if (!seat) {
+      if (inv.role === 'workspace_owner') {
+        const owner = (await c.query(
+          "SELECT 1 FROM workspace_users WHERE workspace_id=$1 AND role='workspace_owner'",
+          [inv.workspace_id])).rows[0];
+        if (owner) return { err: 'owner_exists' };
+      }
       await c.query(
         'INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,$3)',
         [inv.workspace_id, user.id, inv.role]);
@@ -101,6 +117,7 @@ publicRouter.post('/:token/accept', asyncHandler(async (req, res) => {
   });
   if (out.err === 'weak_password') return badRequest(res, 'weak_password', ['password']);
   if (out.err === 'already_a_member') return res.status(409).json({ error: 'already_a_member' });
+  if (out.err === 'owner_exists') return res.status(409).json({ error: 'owner_exists' });
   if (out.err) return res.status(404).json({ error: out.err });
   await audit({ workspaceId: out.workspaceId, actorUserId: out.userId, action: 'invite.accept', metadata: { role: out.role } });
   res.status(201).json({ ok: true, userId: out.userId, workspaceId: out.workspaceId, role: out.role, existingUser: out.existed });

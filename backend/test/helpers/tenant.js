@@ -52,7 +52,7 @@ function inviteTokenFor(email) {
 
 /**
  * @returns {Promise<{ email, password, userId, workspaceId, accessToken, refreshToken, authHeaders }>}
- *   the agency's first workspace_admin.
+ *   the agency's owner.
  */
 async function createTenant(app, opts = {}) {
   const t = tag();

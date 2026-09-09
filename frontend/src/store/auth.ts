@@ -20,6 +20,14 @@ interface AuthState {
   refreshToken: string | null;
   user: AuthUser | null;
   workspaces: AuthWorkspace[];
+  originalSession: {
+    accessToken: string;
+    refreshToken: string;
+    user: AuthUser;
+    workspaces: AuthWorkspace[];
+  } | null;
+  impersonationExpiresAt: string | null;
+  originalWorkspaceId: string | null;
 
   setSession: (input: {
     accessToken: string;
@@ -30,6 +38,14 @@ interface AuthState {
   setTokens: (accessToken: string, refreshToken: string) => void;
   setUser: (user: AuthUser) => void;
   setWorkspaces: (workspaces: AuthWorkspace[]) => void;
+  beginImpersonation: (input: {
+    accessToken: string;
+    expiresAt: string;
+    user: AuthUser;
+    workspace: AuthWorkspace;
+    originalWorkspaceId: string | null;
+  }) => void;
+  endImpersonation: () => void;
   clear: () => void;
 }
 
@@ -40,9 +56,16 @@ export const useAuthStore = create<AuthState>()(
       refreshToken: null,
       user: null,
       workspaces: [],
+      originalSession: null,
+      impersonationExpiresAt: null,
+      originalWorkspaceId: null,
 
       setSession: ({ accessToken, refreshToken, user, workspaces }) =>
-        set({ accessToken, refreshToken, user, workspaces }),
+        set({
+          accessToken, refreshToken, user, workspaces,
+          originalSession: null, impersonationExpiresAt: null,
+          originalWorkspaceId: null,
+        }),
 
       setTokens: (accessToken, refreshToken) =>
         set({ accessToken, refreshToken }),
@@ -51,12 +74,51 @@ export const useAuthStore = create<AuthState>()(
 
       setWorkspaces: (workspaces) => set({ workspaces }),
 
+      beginImpersonation: ({ accessToken, expiresAt, user, workspace, originalWorkspaceId }) =>
+        set((state) => ({
+          originalSession: state.originalSession ?? (
+            state.accessToken && state.refreshToken && state.user
+              ? {
+                  accessToken: state.accessToken,
+                  refreshToken: state.refreshToken,
+                  user: state.user,
+                  workspaces: state.workspaces,
+                }
+              : null
+          ),
+          accessToken,
+          refreshToken: null,
+          user,
+          workspaces: [workspace],
+          impersonationExpiresAt: expiresAt,
+          originalWorkspaceId,
+        })),
+
+      endImpersonation: () =>
+        set((state) => state.originalSession ? {
+          ...state.originalSession,
+          originalSession: null,
+          impersonationExpiresAt: null,
+          originalWorkspaceId: null,
+        } : {
+          accessToken: null,
+          refreshToken: null,
+          user: null,
+          workspaces: [],
+          originalSession: null,
+          impersonationExpiresAt: null,
+          originalWorkspaceId: null,
+        }),
+
       clear: () =>
         set({
           accessToken: null,
           refreshToken: null,
           user: null,
           workspaces: [],
+          originalSession: null,
+          impersonationExpiresAt: null,
+          originalWorkspaceId: null,
         }),
     }),
     {
@@ -67,6 +129,9 @@ export const useAuthStore = create<AuthState>()(
         refreshToken: s.refreshToken,
         user: s.user,
         workspaces: s.workspaces,
+        originalSession: s.originalSession,
+        impersonationExpiresAt: s.impersonationExpiresAt,
+        originalWorkspaceId: s.originalWorkspaceId,
       }),
     },
   ),

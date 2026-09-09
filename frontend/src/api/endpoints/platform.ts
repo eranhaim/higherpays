@@ -1,4 +1,5 @@
 import { api } from '../http';
+import type { AuthUser, AuthWorkspace } from '../types';
 
 /**
  * The HigherPays operator tier, above every workspace. These calls cross
@@ -76,6 +77,23 @@ export interface PlatformWorkspaceDetail {
   settlementFee: SettlementFee | null;
 }
 
+export interface ImpersonationTarget {
+  workspaceId: string;
+  workspaceName: string;
+  userId: string;
+  fullName: string;
+  email: string;
+  role: string;
+  roleName: string;
+}
+
+export interface ImpersonationSession {
+  accessToken: string;
+  expiresAt: string;
+  user: AuthUser;
+  workspace: AuthWorkspace;
+}
+
 const opts = { skipWorkspace: true };
 
 export const platformApi = {
@@ -108,4 +126,16 @@ export const platformApi = {
 
   setSettlementFee: (id: string, input: SettlementFee) =>
     api.put<SettlementFee>(`/platform/workspaces/${id}/settlement-fee`, input, opts),
+
+  async listImpersonationTargets(workspaceId?: string): Promise<ImpersonationTarget[]> {
+    const query = workspaceId ? `?workspaceId=${encodeURIComponent(workspaceId)}` : '';
+    const raw = await api.get<{ targets: ImpersonationTarget[] }>(`/platform/impersonation/targets${query}`, opts);
+    return raw.targets;
+  },
+
+  startImpersonation: (workspaceId: string, userId: string) =>
+    api.post<ImpersonationSession>('/platform/impersonation/start', { workspaceId, userId }, opts),
+
+  stopImpersonation: () =>
+    api.post<void>('/platform/impersonation/stop', undefined, opts),
 };
