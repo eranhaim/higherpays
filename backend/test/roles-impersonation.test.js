@@ -24,12 +24,14 @@ test('owner permissions are complete and impersonation tokens are scoped and sho
     },
     workspaceId: '00000000-0000-4000-8000-000000000003',
     role: 'analyst',
+    jti: '00000000-0000-4000-8000-000000000004',
   });
   const payload = verifyAccessToken(token);
   assert.equal(payload.actor, '00000000-0000-4000-8000-000000000001');
   assert.equal(payload.sub, '00000000-0000-4000-8000-000000000002');
   assert.equal(payload.workspace, '00000000-0000-4000-8000-000000000003');
   assert.equal(payload.role, 'analyst');
+  assert.equal(payload.jti, '00000000-0000-4000-8000-000000000004');
   assert.equal(payload.impersonation, true);
   assert.ok(payload.exp - payload.iat <= 15 * 60);
 });

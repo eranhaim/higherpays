@@ -64,3 +64,29 @@ test('only an unused workspace can change currency and links must match it', asy
   await request(app).patch(`/platform/workspaces/${tenant.workspaceId}/currency`)
     .set(platform.headers).send({ currency: 'GBP' }).expect(409);
 });
+
+test('link creation validates currency after acquiring the workspace lock', async () => {
+  const tenant = await createTenant(app);
+  const account = await createAccount(app, tenant);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      "UPDATE workspaces SET currency='USD' WHERE id=$1",
+      [tenant.workspaceId]);
+    const pending = request(app).post(`/workspaces/${tenant.workspaceId}/links`)
+      .set(tenant.authHeaders)
+      .send({ accountId: account.id, type: 'single_use', amount: 25, currency: 'EUR' })
+      .then((response) => response);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await client.query('COMMIT');
+    assert.equal((await pending).status, 400);
+  } finally {
+    await client.query('ROLLBACK').catch(() => {});
+    client.release();
+  }
+  const count = (await pool.query(
+    'SELECT count(*)::int AS count FROM payment_links WHERE workspace_id=$1',
+    [tenant.workspaceId])).rows[0].count;
+  assert.equal(count, 0);
+});

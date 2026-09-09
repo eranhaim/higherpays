@@ -4,7 +4,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const request = require('supertest');
 const { app } = require('../helpers/setup');
-const { createTenant, createAccount, createAgent, addMember, assignAgent } = require('../helpers/tenant');
+const {
+  createTenant, createAccount, createAgent, addMember, assignAgent, createCategory,
+} = require('../helpers/tenant');
 const { paySale } = require('../helpers/webhook');
 
 async function fixture() {
@@ -122,4 +124,29 @@ test('customer PII follows the agent assigned-creator scope on every operation',
     .set(agent.headers).send({ phone: '+35700000000' }).expect(404);
   await request(app).delete(`/workspaces/${t.workspaceId}/customers/${otherCustomer.customerId}`)
     .set(agent.headers).expect(404);
+});
+
+test('payment completion cannot attach an existing customer outside the caller scope', async () => {
+  const { t, mine, other, agent } = await fixture();
+  const category = await createCategory(app, t);
+  const ownSale = await paySale(app, t, mine, 40, { headers: agent.headers });
+  const otherSale = await paySale(app, t, other, 60);
+  const hidden = (await request(app)
+    .patch(`/workspaces/${t.workspaceId}/payments/${otherSale.paymentId}/details`)
+    .set(t.authHeaders)
+    .send({ categoryId: category.id, customer: { name: 'Other Account Customer' } })
+    .expect(200)).body;
+
+  await request(app)
+    .patch(`/workspaces/${t.workspaceId}/payments/${ownSale.paymentId}/details`)
+    .set(agent.headers)
+    .send({ categoryId: category.id, customerId: hidden.customerId })
+    .expect(404);
+
+  const completed = (await request(app)
+    .patch(`/workspaces/${t.workspaceId}/payments/${ownSale.paymentId}/details`)
+    .set(t.authHeaders)
+    .send({ categoryId: category.id, customerId: hidden.customerId })
+    .expect(200)).body;
+  assert.equal(completed.customerId, hidden.customerId);
 });

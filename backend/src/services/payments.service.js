@@ -27,7 +27,7 @@ const { recordLinkEvent } = require('./linkEvents');
  * @param {string|null} [params.linkReference]  our reference_id, for attribution
  * @param {string|null} [params.paymentMethod]
  * @param {object}      params.rawPayload       stored verbatim
- * @returns {Promise<{ paymentId: string|null, transactionId: string|null, linkId: string|null, newSale: boolean }>}
+ * @returns {Promise<{ paymentId: string|null, transactionId: string|null, linkId: string|null, newSale: boolean, reviewRequired?: boolean }>}
  */
 async function recordPaymentOutcome(client, workspaceId, params) {
   const {
@@ -68,19 +68,18 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   const feeValue = fee != null ? fee : 0;
   const feeIsEstimate = fee == null;
 
+  let reviewReason = null;
   if (status === 'approved' && link.type === 'single_use') {
     const winner = (await client.query(
-      `SELECT provider_payment_id
-         FROM payments
-        WHERE payment_link_id = $1 AND status = 'paid'
-        ORDER BY occurred_at LIMIT 1`,
+      `SELECT p.provider_payment_id
+         FROM payments p
+         JOIN transactions t ON t.payment_id=p.id AND t.type='payment'
+         JOIN revenue_entries re ON re.transaction_id=t.id AND re.entry_type='sale'
+        WHERE p.payment_link_id=$1
+        LIMIT 1`,
       [link.id])).rows[0];
     if (winner && winner.provider_payment_id !== providerTransactionId) {
-      throw paymentOutcomeError('single_use_link_already_paid', {
-        linkId: link.id,
-        providerTransactionId,
-        winningProviderTransactionId: winner.provider_payment_id,
-      });
+      reviewReason = 'duplicate_single_use_charge';
     }
   }
 
@@ -88,18 +87,19 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   const payment = (await client.query(
     `INSERT INTO payments
        (workspace_id, account_id, payment_link_id, agent_id,
-        amount, currency, status, payment_method, provider_payment_id, occurred_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
+        amount, currency, status, payment_method, provider_payment_id, review_reason, occurred_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())
      ON CONFLICT (workspace_id, provider_payment_id) DO UPDATE
        SET status = CASE
          WHEN payments.status = 'refunded' THEN 'refunded'
          WHEN payments.status = 'paid' OR EXCLUDED.status = 'paid' THEN 'paid'
          WHEN payments.status = 'failed' THEN 'failed'
          ELSE EXCLUDED.status
-       END
-     RETURNING id, status`,
+       END,
+           review_reason = COALESCE(payments.review_reason, EXCLUDED.review_reason)
+     RETURNING id, status, review_reason`,
     [workspaceId, link.account_id, link.id, link.created_by_agent_id,
-     grossValue, currency, paymentStatus, paymentMethod, providerTransactionId])).rows[0];
+     grossValue, currency, paymentStatus, paymentMethod, providerTransactionId, reviewReason])).rows[0];
 
   // 3) The provider's record of the attempt.
   const tx = (await client.query(
@@ -132,14 +132,15 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   // 4) A paid single-use link waits for the agent to complete the details.
   //    A reusable link stays open; a declined attempt leaves either untouched
   //    so the customer can try again.
-  if (payment.status === 'paid' && link.type === 'single_use' && link.status === 'active') {
+  if (payment.status === 'paid' && !payment.review_reason
+      && link.type === 'single_use' && link.status === 'active') {
     await client.query(
       "UPDATE payment_links SET status = 'pending', paid_at = now() WHERE id = $1", [link.id]);
   }
 
   // 5) Post the sale to the ledger once.
   let newSale = false;
-  if (tx.status === 'approved') {
+  if (tx.status === 'approved' && !payment.review_reason) {
     const already = (await client.query(
       "SELECT 1 FROM revenue_entries WHERE transaction_id = $1 AND entry_type = 'sale'", [tx.id])).rows[0];
     if (!already) {
@@ -162,7 +163,8 @@ async function recordPaymentOutcome(client, workspaceId, params) {
         [link.account_id])).rows[0];
       await notifier.notify(client, workspaceId, {
         event: status === 'approved' ? 'payment.paid' : 'payment.failed',
-        title: status === 'approved' ? 'Payment received' : 'Payment declined',
+        title: payment.review_reason ? 'Duplicate charge needs review'
+          : status === 'approved' ? 'Payment received' : 'Payment declined',
         body: account ? `${account.account_label}: ${account.name}` : null,
         accountId: link.account_id,
         agentId: link.created_by_agent_id,
@@ -174,7 +176,13 @@ async function recordPaymentOutcome(client, workspaceId, params) {
     });
   }
 
-  return { paymentId: payment.id, transactionId: tx.id, linkId: link.id, newSale };
+  return {
+    paymentId: payment.id,
+    transactionId: tx.id,
+    linkId: link.id,
+    newSale,
+    reviewRequired: Boolean(payment.review_reason),
+  };
 }
 
 function toMinorUnits(value) {

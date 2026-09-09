@@ -44,7 +44,9 @@ function publicPayment(p, { seesFees }) {
     customerId: p.customer_id, customer: p.customer, customerTelegram: p.customer_telegram,
     categoryId: p.category_id, category: p.category,
     linkId: p.payment_link_id, linkReference: p.link_reference, linkType: p.link_type,
-    needsDetails: p.status === 'paid' && p.category_id == null,
+    reviewRequired: p.review_reason != null,
+    reviewReason: p.review_reason,
+    needsDetails: p.status === 'paid' && p.review_reason == null && p.category_id == null,
     ...(seesFees ? { platformFee: p.platform_fee == null ? null : Number(p.platform_fee) } : {}),
   };
 }
@@ -89,7 +91,7 @@ const PAYMENT_FILTERS = `
        OR lower(a.name) LIKE $9::text
        OR lower(COALESCE(u.full_name, '')) LIKE $9::text
        OR lower(COALESCE(pl.reference_id, '')) LIKE $9::text)
-  AND (NOT $10::boolean OR (p.status = 'paid' AND p.category_id IS NULL))`;
+  AND (NOT $10::boolean OR (p.status = 'paid' AND p.review_reason IS NULL AND p.category_id IS NULL))`;
 
 // The list and the export answer the same question with the same filters;
 // only the page size differs. `cursor` null and `limit` null mean "all".
@@ -126,14 +128,16 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
           WHERE p.workspace_id = $1
             AND ${PAYMENT_FILTERS}
        )
-       SELECT COALESCE(SUM(amount) FILTER (WHERE status = 'paid'), 0) AS gross_content,
-              COALESCE(SUM(COALESCE(platform_fee, 0)) FILTER (WHERE status = 'paid'), 0) AS platform_fees,
+       SELECT COALESCE(SUM(amount) FILTER (WHERE status = 'paid' AND review_reason IS NULL), 0) AS gross_content,
+              COALESCE(SUM(COALESCE(platform_fee, 0)) FILTER (WHERE status = 'paid' AND review_reason IS NULL), 0) AS platform_fees,
               COUNT(*) FILTER (WHERE status = 'paid')::int AS approved_payments,
               COUNT(*) FILTER (WHERE status IN ('pending', 'paid', 'failed'))::int AS attempts,
-              COUNT(*) FILTER (WHERE status = 'paid' AND category_id IS NULL)::int AS details_needed,
+              COUNT(*) FILTER (WHERE status = 'paid' AND review_reason IS NULL AND category_id IS NULL)::int AS details_needed,
               COUNT(*) FILTER (WHERE status = 'refunded')::int AS refunded_count,
               COALESCE(SUM(amount) FILTER (WHERE status = 'refunded'), 0) AS refunded_amount,
-              COALESCE(SUM(surcharge) FILTER (WHERE status IN ('paid', 'refunded')), 0) AS checkout_fees,
+              COALESCE(SUM(surcharge) FILTER (
+                WHERE status IN ('paid', 'refunded') AND review_reason IS NULL
+              ), 0) AS checkout_fees,
               (SELECT currency FROM workspaces WHERE id = $1) AS currency
          FROM matching`,
       paymentFilterParams(req, scope))).rows[0];
@@ -331,6 +335,7 @@ router.patch('/:id/details', requirePermission('payments.complete'), asyncHandle
     const payment = await loadScoped(c, req, req.params.id);
     if (!payment) return { err: 'not_found', code: 404 };
     if (payment.status !== 'paid') return { err: 'payment_not_paid', code: 409 };
+    if (payment.review_reason) return { err: 'payment_requires_review', code: 409 };
 
     const category = (await c.query(
       'SELECT id FROM categories WHERE id = $1 AND workspace_id = $2 AND active', [categoryId, wid(req)])).rows[0];
@@ -338,8 +343,26 @@ router.patch('/:id/details', requirePermission('payments.complete'), asyncHandle
 
     let resolvedCustomerId = customerId || null;
     if (resolvedCustomerId) {
+      const scope = await resolveDataScope(c, req);
       const found = (await c.query(
-        'SELECT id FROM customers WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL', [resolvedCustomerId, wid(req)])).rows[0];
+        `SELECT id FROM customers c
+          WHERE c.id=$1 AND c.workspace_id=$2 AND c.deleted_at IS NULL
+            AND (
+              $3::text='workspace'
+              OR ($3::text='agent' AND EXISTS (
+                SELECT 1 FROM payments scoped
+                 WHERE scoped.customer_id=c.id AND scoped.workspace_id=c.workspace_id
+                   AND (scoped.agent_id=$4::uuid OR scoped.account_id IN (
+                     SELECT account_id FROM account_agents WHERE agent_id=$4::uuid
+                   ))
+              ))
+              OR ($3::text='account' AND EXISTS (
+                SELECT 1 FROM payments scoped
+                 WHERE scoped.customer_id=c.id AND scoped.workspace_id=c.workspace_id
+                   AND scoped.account_id=$5::uuid
+              ))
+            )`,
+        [resolvedCustomerId, wid(req), scope.kind, scope.agentId, scope.accountId])).rows[0];
       if (!found) return { err: 'customer_not_found', code: 404 };
     } else if (customer) {
       resolvedCustomerId = (await c.query(
@@ -353,7 +376,7 @@ router.patch('/:id/details', requirePermission('payments.complete'), asyncHandle
       'UPDATE payments SET category_id = $2, customer_id = $3 WHERE id = $1', [payment.id, category.id, resolvedCustomerId]);
     if (resolvedCustomerId) {
       await c.query(
-        `UPDATE customers SET total_spend = (SELECT COALESCE(SUM(amount),0) FROM payments WHERE customer_id = $1 AND status = 'paid'),
+        `UPDATE customers SET total_spend = (SELECT COALESCE(SUM(amount),0) FROM payments WHERE customer_id = $1 AND status = 'paid' AND review_reason IS NULL),
                               last_purchase_at = GREATEST(coalesce(last_purchase_at, $2), $2)
           WHERE id = $1`, [resolvedCustomerId, payment.occurred_at]);
     }
@@ -407,6 +430,7 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
     const payment = (await c.query(
       'SELECT * FROM payments WHERE workspace_id = $1 AND id = $2', [wid(req), req.params.id])).rows[0];
     if (!payment) return { notFound: true };
+    if (payment.review_reason) return { err: 'payment_requires_review', fields: [] };
     // A reversed sale cannot be moved: only its sale entry would be re-posted,
     // leaving the refund that mirrors it against the old creator.
     if (payment.status === 'refunded') return { err: 'payment_reversed', fields: [] };

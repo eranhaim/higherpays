@@ -72,6 +72,7 @@ WITH pending_owner_invites AS (
     FROM invites i
    WHERE i.role = 'workspace_admin'
      AND i.accepted_at IS NULL
+     AND i.expires_at > now()
      AND NOT EXISTS (
        SELECT 1 FROM workspace_users wu
         WHERE wu.workspace_id = i.workspace_id
@@ -83,6 +84,29 @@ UPDATE invites i
    SET role = 'workspace_owner'
   FROM pending_owner_invites candidate
  WHERE i.id = candidate.id;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM workspaces w
+     WHERE NOT EXISTS (
+       SELECT 1 FROM workspace_users wu
+        WHERE wu.workspace_id = w.id
+          AND wu.role = 'workspace_owner'
+     )
+       AND NOT EXISTS (
+         SELECT 1 FROM invites i
+          WHERE i.workspace_id = w.id
+            AND i.role = 'workspace_owner'
+            AND i.accepted_at IS NULL
+            AND i.expires_at > now()
+       )
+  ) THEN
+    RAISE EXCEPTION 'workspace without owner or unexpired pending owner invite';
+  END IF;
+END
+$$;
 
 CREATE UNIQUE INDEX one_workspace_owner
   ON workspace_users(workspace_id)

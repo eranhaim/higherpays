@@ -23,7 +23,7 @@ function verifyAccessToken(token) {
   return jwt.verify(token, config.jwtSecret); // throws if invalid/expired
 }
 
-function signImpersonationToken({ actor, subject, workspaceId, role }) {
+function signImpersonationToken({ actor, subject, workspaceId, role, jti }) {
   return jwt.sign(
     {
       sub: subject.id,
@@ -32,6 +32,7 @@ function signImpersonationToken({ actor, subject, workspaceId, role }) {
       actor: actor.id,
       workspace: workspaceId,
       role,
+      jti,
       impersonation: true,
       mfa: true,
     },

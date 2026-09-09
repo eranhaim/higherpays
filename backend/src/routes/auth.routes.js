@@ -11,7 +11,7 @@ const {
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { createLimiter } = require('../lib/rateLimit');
-const { TooManyRequestsError } = require('../lib/errors');
+const { TooManyRequestsError, ForbiddenError } = require('../lib/errors');
 const config = require('../config');
 
 const router = express.Router();
@@ -89,6 +89,11 @@ const publicUser = (u) => ({
   isPlatformAdmin: !!u.is_platform_admin, twoFactorEnabled: !!u.two_factor_enabled,
 });
 
+const rejectImpersonation = (req, _res, next) => {
+  if (req.user.actorId) return next(new ForbiddenError('impersonation_account_security_forbidden'));
+  next();
+};
+
 // POST /auth/login
 router.post('/login', limitByIp, asyncHandler(async (req, res) => {
   const { email, password } = req.body || {};
@@ -137,7 +142,7 @@ router.post('/login', limitByIp, asyncHandler(async (req, res) => {
 }));
 
 // ---- Two-factor (TOTP) ----------------------------------------------------
-router.post('/2fa/setup', limitByIp, requireAuth, asyncHandler(async (req, res) => {
+router.post('/2fa/setup', limitByIp, requireAuth, rejectImpersonation, asyncHandler(async (req, res) => {
   const u = (await query('SELECT email, two_factor_enabled FROM users WHERE id = $1', [req.user.id])).rows[0];
   if (!u) return res.status(404).json({ error: 'not_found' });
   if (u.two_factor_enabled) return res.status(400).json({ error: 'already_enabled' });
@@ -146,7 +151,7 @@ router.post('/2fa/setup', limitByIp, requireAuth, asyncHandler(async (req, res) 
   res.json({ secret, otpauthUrl: otpauthUrl(secret, { issuer: 'HigherPays', account: u.email }) });
 }));
 
-router.post('/2fa/enable', limitByIp, requireAuth, asyncHandler(async (req, res) => {
+router.post('/2fa/enable', limitByIp, requireAuth, rejectImpersonation, asyncHandler(async (req, res) => {
   const { code } = req.body || {};
   const u = (await query('SELECT two_factor_secret, two_factor_enabled FROM users WHERE id = $1', [req.user.id])).rows[0];
   if (!u || !u.two_factor_secret) return res.status(400).json({ error: 'no_pending_secret' });
@@ -173,7 +178,7 @@ router.post('/2fa/enable', limitByIp, requireAuth, asyncHandler(async (req, res)
   });
 }));
 
-router.post('/2fa/disable', limitByIp, requireAuth, asyncHandler(async (req, res) => {
+router.post('/2fa/disable', limitByIp, requireAuth, rejectImpersonation, asyncHandler(async (req, res) => {
   const { code } = req.body || {};
   const u = (await query(
     `SELECT id, two_factor_secret, two_factor_enabled, two_factor_recovery_codes
@@ -189,7 +194,7 @@ router.post('/2fa/disable', limitByIp, requireAuth, asyncHandler(async (req, res
   res.json({ enabled: false });
 }));
 
-router.post('/2fa/recovery-codes', limitByIp, requireAuth, asyncHandler(async (req, res) => {
+router.post('/2fa/recovery-codes', limitByIp, requireAuth, rejectImpersonation, asyncHandler(async (req, res) => {
   const { code } = req.body || {};
   const u = (await query(
     `SELECT id, two_factor_secret, two_factor_enabled, two_factor_recovery_codes
@@ -251,7 +256,7 @@ router.post('/logout', asyncHandler(async (req, res) => {
 }));
 
 // ---- Sessions: a session is a refresh-token family -------------------------
-router.get('/sessions', requireAuth, asyncHandler(async (req, res) => {
+router.get('/sessions', requireAuth, rejectImpersonation, asyncHandler(async (req, res) => {
   const { rows } = await query(
     `SELECT DISTINCT ON (family_id) family_id, user_agent, ip, created_at, expires_at, absolute_expires_at
        FROM refresh_tokens
@@ -267,7 +272,7 @@ router.get('/sessions', requireAuth, asyncHandler(async (req, res) => {
   });
 }));
 
-router.delete('/sessions/:id', requireAuth, asyncHandler(async (req, res) => {
+router.delete('/sessions/:id', requireAuth, rejectImpersonation, asyncHandler(async (req, res) => {
   const { rowCount } = await query(
     'UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND family_id = $2 AND revoked_at IS NULL',
     [req.user.id, req.params.id]);
@@ -276,7 +281,7 @@ router.delete('/sessions/:id', requireAuth, asyncHandler(async (req, res) => {
   res.status(204).end();
 }));
 
-router.post('/sessions/revoke-others', requireAuth, asyncHandler(async (req, res) => {
+router.post('/sessions/revoke-others', requireAuth, rejectImpersonation, asyncHandler(async (req, res) => {
   const { refreshToken } = req.body || {};
   if (!refreshToken) return res.status(400).json({ error: 'missing_token' });
   const mine = (await query(

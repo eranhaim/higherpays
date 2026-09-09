@@ -53,7 +53,13 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
         rawPayload: statusResp,
       });
       if (st === 'approved') {
-        summary.updated.push({ linkId: link.id, to: 'pending', paymentId: outcome.paymentId, newSale: outcome.newSale });
+        summary.updated.push({
+          linkId: link.id,
+          to: 'pending',
+          paymentId: outcome.paymentId,
+          newSale: outcome.newSale,
+          reviewRequired: outcome.reviewRequired,
+        });
         continue;
       }
       summary.skipped.push({ linkId: link.id, reason: 'status_pending', paymentId: outcome.paymentId });

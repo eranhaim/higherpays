@@ -9,27 +9,42 @@ const {
 } = require('../lib/errors');
 
 // 1) requireAuth — validates the bearer token, attaches req.user.
-const requireAuth = (req, _res, next) => {
+const requireAuth = asyncHandler(async (req, _res, next) => {
   const header = req.headers.authorization || '';
   const [scheme, token] = header.split(' ');
   if (scheme !== 'Bearer' || !token) return next(new UnauthorizedError('missing_token'));
+  let payload;
   try {
-    const payload = verifyAccessToken(token);
-    req.user = {
-      id: payload.sub,
-      email: payload.email,
-      name: payload.name,
-      sessionId: payload.sid || null,
-      twoFactorAuthenticated: payload.mfa === true,
-      actorId: payload.impersonation === true ? payload.actor : null,
-      impersonationWorkspaceId: payload.impersonation === true ? payload.workspace : null,
-      impersonatedRole: payload.impersonation === true ? payload.role : null,
-    };
-    next();
+    payload = verifyAccessToken(token);
   } catch {
-    next(new UnauthorizedError('invalid_token'));
+    return next(new UnauthorizedError('invalid_token'));
   }
-};
+
+  if (payload.impersonation === true) {
+    if (!payload.jti || !payload.actor || !payload.workspace) {
+      return next(new UnauthorizedError('invalid_token'));
+    }
+    const active = (await query(
+      `SELECT 1 FROM impersonation_sessions
+        WHERE jti=$1 AND actor_user_id=$2 AND subject_user_id=$3 AND workspace_id=$4
+          AND revoked_at IS NULL AND expires_at > now()`,
+      [payload.jti, payload.actor, payload.sub, payload.workspace])).rows[0];
+    if (!active) return next(new UnauthorizedError('invalid_token'));
+  }
+
+  req.user = {
+    id: payload.sub,
+    email: payload.email,
+    name: payload.name,
+    sessionId: payload.sid || null,
+    twoFactorAuthenticated: payload.mfa === true,
+    actorId: payload.impersonation === true ? payload.actor : null,
+    impersonationJti: payload.impersonation === true ? payload.jti : null,
+    impersonationWorkspaceId: payload.impersonation === true ? payload.workspace : null,
+    impersonatedRole: payload.impersonation === true ? payload.role : null,
+  };
+  next();
+});
 
 // 2) requireWorkspace — resolves the workspace from the X-Workspace-Id header
 // (or the URL), confirms the caller has ACTIVE access to it, and attaches
@@ -66,6 +81,17 @@ const requireWorkspace = asyncHandler(async (req, _res, next) => {
     roleName: row.role_name,
     permissions: new Set(row.permissions),
   };
+  if (req.user.actorId) {
+    await query(
+      `INSERT INTO audit_log
+         (workspace_id, actor_user_id, effective_user_id, action, entity_type, entity_id, metadata, ip)
+       VALUES ($1,$2,$3,'platform.impersonation.request','user',$3,$4,$5)`,
+      [workspaceId, req.user.actorId, req.user.id, {
+        method: req.method,
+        path: req.originalUrl.split('?')[0],
+        jti: req.user.impersonationJti,
+      }, req.ip || null]);
+  }
   next();
 });
 

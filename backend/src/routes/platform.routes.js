@@ -23,9 +23,13 @@ const r2 = (v) => Math.round(v * 100) / 100;
 
 router.post('/impersonation/stop', asyncHandler(async (req, res) => {
   if (!req.user.actorId) return res.status(400).json({ error: 'not_impersonating' });
+  await query(
+    `UPDATE impersonation_sessions SET revoked_at=now()
+      WHERE jti=$1 AND revoked_at IS NULL`,
+    [req.user.impersonationJti]);
   await audit({
     workspaceId: req.user.impersonationWorkspaceId,
-    actorUserId: req.user.id,
+    actorUserId: req.user.actorId,
     action: 'platform.impersonation.stop',
     entityType: 'user',
     entityId: req.user.id,
@@ -89,14 +93,21 @@ router.post('/impersonation/start', asyncHandler(async (req, res) => {
     return res.status(403).json({ error: 'impersonation_target_forbidden' });
   }
   const actor = (await query('SELECT id FROM users WHERE id=$1', [uid(req)])).rows[0];
-  const token = signImpersonationToken({ actor, subject: target, workspaceId, role: target.role });
+  const jti = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+  await query(
+    `INSERT INTO impersonation_sessions
+       (jti, actor_user_id, subject_user_id, workspace_id, expires_at)
+     VALUES ($1,$2,$3,$4,$5)`,
+    [jti, actor.id, target.id, workspaceId, expiresAt]);
+  const token = signImpersonationToken({ actor, subject: target, workspaceId, role: target.role, jti });
   await audit({
     workspaceId, actorUserId: uid(req), action: 'platform.impersonation.start',
     entityType: 'user', entityId: target.id, metadata: { role: target.role },
   });
   res.json({
     accessToken: token,
-    expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+    expiresAt: expiresAt.toISOString(),
     user: {
       id: target.id,
       email: target.email,
@@ -174,7 +185,8 @@ router.get('/workspaces', asyncHandler(async (req, res) => {
            (SELECT count(*) FROM agents ag WHERE ag.workspace_id = w.id) AS agents,
            (SELECT count(*) FROM workspace_users wu WHERE wu.workspace_id = w.id AND wu.status='active') AS members,
            (SELECT count(*) FROM payments p WHERE p.workspace_id = w.id AND p.status='paid') AS paid_payments,
-           (SELECT COALESCE(SUM(amount),0) FROM payments p WHERE p.workspace_id = w.id AND p.status='paid') AS gross_volume,
+           (SELECT COALESCE(SUM(amount),0) FROM payments p
+             WHERE p.workspace_id = w.id AND p.status='paid' AND p.review_reason IS NULL) AS gross_volume,
            (SELECT max(created_at) FROM audit_log a WHERE a.workspace_id = w.id) AS last_activity,
            f.blended_rate_pct, f.psp_rate_pct, f.settlement_pct, f.margin_rate_pct,
            f.psp_fixed_fee, f.checkout_fee
@@ -258,6 +270,58 @@ router.patch('/workspaces/:id/currency', asyncHandler(async (req, res) => {
   });
   if (out.error) return res.status(out.status).json({ error: out.error });
   res.json({ id: out.workspace.id, currency: out.workspace.currency, changed: out.changed });
+}));
+
+router.post('/workspaces/:id/owner-recovery', asyncHandler(async (req, res) => {
+  const targetUserId = String(req.body?.userId || '');
+  if (!targetUserId) return res.status(400).json({ error: 'target_required' });
+
+  const out = await withTransaction(async (c) => {
+    const workspace = (await c.query(
+      'SELECT id FROM workspaces WHERE id=$1 FOR UPDATE',
+      [req.params.id])).rows[0];
+    if (!workspace) return { error: 'not_found', status: 404 };
+    const owner = (await c.query(
+      "SELECT 1 FROM workspace_users WHERE workspace_id=$1 AND role='workspace_owner'",
+      [workspace.id])).rows[0];
+    if (owner) return { error: 'owner_already_exists', status: 409 };
+
+    const target = (await c.query(
+      `SELECT wu.role, wu.status, u.status AS user_status, u.is_platform_admin,
+              EXISTS (
+                SELECT 1 FROM agents
+                 WHERE workspace_id=wu.workspace_id AND user_id=wu.user_id
+              ) AS has_agent,
+              EXISTS (
+                SELECT 1 FROM accounts
+                 WHERE workspace_id=wu.workspace_id AND user_id=wu.user_id
+              ) AS has_account
+         FROM workspace_users wu
+         JOIN users u ON u.id=wu.user_id
+        WHERE wu.workspace_id=$1 AND wu.user_id=$2
+        FOR UPDATE OF wu`,
+      [workspace.id, targetUserId])).rows[0];
+    if (!target) return { error: 'target_not_found', status: 404 };
+    if (target.status !== 'active' || target.user_status !== 'active') {
+      return { error: 'target_not_active', status: 409 };
+    }
+    if (target.is_platform_admin || target.has_agent || target.has_account
+      || target.role === 'agent' || target.role === 'account_owner') {
+      return { error: 'target_not_eligible', status: 409 };
+    }
+
+    await c.query(
+      "UPDATE workspace_users SET role='workspace_owner' WHERE workspace_id=$1 AND user_id=$2",
+      [workspace.id, targetUserId]);
+    await c.query(
+      `INSERT INTO audit_log
+         (workspace_id, actor_user_id, effective_user_id, action, entity_type, entity_id, metadata)
+       VALUES ($1,$2,$2,'platform.workspace.owner_recovery','user',$3,$4)`,
+      [workspace.id, uid(req), targetUserId, { previousRole: target.role }]);
+    return { ownerUserId: targetUserId };
+  });
+  if (out.error) return res.status(out.status).json({ error: out.error });
+  res.json(out);
 }));
 
 // PUT /platform/workspaces/:id/platform-fee — a new versioned rate row.

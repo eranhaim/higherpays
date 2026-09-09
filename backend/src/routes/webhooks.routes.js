@@ -105,6 +105,7 @@ router.post('/payment/:endpoint', asyncHandler(async (req, res) => {
     ok: true,
     status: ev.status,
     paymentId: result.paymentId,
+    reviewRequired: result.reviewRequired || undefined,
     duplicate: result.duplicate || result.already ? true : undefined,
   });
 }));

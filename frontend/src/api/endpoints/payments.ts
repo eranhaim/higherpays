@@ -42,6 +42,8 @@ export interface Payment {
   linkId: string | null;
   linkReference: string | null;
   linkType: LinkType | null;
+  reviewRequired: boolean;
+  reviewReason: 'duplicate_single_use_charge' | null;
   /** Paid, but the agent has not yet said who paid and what for. */
   needsDetails: boolean;
   /** Only sent to callers who see the whole workspace. */

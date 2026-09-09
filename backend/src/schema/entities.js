@@ -92,7 +92,19 @@ const RefreshToken = entity('refresh_tokens', {
   timestamps: 'created',
 });
 
-
+const ImpersonationSession = entity('impersonation_sessions', {
+  fields: {
+    jti:           uuid().primaryKey(),
+    actorUserId:   uuid().references('users').notNull(),
+    subjectUserId: uuid().references('users').notNull(),
+    workspaceId:   uuid().references('workspaces').notNull(),
+    expiresAt:     timestamp().notNull(),
+    revokedAt:     timestamp(),
+  },
+  checks: ['actor_user_id <> subject_user_id'],
+  indexes: ['actorUserId', 'subjectUserId', 'workspaceId'],
+  timestamps: 'created',
+});
 
 // One agency, and its settings. workspaceId elsewhere is a plain ownership
 // foreign key, not a security boundary — nothing scopes queries by it.
@@ -401,6 +413,7 @@ const Payment = entity('payments', {
     status:            enumOf(PAYMENT_STATUS).notNull(),   // always written with the provider's outcome
     paymentMethod:     text(),                  // when the provider reports it
     providerPaymentId: text(),
+    reviewReason:      enumOf(['duplicate_single_use_charge']),
     occurredAt:        timestamp().notNull().default('now()'),
   },
   unique: [['workspaceId', 'providerPaymentId']],
@@ -685,7 +698,7 @@ const AuditLog = entity('audit_log', {
 
 module.exports = {
   // global
-  User, RefreshToken, Workspace, PlatformFeeRate,
+  User, RefreshToken, ImpersonationSession, Workspace, PlatformFeeRate,
   // access
   WorkspaceRole, WorkspaceUser, Invite,
   // commercial

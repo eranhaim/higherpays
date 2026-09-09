@@ -30,6 +30,7 @@ const STATUS_TONE: Record<PaymentStatus, 'ok' | 'no' | 'warn'> = {
 };
 
 function StatusPill({ payment }: { payment: Payment }) {
+  if (payment.reviewRequired) return <Pill tone="warn">Review required</Pill>;
   if (payment.needsDetails) return <Pill tone="warn">Details needed</Pill>;
   return <Pill tone={STATUS_TONE[payment.status]}>{PAYMENT_STATUS_LABELS[payment.status]}</Pill>;
 }
@@ -187,7 +188,8 @@ export default function PaymentsPage() {
     { key: 'category', header: 'Category', render: (p) => p.category ?? '—' },
     {
       key: 'amount', header: 'Amount', sortKey: 'amount',
-      render: (p) => <Money amount={p.amount} currency={p.currency} direction={isReversed(p.status) ? 'out' : p.status === 'paid' ? 'in' : undefined} />,
+      render: (p) => <Money amount={p.amount} currency={p.currency}
+        direction={isReversed(p.status) ? 'out' : p.status === 'paid' && !p.reviewRequired ? 'in' : undefined} />,
     },
     ...(canScope ? [{
       key: 'fee', header: 'Fee',
@@ -308,7 +310,7 @@ export default function PaymentsPage() {
             <DetailRow label="MantaPay transaction ID">{detail.providerTransactionId ?? '—'}</DetailRow>
             <DetailRow label="Customer">{detail.customer ?? '—'}{detail.customerTelegram ? <span className="sub inline"> · {detail.customerTelegram}</span> : null}</DetailRow>
             <DetailRow label="Category">{detail.category ?? '—'}</DetailRow>
-            {canReverse && !isReversed(detail.status) ? (
+            {canReverse && !isReversed(detail.status) && !detail.reviewRequired ? (
               <ReassignFields
                 key={detail.id}
                 kind="payment"
@@ -328,7 +330,8 @@ export default function PaymentsPage() {
                 <DetailRow label={labels.agent}>{detail.agent ?? '—'}</DetailRow>
               </>
             )}
-            <DetailRow label="Amount"><Money amount={detail.amount} currency={detail.currency} direction="in" /></DetailRow>
+            <DetailRow label="Amount"><Money amount={detail.amount} currency={detail.currency}
+              direction={detail.reviewRequired ? undefined : 'in'} /></DetailRow>
             {detail.platformFee != null && (
               <>
                 <DetailRow label="Platform fee"><Money amount={detail.platformFee} direction="out" /></DetailRow>
@@ -336,12 +339,15 @@ export default function PaymentsPage() {
               </>
             )}
             <DetailRow label="Date"><DateCell ts={detail.occurredAt} /></DetailRow>
+            {detail.reviewRequired && (
+              <div className="warnbar">This duplicate single-use charge needs manual review and refund.</div>
+            )}
             {isReversed(detail.status) && <div className="warnbar">This sale has been reversed.</div>}
             <div className="modal-actions">
               {detail.needsDetails && canComplete && (
                 <button className="btn" onClick={() => setCompleting(detail)}>Complete details</button>
               )}
-              {detail.status === 'paid' && canReverse && (
+              {detail.status === 'paid' && !detail.reviewRequired && canReverse && (
                 <>
                   <button className="btn danger" onClick={() => setReversing({ payment: detail, kind: 'refund' })}>Record refund</button>
                   <button className="btn ghost" onClick={() => setReversing({ payment: detail, kind: 'chargeback' })}>Record chargeback</button>

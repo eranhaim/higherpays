@@ -166,21 +166,51 @@ test('a pending attempt is preserved and can later become the approved sale', as
 });
 
 test('concurrent approvals of one single-use link post exactly one sale', async () => {
-  const t = await createTenant(app);
+  const t = await createTenant(app, { checkoutFee: 2 });
   const account = await createAccount(app, t);
   const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
     .send({ accountId: account.id, type: 'single_use', amount: 25, currency: 'EUR' }).expect(201)).body;
   const endpoint = await endpointFor(t.workspaceId);
+  const transactionIds = [newTransId(), newTransId()];
   const responses = await Promise.all([
-    postWebhook(app, endpoint, buildPaidPayload({ reference: link.referenceId, transId: newTransId(), amount: 25 })),
-    postWebhook(app, endpoint, buildPaidPayload({ reference: link.referenceId, transId: newTransId(), amount: 25 })),
+    postWebhook(app, endpoint, buildPaidPayload({ reference: link.referenceId, transId: transactionIds[0], amount: 25 })),
+    postWebhook(app, endpoint, buildPaidPayload({ reference: link.referenceId, transId: transactionIds[1], amount: 25 })),
   ]);
-  assert.deepEqual(responses.map((response) => response.status).sort(), [200, 422]);
+  assert.deepEqual(responses.map((response) => response.status).sort(), [200, 200]);
+  assert.equal(responses.filter((response) => response.body.reviewRequired).length, 1);
+  const charges = (await pool.query(
+    `SELECT p.id, p.review_reason, t.id AS transaction_id
+       FROM payments p
+       JOIN transactions t ON t.payment_id=p.id AND t.type='payment'
+      WHERE p.payment_link_id=$1 AND t.status='approved'`,
+    [link.id])).rows;
+  assert.equal(charges.length, 2);
+  assert.equal(charges.filter((charge) => charge.review_reason === 'duplicate_single_use_charge').length, 1);
   assert.equal((await pool.query(
     `SELECT count(*)::int AS count FROM revenue_entries re
       JOIN transactions tx ON tx.id = re.transaction_id
       JOIN payments p ON p.id = tx.payment_id
      WHERE p.payment_link_id = $1 AND re.entry_type = 'sale'`, [link.id])).rows[0].count, 1);
+
+  const listed = (await request(app).get(`/workspaces/${t.workspaceId}/payments`)
+    .set(t.authHeaders).expect(200)).body.items;
+  assert.equal(listed.filter((payment) => payment.reviewRequired).length, 1);
+  assert.equal(listed.find((payment) => payment.reviewRequired).needsDetails, false);
+  const summary = (await request(app).get(`/workspaces/${t.workspaceId}/payments/summary`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(summary.grossContent, 25);
+  assert.equal(summary.approvedPayments, 2);
+  assert.equal(summary.attempts, 2);
+  assert.equal(summary.detailsNeeded, 1);
+
+  const platform = await require('../helpers/tenant').getPlatformAdmin(app);
+  const platformSummary = (await request(app).get(`/workspaces/${t.workspaceId}/payments/summary`)
+    .set({ ...platform.headers, 'X-Workspace-Id': t.workspaceId }).expect(200)).body;
+  assert.equal(platformSummary.checkoutFeeRevenue, 2);
+  const linksSummary = (await request(app).get(`/workspaces/${t.workspaceId}/links/summary`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(linksSummary.successfulPayments, 2);
+  assert.equal(linksSummary.grossSales, 25);
 });
 
 test('a signed chargeback webhook uses the idempotent reversal path', async () => {

@@ -186,8 +186,9 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
        successful AS (
          SELECT p.payment_link_id,
                 COUNT(*)::int AS payment_count,
-                COALESCE(SUM(t.gross), 0) AS gross,
-                COALESCE(SUM(t.gross - COALESCE(re.platform_fee, 0)), 0) AS net
+                COALESCE(SUM(t.gross) FILTER (WHERE p.review_reason IS NULL), 0) AS gross,
+                COALESCE(SUM(t.gross - COALESCE(re.platform_fee, 0))
+                  FILTER (WHERE p.review_reason IS NULL), 0) AS net
            FROM payments p
            JOIN matching_links ml ON ml.id = p.payment_link_id
            JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment' AND t.status = 'approved'
@@ -289,24 +290,25 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
     return badRequest(res, `currency ${cur} is not enabled (supported: ${config.supportedCurrencies.join(', ')})`, ['currency']);
   }
 
-  const ws = (await query('SELECT * FROM workspaces WHERE id = $1', [wid(req)])).rows[0];
-  if (cur !== ws.currency) {
-    return badRequest(res, `currency must match the workspace currency (${ws.currency})`, ['currency']);
-  }
-  // Workspace guardrails, enforced here so the console cannot be bypassed.
-  if (ws.min_link_amount != null && amt < Number(ws.min_link_amount)) {
-    return badRequest(res, `amount is below the workspace minimum of ${Number(ws.min_link_amount)}`, ['amount']);
-  }
-  if (ws.max_link_amount != null && amt > Number(ws.max_link_amount)) {
-    return badRequest(res, `amount is above the workspace maximum of ${Number(ws.max_link_amount)}`, ['amount']);
-  }
-
   // The provider echoes this back unchanged as the attribution key.
   const referenceId = generateOrderReference();
-  const ttlMinutes = ws.link_ttl_minutes == null ? config.linkTtlMinutes : Number(ws.link_ttl_minutes);
-  const expiresAt = type === 'single_use' ? new Date(Date.now() + ttlMinutes * 60_000) : null;
 
   const result = await withTransaction(async (c) => {
+    // This conflicts with the platform currency update's FOR UPDATE lock.
+    // Currency and limits therefore come from the same state as the insert.
+    const ws = (await c.query(
+      'SELECT currency, min_link_amount, max_link_amount, link_ttl_minutes FROM workspaces WHERE id=$1 FOR SHARE',
+      [wid(req)])).rows[0];
+    if (cur !== ws.currency) {
+      return { validation: `currency must match the workspace currency (${ws.currency})`, fields: ['currency'] };
+    }
+    if (ws.min_link_amount != null && amt < Number(ws.min_link_amount)) {
+      return { validation: `amount is below the workspace minimum of ${Number(ws.min_link_amount)}`, fields: ['amount'] };
+    }
+    if (ws.max_link_amount != null && amt > Number(ws.max_link_amount)) {
+      return { validation: `amount is above the workspace maximum of ${Number(ws.max_link_amount)}`, fields: ['amount'] };
+    }
+
     const scope = await resolveDataScope(c, req);
 
     if (scope.kind === 'agent') {
@@ -337,6 +339,8 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
     const checkoutFee = Number(card?.checkout_fee || 0);
 
     const checkoutUrl = generateProviderLink(referenceId);
+    const ttlMinutes = ws.link_ttl_minutes == null ? config.linkTtlMinutes : Number(ws.link_ttl_minutes);
+    const expiresAt = type === 'single_use' ? new Date(Date.now() + ttlMinutes * 60_000) : null;
 
     const link = (await c.query(
       `INSERT INTO payment_links
@@ -353,6 +357,7 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
     return { link };
   });
 
+  if (result.validation) return badRequest(res, result.validation, result.fields);
   if (result.rateLimited) {
     res.setHeader('Retry-After', String(result.rateLimited));
     return res.status(429).json({ error: 'rate_limited', scope: 'agent', retryAfterSeconds: result.rateLimited });
