@@ -158,6 +158,7 @@ async function getPaymentStatus(ws, reference) {
   const outcome = status.resolveOrderOutcome(res.transactions);
   return {
     payment_request_status_id: outcome.transaction ? outcome.transaction.replyCode : null,
+    reply_description: outcome.transaction ? outcome.transaction.replyDesc : null,
     status: outcome.status,
     attempts: outcome.attempts,
     transaction_id: outcome.transaction ? outcome.transaction.transId : null,

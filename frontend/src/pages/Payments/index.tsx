@@ -14,7 +14,7 @@ import {
   type Column, type DateRange, type SortState,
 } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
-import { formatMoney, sum } from '../../lib/format';
+import { formatMoney } from '../../lib/format';
 import {
   isReversed, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, PAYMENT_EXPORT_COLUMNS,
   PROVIDER_FEE_SOURCE_LABELS,
@@ -84,8 +84,8 @@ export default function PaymentsPage() {
   }), [filters.status, filters.accountId, filters.agentId, filters.from, filters.to, filters.needsDetails, search, sort]);
 
   const {
-    payments, categories, customers, accounts, agents,
-    isLoading, isError, hasMore, isLoadingMore, loadMore, complete, recordReversal, reassign, exportCsv,
+    payments, summary, categories, customers, accounts, agents,
+    isLoading, isError, isSummaryLoading, isSummaryError, hasMore, isLoadingMore, loadMore, complete, recordReversal, reassign, exportCsv,
   } = usePaymentsData(query, canScope);
 
   const [detail, setDetail] = useState<Payment | null>(null);
@@ -100,28 +100,26 @@ export default function PaymentsPage() {
     enabled: flowPayment !== null,
   });
 
-  const paid = payments.filter((p) => p.status === 'paid');
-  const failed = payments.filter((p) => p.status === 'failed');
-  const reversed = payments.filter((p) => isReversed(p.status));
-  const gross = sum(paid.map((p) => p.amount));
-  const fees = sum(paid.map((p) => p.platformFee ?? 0));
-  const attempts = paid.length + failed.length + payments.filter((p) => p.status === 'pending').length;
-  const awaiting = payments.filter((p) => p.needsDetails).length;
-  const statsUnknown = isLoading || isError;
+  const statsUnknown = isSummaryLoading || isSummaryError || !summary;
 
   const statCards = [
     {
       key: 'gross', label: 'Gross',
-      card: <StatCard isUnknown={statsUnknown} label="Gross" value={<Money amount={gross} direction="in" />} sub="Gross revenue, before fees" />,
+      card: <StatCard isUnknown={statsUnknown} label="Gross content" value={<Money amount={summary?.grossContent ?? 0} currency={summary?.currency} direction="in" />} sub="Gross revenue, before fees" />,
     },
     ...(canScope ? [{
       key: 'fees', label: 'Platform fees',
-      card: <StatCard isUnknown={statsUnknown} label="Platform fees" value={<Money amount={fees} direction="out" />} sub={`${rateCard.blended.toFixed(1)}%`} />,
+      card: <StatCard isUnknown={statsUnknown} label="Platform fees" value={<Money amount={summary?.platformFees ?? 0} currency={summary?.currency} direction="out" />} sub={`${rateCard.blended.toFixed(1)}%`} />,
     }] : []),
     ...(canScope ? [{
       key: 'netProfit', label: 'Net profit',
       card: <StatCard isUnknown={statsUnknown} label="Net profit"
-        value={<Money amount={gross - fees} direction="in" emphasis />} sub="Gross after platform fees" />,
+        value={<Money amount={summary?.netProfit ?? 0} currency={summary?.currency} direction="in" emphasis />} sub="Gross after platform fees" />,
+    }] : []),
+    ...(canViewFlow ? [{
+      key: 'checkoutFees', label: 'Checkout-fee revenue',
+      card: <StatCard isUnknown={statsUnknown} label="Checkout-fee revenue"
+        value={<Money amount={summary?.checkoutFeeRevenue ?? 0} currency={summary?.currency} direction="in" emphasis />} sub="HigherPays only" />,
     }] : []),
     {
       key: 'approvalRate', label: 'Approval rate',
@@ -129,14 +127,14 @@ export default function PaymentsPage() {
         <StatCard
           isUnknown={statsUnknown}
           label="Approval rate"
-          value={`${attempts ? Math.round((paid.length / attempts) * 100) : 0}%`}
-          sub={`${paid.length} of ${attempts} attempts`}
+          value={`${summary?.approvalRate ?? 0}%`}
+          sub={`${summary?.approvedPayments ?? 0} of ${summary?.attempts ?? 0} attempts`}
         />
       ),
     },
     {
       key: 'detailsNeeded', label: 'Details needed',
-      card: <StatCard isUnknown={statsUnknown} label="Details needed" value={awaiting} sub="Paid, not yet completed" />,
+      card: <StatCard isUnknown={statsUnknown} label="Details needed" value={summary?.detailsNeeded ?? 0} sub="Paid, not yet completed" />,
     },
     {
       key: 'refunded', label: 'Refunded amount',
@@ -144,8 +142,8 @@ export default function PaymentsPage() {
         <StatCard
           isUnknown={statsUnknown}
           label="Refunded amount"
-          value={<Money amount={sum(reversed.map((p) => p.amount))} direction="out" />}
-          sub={`${reversed.length} refunds`}
+          value={<Money amount={summary?.refundedAmount ?? 0} currency={summary?.currency} direction="out" />}
+          sub={`${summary?.refundedCount ?? 0} refunds`}
         />
       ),
     },
@@ -158,8 +156,8 @@ export default function PaymentsPage() {
 
   const columns: Column<Payment>[] = [
     {
-      key: 'reference', header: 'Reference',
-      render: (p) => <span className="ref" title={p.providerTransactionId ?? undefined}>{p.providerTransactionId ?? p.linkReference ?? '—'}</span>,
+      key: 'reference', header: 'HigherPays Order',
+      render: (p) => <span className="ref" title={p.linkReference ?? undefined}>{p.linkReference ?? '—'}</span>,
     },
     {
       key: 'customer', header: 'Customer',
@@ -250,9 +248,9 @@ export default function PaymentsPage() {
         }
       />
 
-      {isError && (
+      {(isError || isSummaryError) && (
         <div className="warnbar" role="alert">
-          Couldn't load payments. The figures below are incomplete — reload to try again.
+          Couldn't load all payment data. Reload to try again.
         </div>
       )}
 
@@ -265,7 +263,7 @@ export default function PaymentsPage() {
           type="search"
           className="search-input"
           aria-label="Search payments"
-          placeholder={`Search reference, customer, ${labels.account.toLowerCase()}, ${labels.agent.toLowerCase()}`}
+          placeholder={`Search HigherPays Order, MantaPay ID, customer, ${labels.account.toLowerCase()}, ${labels.agent.toLowerCase()}`}
           value={filters.search}
           onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
         />
@@ -299,9 +297,10 @@ export default function PaymentsPage() {
         {detail && (
           <>
             <div className="modal-topline">
-              <span className="ref">{detail.providerTransactionId ?? detail.id}</span>
               <StatusPill payment={detail} />
             </div>
+            <DetailRow label="HigherPays Order"><span className="ref">{detail.linkReference ?? '—'}</span></DetailRow>
+            <DetailRow label="MantaPay transaction ID">{detail.providerTransactionId ?? '—'}</DetailRow>
             <DetailRow label="Customer">{detail.customer ?? '—'}{detail.customerTelegram ? <span className="sub inline"> · {detail.customerTelegram}</span> : null}</DetailRow>
             <DetailRow label="Category">{detail.category ?? '—'}</DetailRow>
             {canReverse && !isReversed(detail.status) ? (
@@ -324,7 +323,6 @@ export default function PaymentsPage() {
                 <DetailRow label={labels.agent}>{detail.agent ?? '—'}</DetailRow>
               </>
             )}
-            <DetailRow label="Link">{detail.linkReference ?? '—'}</DetailRow>
             <DetailRow label="Amount"><Money amount={detail.amount} currency={detail.currency} direction="in" /></DetailRow>
             {detail.platformFee != null && (
               <>
@@ -355,7 +353,7 @@ export default function PaymentsPage() {
         open={flowPayment !== null}
         onClose={() => setFlowPayment(null)}
         title="Payment flow"
-        subtitle={flowPayment ? `${flowPayment.providerTransactionId ?? flowPayment.id} · recorded waterfall` : undefined}
+        subtitle={flowPayment ? `HigherPays Order ${flowPayment.linkReference ?? '—'} · recorded waterfall` : undefined}
       >
         {flow.isPending && <p className="sub">Loading the payment flow…</p>}
         {flow.isError && <div className="warnbar" role="alert">Couldn't load the payment flow. Try again.</div>}
@@ -421,6 +419,11 @@ function PaymentFlowContent({ flow }: { flow: PaymentFlow }) {
 
   return (
     <div className="payment-flow">
+      <div className="flow-card">
+        <DetailRow label="HigherPays Order"><span className="ref">{flow.linkReference ?? '—'}</span></DetailRow>
+        <DetailRow label="MantaPay transaction ID">{flow.providerTransactionId ?? '—'}</DetailRow>
+      </div>
+
       <div className="flow-node flow-total">
         <span className="field-label">{flow.status === 'paid' ? 'Customer paid' : 'Customer attempted'}</span>
         <Money amount={flow.customerTotal} currency={flow.currency} direction="in" emphasis />

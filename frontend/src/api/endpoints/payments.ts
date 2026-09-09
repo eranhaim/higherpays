@@ -63,6 +63,7 @@ export interface PaymentFlow {
   paymentId: string;
   status: PaymentStatus;
   currency: string;
+  linkReference: string | null;
   providerTransactionId: string | null;
   customerTotal: number;
   saleAmount: number;
@@ -90,6 +91,23 @@ export interface PaymentFlow {
   };
 }
 
+export interface PaymentsSummary {
+  grossContent: number;
+  /** Only sent to callers with workspace-wide data access. */
+  platformFees?: number;
+  /** Only sent to callers with workspace-wide data access. */
+  netProfit?: number;
+  approvedPayments: number;
+  attempts: number;
+  approvalRate: number;
+  detailsNeeded: number;
+  refundedCount: number;
+  refundedAmount: number;
+  /** Only sent to HigherPays platform administrators. */
+  checkoutFeeRevenue?: number;
+  currency: string;
+}
+
 export const PROVIDER_FEE_SOURCE_LABELS: Record<PaymentFlow['fees']['providerSource'], string> = {
   estimated: 'Estimated',
   actual: 'Actual',
@@ -105,7 +123,7 @@ export interface ListPaymentsQuery {
   /** YYYY-MM-DD, inclusive. */
   from?: string;
   to?: string;
-  /** Matches provider reference, customer, account, agent or link reference. */
+  /** Matches HigherPays Order, MantaPay transaction ID, customer, account, or agent. */
   q?: string;
   needsDetails?: boolean;
   sort?: PaymentSort;
@@ -123,7 +141,8 @@ export interface ExportColumn {
 
 export const PAYMENT_EXPORT_COLUMNS: ExportColumn[] = [
   { key: 'date', label: 'Date' },
-  { key: 'reference', label: 'Reference' },
+  { key: 'reference', label: 'HigherPays Order' },
+  { key: 'providerTransaction', label: 'MantaPay Transaction ID' },
   { key: 'status', label: 'Status' },
   { key: 'gross', label: 'Gross Revenue' },
   { key: 'fee', label: 'Platform Fee', feesOnly: true },
@@ -177,6 +196,9 @@ export const paymentsApi = {
     if (cursor) qs.set('cursor', cursor);
     return api.get<Page<Payment>>(workspacePath(`/payments?${qs.toString()}`));
   },
+
+  summary: (filters: ListPaymentsQuery = {}) =>
+    api.get<PaymentsSummary>(workspacePath(`/payments/summary?${filterParams(filters).toString()}`)),
 
   /** The same filtered list, as a CSV download. */
   exportCsv(filters: ListPaymentsQuery = {}, options: ExportOptions = {}) {

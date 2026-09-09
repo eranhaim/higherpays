@@ -54,6 +54,32 @@ export interface PaymentLink {
   account: string;
   agentId: string | null;
   agent: string | null;
+  latestProviderAttempt: ProviderAttempt | null;
+}
+
+export type ProviderAttemptStatus = 'pending' | 'approved' | 'declined';
+export const PROVIDER_ATTEMPT_STATUSES: ProviderAttemptStatus[] = ['pending', 'approved', 'declined'];
+export const PROVIDER_ATTEMPT_STATUS_LABELS: Record<ProviderAttemptStatus, string> = {
+  pending: 'Pending',
+  approved: 'Approved',
+  declined: 'Declined',
+};
+
+export interface ProviderAttempt {
+  status: ProviderAttemptStatus;
+  replyCode: string | null;
+  replyDescription: string | null;
+  transactionId: string | null;
+  occurredAt: string;
+}
+
+export interface LinksSummary {
+  totalLinks: number;
+  paidLinks: number;
+  successfulPayments: number;
+  grossSales: number;
+  netAfterFees: number;
+  currency: string;
 }
 
 export interface CreateLinkInput {
@@ -91,27 +117,35 @@ export interface ListLinksQuery {
   /** YYYY-MM-DD, inclusive. */
   from?: string;
   to?: string;
-  /** Matches reference, customer name or agent name. */
+  /** Matches HigherPays Order, MantaPay transaction ID, or agent name. */
   q?: string;
   accountId?: string;
+  providerStatus?: ProviderAttemptStatus;
   sort?: LinkSort;
   dir?: 'asc' | 'desc';
 }
 
+function filterParams(filters: ListLinksQuery): URLSearchParams {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (!value) continue;
+    if (key === 'from') qs.set('from', `${value}T00:00:00`);
+    else if (key === 'to') qs.set('to', `${value}T23:59:59.999`);
+    else qs.set(key, value);
+  }
+  return qs;
+}
+
 export const linksApi = {
   async list(cursor: string | null = null, filters: ListLinksQuery = {}): Promise<Page<PaymentLink>> {
-    const qs = new URLSearchParams({ limit: '50' });
+    const qs = filterParams(filters);
+    qs.set('limit', '50');
     if (cursor) qs.set('cursor', cursor);
-    // The date inputs give a day; the server compares timestamps, so the upper
-    // bound has to cover the whole of that day.
-    for (const [k, v] of Object.entries(filters)) {
-      if (!v) continue;
-      if (k === 'from') qs.set('from', `${v}T00:00:00`);
-      else if (k === 'to') qs.set('to', `${v}T23:59:59.999`);
-      else qs.set(k, v);
-    }
     return api.get<Page<PaymentLink>>(workspacePath(`/links?${qs.toString()}`));
   },
+
+  summary: (filters: ListLinksQuery = {}) =>
+    api.get<LinksSummary>(workspacePath(`/links/summary?${filterParams(filters).toString()}`)),
 
   create: (input: CreateLinkInput) => api.post<PaymentLink>(workspacePath('/links'), input),
 

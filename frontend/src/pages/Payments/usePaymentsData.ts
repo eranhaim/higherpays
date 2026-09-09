@@ -3,7 +3,7 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
   paymentsApi, categoriesApi, customersApi, accountsApi, agentsApi,
   type Payment, type ListPaymentsQuery, type CompletePaymentInput, type Category, type Customer, type Account, type Agent,
-  type ReassignInput,
+  type ReassignInput, type PaymentsSummary,
 } from '../../api/endpoints';
 
 /** What the export dialog collects. Range strings are yyyy-mm-dd, '' for open. */
@@ -16,12 +16,15 @@ export interface ExportInput {
 
 export interface UsePaymentsDataResult {
   payments: Payment[];
+  summary: PaymentsSummary | null;
   categories: Category[];
   customers: Customer[];
   accounts: Account[];
   agents: Agent[];
   isLoading: boolean;
   isError: boolean;
+  isSummaryLoading: boolean;
+  isSummaryError: boolean;
   hasMore: boolean;
   isLoadingMore: boolean;
   loadMore: () => void;
@@ -45,6 +48,11 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     queryFn: ({ pageParam }) => paymentsApi.list(pageParam, filters),
     initialPageParam: null as string | null,
     getNextPageParam: (last) => last.nextCursor,
+    enabled,
+  });
+  const summary = useQuery({
+    queryKey: ['payments-summary', activeWorkspaceId, filters],
+    queryFn: () => paymentsApi.summary(filters),
     enabled,
   });
   const categories = useQuery({
@@ -71,7 +79,9 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['payments', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['payments-summary', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['links', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['links-summary', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['customers', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['payouts-breakdown', activeWorkspaceId] });
   };
@@ -92,12 +102,15 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
 
   return {
     payments: payments.data?.pages.flatMap((p) => p.items) ?? [],
+    summary: summary.data ?? null,
     categories: categories.data ?? [],
     customers: customers.data ?? [],
     accounts: accounts.data ?? [],
     agents: agents.data ?? [],
     isLoading: payments.isLoading,
     isError: payments.isError,
+    isSummaryLoading: summary.isPending,
+    isSummaryError: summary.isError,
     hasMore: payments.hasNextPage,
     isLoadingMore: payments.isFetchingNextPage,
     loadMore: () => { void payments.fetchNextPage(); },

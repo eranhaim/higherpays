@@ -1,5 +1,4 @@
 'use strict';
-const crypto = require('crypto');
 const express = require('express');
 const { query, withTransaction } = require('../db');
 const { requirePermission } = require('../middleware');
@@ -12,6 +11,7 @@ const { status: vocab } = require('../schema/entities');
 const config = require('../config');
 const linksService = require('../services/links.service');
 const { resolveAttribution } = require('../services/attribution');
+const { generateOrderReference } = require('../lib/orderReference');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -24,6 +24,30 @@ const AGENT_RATE_WINDOW_SECONDS = 30;   // one link per agent per 30s
 const EFFECTIVE_STATUS = `CASE WHEN pl.status = 'active' AND pl.expires_at IS NOT NULL AND pl.expires_at < now()
                                THEN 'expired' ELSE pl.status END`;
 
+const LATEST_ATTEMPT = `
+  LEFT JOIN LATERAL (
+    SELECT t.status AS provider_status,
+           t.provider_transaction_id,
+           t.occurred_at AS provider_occurred_at,
+           COALESCE(
+             t.raw_payload->>'reply_code',
+             t.raw_payload->>'replyCode',
+             t.raw_payload->>'Reply',
+             t.raw_payload->>'payment_request_status_id'
+           ) AS provider_reply_code,
+           COALESCE(
+             t.raw_payload->>'reply_desc',
+             t.raw_payload->>'replyDesc',
+             t.raw_payload->>'ReplyDesc',
+             t.raw_payload->>'reply_description'
+           ) AS provider_reply_description
+      FROM payments p
+      JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
+     WHERE p.payment_link_id = pl.id
+     ORDER BY t.occurred_at DESC, t.id DESC
+     LIMIT 1
+  ) latest ON true`;
+
 const publicLink = (l) => ({
   id: l.id, type: l.type, pricingMode: l.pricing_mode,
   amount: l.amount == null ? null : Number(l.amount), currency: l.currency,
@@ -31,7 +55,46 @@ const publicLink = (l) => ({
   checkoutUrl: l.checkout_url, expiresAt: l.expires_at, paidAt: l.paid_at, createdAt: l.created_at,
   accountId: l.account_id, account: l.account,
   agentId: l.created_by_agent_id, agent: l.agent,
+  latestProviderAttempt: l.provider_status ? {
+    status: l.provider_status,
+    replyCode: l.provider_reply_code,
+    replyDescription: l.provider_reply_description,
+    transactionId: l.provider_transaction_id,
+    occurredAt: l.provider_occurred_at,
+  } : null,
 });
+
+function numberFilter(value) {
+  return value === undefined || value === '' || Number.isNaN(Number(value)) ? null : Number(value);
+}
+
+function linkFilterParams(req, scope) {
+  const q = typeof req.query.q === 'string' && req.query.q.trim()
+    ? `%${req.query.q.trim().toLowerCase()}%`
+    : null;
+  return [
+    wid(req), ...scopeParams(scope),
+    req.query.status || null, req.query.type || null,
+    numberFilter(req.query.min), numberFilter(req.query.max),
+    req.query.from || null, req.query.to || null,
+    req.query.accountId || null, q, req.query.providerStatus || null,
+  ];
+}
+
+const LINK_FILTERS = `
+  ($2::uuid IS NULL OR pl.created_by_agent_id = $2::uuid)
+  AND ($3::uuid IS NULL OR pl.account_id = $3::uuid)
+  AND ($4::text IS NULL OR pl.effective_status = $4::text)
+  AND ($5::text IS NULL OR pl.type = $5::text)
+  AND ($6::numeric IS NULL OR pl.amount >= $6::numeric)
+  AND ($7::numeric IS NULL OR pl.amount <= $7::numeric)
+  AND ($8::timestamptz IS NULL OR pl.created_at >= $8::timestamptz)
+  AND ($9::timestamptz IS NULL OR pl.created_at <= $9::timestamptz)
+  AND ($10::uuid IS NULL OR pl.account_id = $10::uuid)
+  AND ($11::text IS NULL OR lower(pl.reference_id) LIKE $11::text
+       OR lower(COALESCE(pl.provider_transaction_id, '')) LIKE $11::text
+       OR lower(COALESCE(u.full_name, '')) LIKE $11::text)
+  AND ($12::text IS NULL OR pl.provider_status = $12::text)`;
 
 // The public endpoint starts MantaPay's APM page and redirects the payer to
 // the returned CentroBill URL. No card data touches this server.
@@ -55,7 +118,7 @@ function sortFor(req) {
   return { ...LINK_SORTS[key], dir, after: dir === 'ASC' ? '>' : '<' };
 }
 
-// GET /?limit&cursor&sort&dir&status&type&min&max&from&to&q&accountId
+// GET /?limit&cursor&sort&dir&status&type&min&max&from&to&q&accountId&providerStatus
 // Newest first by default. An agent sees the links they created; an owner the
 // links against their account; everyone else the workspace. Filtering happens
 // here, not in the browser: the list is cursor-paginated.
@@ -63,16 +126,19 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
   const limit = parseLimit(req.query.limit);
   const sort = sortFor(req);
   const cursor = decodeCursor(req.query.cursor);
-  const num = (v) => (v === undefined || v === '' || Number.isNaN(Number(v)) ? null : Number(v));
-  const min = num(req.query.min), max = num(req.query.max);
+  const min = numberFilter(req.query.min), max = numberFilter(req.query.max);
   if (min != null && max != null && max < min) return badRequest(res, 'max must be >= min', ['min', 'max']);
-  const q = typeof req.query.q === 'string' && req.query.q.trim() ? `%${req.query.q.trim().toLowerCase()}%` : null;
 
   const rows = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
     return (await c.query(
       `WITH effective AS (
-         SELECT pl.*, ${EFFECTIVE_STATUS} AS effective_status FROM payment_links pl WHERE pl.workspace_id = $1
+         SELECT pl.*, ${EFFECTIVE_STATUS} AS effective_status,
+                latest.provider_status, latest.provider_reply_code, latest.provider_reply_description,
+                latest.provider_transaction_id, latest.provider_occurred_at
+           FROM payment_links pl
+           ${LATEST_ATTEMPT}
+          WHERE pl.workspace_id = $1
        )
        SELECT pl.*, pl.effective_status AS status,
               a.name AS account, u.full_name AS agent
@@ -80,27 +146,68 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
          JOIN accounts a ON a.id = pl.account_id
          LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
          LEFT JOIN users u ON u.id = ag.user_id
-        WHERE ($2::uuid IS NULL OR pl.created_by_agent_id = $2::uuid)
-          AND ($3::uuid IS NULL OR pl.account_id = $3::uuid)
-          AND ($4::text IS NULL OR (${sort.expr}, pl.id) ${sort.after} ($4::${sort.cast}, $5::uuid))
-          AND ($7::text IS NULL OR pl.effective_status = $7::text)
-          AND ($8::text IS NULL OR pl.type = $8::text)
-          AND ($9::numeric IS NULL OR pl.amount >= $9::numeric)
-          AND ($10::numeric IS NULL OR pl.amount <= $10::numeric)
-          AND ($11::timestamptz IS NULL OR pl.created_at >= $11::timestamptz)
-          AND ($12::timestamptz IS NULL OR pl.created_at <= $12::timestamptz)
-          AND ($13::uuid IS NULL OR pl.account_id = $13::uuid)
-          AND ($14::text IS NULL OR lower(pl.reference_id) LIKE $14::text
-               OR lower(u.full_name) LIKE $14::text)
-        ORDER BY ${sort.expr} ${sort.dir}, pl.id ${sort.dir} LIMIT $6`,
-      [wid(req), ...scopeParams(scope),
-        cursor ? cursor.value : null, cursor ? cursor.id : null, limit + 1,
-        req.query.status || null, req.query.type || null, min, max,
-        req.query.from || null, req.query.to || null,
-        req.query.accountId || null, q])).rows;
+        WHERE ${LINK_FILTERS}
+          AND ($13::text IS NULL OR (${sort.expr}, pl.id) ${sort.after} ($13::${sort.cast}, $14::uuid))
+        ORDER BY ${sort.expr} ${sort.dir}, pl.id ${sort.dir} LIMIT $15`,
+      [...linkFilterParams(req, scope),
+        cursor ? cursor.value : null, cursor ? cursor.id : null, limit + 1])).rows;
   });
   const result = page(rows, limit, sort.keyOf, (r) => r.id);
   res.json({ items: result.items.map(publicLink), nextCursor: result.nextCursor });
+}));
+
+// GET /summary — every matching link and successful payment, before pagination.
+router.get('/summary', requirePermission('links.view'), asyncHandler(async (req, res) => {
+  const min = numberFilter(req.query.min), max = numberFilter(req.query.max);
+  if (min != null && max != null && max < min) return badRequest(res, 'max must be >= min', ['min', 'max']);
+
+  const row = await withTransaction(async (c) => {
+    const scope = await resolveDataScope(c, req);
+    return (await c.query(
+      `WITH effective AS (
+         SELECT pl.*, ${EFFECTIVE_STATUS} AS effective_status,
+                latest.provider_status, latest.provider_transaction_id
+           FROM payment_links pl
+           ${LATEST_ATTEMPT}
+          WHERE pl.workspace_id = $1
+       ),
+       matching_links AS (
+         SELECT pl.id
+           FROM effective pl
+           JOIN accounts a ON a.id = pl.account_id
+           LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
+           LEFT JOIN users u ON u.id = ag.user_id
+          WHERE ${LINK_FILTERS}
+       ),
+       successful AS (
+         SELECT p.payment_link_id,
+                COUNT(*)::int AS payment_count,
+                COALESCE(SUM(t.gross), 0) AS gross,
+                COALESCE(SUM(t.gross - COALESCE(re.platform_fee, 0)), 0) AS net
+           FROM payments p
+           JOIN matching_links ml ON ml.id = p.payment_link_id
+           JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment' AND t.status = 'approved'
+           LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
+          GROUP BY p.payment_link_id
+       )
+       SELECT COUNT(*)::int AS total_links,
+              COUNT(*) FILTER (WHERE successful.payment_count > 0)::int AS paid_links,
+              COALESCE(SUM(successful.payment_count), 0)::int AS successful_payments,
+              COALESCE(SUM(successful.gross), 0) AS gross_sales,
+              COALESCE(SUM(successful.net), 0) AS net_after_fees,
+              (SELECT currency FROM workspaces WHERE id = $1) AS currency
+         FROM matching_links
+         LEFT JOIN successful ON successful.payment_link_id = matching_links.id`,
+      linkFilterParams(req, scope))).rows[0];
+  });
+  res.json({
+    totalLinks: row.total_links,
+    paidLinks: row.paid_links,
+    successfulPayments: row.successful_payments,
+    grossSales: Number(row.gross_sales),
+    netAfterFees: Number(row.net_after_fees),
+    currency: row.currency,
+  });
 }));
 
 // GET /:id
@@ -108,11 +215,14 @@ router.get('/:id', requirePermission('links.view'), asyncHandler(async (req, res
   const out = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
     const row = (await c.query(
-      `SELECT pl.*, ${EFFECTIVE_STATUS} AS status, a.name AS account, u.full_name AS agent
+      `SELECT pl.*, ${EFFECTIVE_STATUS} AS status, a.name AS account, u.full_name AS agent,
+              latest.provider_status, latest.provider_reply_code, latest.provider_reply_description,
+              latest.provider_transaction_id, latest.provider_occurred_at
          FROM payment_links pl
          JOIN accounts a ON a.id = pl.account_id
          LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
          LEFT JOIN users u ON u.id = ag.user_id
+         ${LATEST_ATTEMPT}
         WHERE pl.workspace_id = $1 AND pl.id = $2
           AND ($3::uuid IS NULL OR pl.created_by_agent_id = $3::uuid)
           AND ($4::uuid IS NULL OR pl.account_id = $4::uuid)`,
@@ -147,9 +257,8 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
     return badRequest(res, `amount is above the workspace maximum of ${Number(ws.max_link_amount)}`, ['amount']);
   }
 
-  // The provider echoes this back as the attribution key; 64 random bits and a
-  // UNIQUE index mean a collision cannot credit the wrong account.
-  const referenceId = 'ord_' + crypto.randomBytes(8).toString('hex');
+  // The provider echoes this back unchanged as the attribution key.
+  const referenceId = generateOrderReference();
   const ttlMinutes = ws.link_ttl_minutes == null ? config.linkTtlMinutes : Number(ws.link_ttl_minutes);
   const expiresAt = type === 'single_use' ? new Date(Date.now() + ttlMinutes * 60_000) : null;
 
@@ -264,11 +373,14 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
 
     return {
       link: (await c.query(`
-        SELECT pl.*, ${EFFECTIVE_STATUS} AS status, a.name AS account, u.full_name AS agent
+        SELECT pl.*, ${EFFECTIVE_STATUS} AS status, a.name AS account, u.full_name AS agent,
+               latest.provider_status, latest.provider_reply_code, latest.provider_reply_description,
+               latest.provider_transaction_id, latest.provider_occurred_at
           FROM payment_links pl
           JOIN accounts a ON a.id = pl.account_id
           LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
           LEFT JOIN users u ON u.id = ag.user_id
+          ${LATEST_ATTEMPT}
          WHERE pl.id = $1`, [link.id])).rows[0],
       futureOnly: true,
       from: { accountId: link.account_id, agentId: link.created_by_agent_id },

@@ -5,7 +5,7 @@ import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useRateCard } from '../../hooks/useRateCard';
 import { feeBreakdown } from '../../business/feeBreakdown';
-import { formatMoney, sum } from '../../lib/format';
+import { formatMoney } from '../../lib/format';
 import Modal from '../../components/Modal';
 import ReassignFields from '../../components/ReassignFields';
 import { toast } from '../../lib/toast';
@@ -16,8 +16,9 @@ import {
 } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import {
-  LINK_TYPES, LINK_TYPE_LABELS, LINK_STATUSES, LINK_STATUS_LABELS, isShareable,
-  type PaymentLink, type LinkStatus, type LinkType, type LinkSort,
+  LINK_TYPES, LINK_TYPE_LABELS, LINK_STATUSES, LINK_STATUS_LABELS,
+  PROVIDER_ATTEMPT_STATUSES, PROVIDER_ATTEMPT_STATUS_LABELS, isShareable,
+  type PaymentLink, type LinkStatus, type LinkType, type LinkSort, type ProviderAttemptStatus,
 } from '../../api/endpoints';
 import { useLinksData } from './useLinksData';
 import { DEFAULT_FILTERS, hasActiveFilters, rangeIsInverted, type LinksFilters } from './filters';
@@ -29,6 +30,12 @@ const STATUS_TONE: Record<LinkStatus, 'ok' | 'no' | 'warn' | 'muted'> = {
   expired: 'muted',
   cancelled: 'muted',
   refunded: 'no',
+};
+
+const PROVIDER_STATUS_TONE: Record<ProviderAttemptStatus, 'ok' | 'no' | 'warn'> = {
+  approved: 'ok',
+  pending: 'warn',
+  declined: 'no',
 };
 
 export default function LinksPage() {
@@ -60,12 +67,13 @@ export default function LinksPage() {
     to: filters.to || undefined,
     q: search.trim() || undefined,
     accountId: filters.accountId || undefined,
+    providerStatus: filters.providerStatus || undefined,
     sort: sort.key as LinkSort,
     dir: sort.dir,
-  }), [filters.status, filters.type, min, max, filters.from, filters.to, filters.accountId, search, sort]);
+  }), [filters.status, filters.type, min, max, filters.from, filters.to, filters.accountId, filters.providerStatus, search, sort]);
 
   const {
-    links, accounts, linkLimits, isLoading, isError, hasMore, isLoadingMore, loadMore,
+    links, summary, accounts, linkLimits, isLoading, isError, isSummaryLoading, isSummaryError, hasMore, isLoadingMore, loadMore,
     createLink, cancelLink, reassignLink,
   } = useLinksData(query);
   const [createOpen, setCreateOpen] = useState(false);
@@ -78,19 +86,18 @@ export default function LinksPage() {
   const [cancelling, setCancelling] = useState<PaymentLink | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
 
-  const paid = links.filter((l) => l.status === 'pending' || l.status === 'done');
-  const conversion = links.length ? Math.round((paid.length / links.length) * 100) : 0;
-  const revenue = sum(paid.map((l) => l.amount ?? 0));
-  const statsUnknown = isLoading || isError;
+  const conversion = summary?.totalLinks ? Math.round((summary.paidLinks / summary.totalLinks) * 100) : 0;
+  const statsUnknown = isSummaryLoading || isSummaryError || !summary;
 
   const range: DateRange = { from: filters.from, to: filters.to };
   const setRange = (r: DateRange) => setFilters((f) => ({ ...f, ...r }));
 
   const statCards = [
-    { key: 'links', label: 'Links', card: <StatCard isUnknown={statsUnknown} label="Links" value={links.length} sub={hasMore ? 'Loaded so far' : 'Matching'} /> },
-    { key: 'paid', label: 'Paid', card: <StatCard isUnknown={statsUnknown} label="Paid" value={paid.length} sub="Single-use links paid" /> },
-    { key: 'conversion', label: 'Conversion', card: <StatCard isUnknown={statsUnknown} label="Conversion" value={`${conversion}%`} sub="Paid ÷ links" /> },
-    { key: 'revenue', label: 'Revenue', card: <StatCard isUnknown={statsUnknown} label="Revenue" value={<Money amount={revenue} direction="in" emphasis />} sub="From paid links" /> },
+    { key: 'links', label: 'Links', card: <StatCard isUnknown={statsUnknown} label="Links" value={summary?.totalLinks ?? 0} sub="Matching links" /> },
+    { key: 'paid', label: 'Paid links', card: <StatCard isUnknown={statsUnknown} label="Paid links" value={summary?.paidLinks ?? 0} sub={`${conversion}% conversion`} /> },
+    { key: 'payments', label: 'Successful payments', card: <StatCard isUnknown={statsUnknown} label="Successful payments" value={summary?.successfulPayments ?? 0} sub="Reusable payments count separately" /> },
+    { key: 'gross', label: 'Gross sales', card: <StatCard isUnknown={statsUnknown} label="Gross sales" value={<Money amount={summary?.grossSales ?? 0} currency={summary?.currency} direction="in" />} sub="Content sales" /> },
+    { key: 'net', label: 'Net after fees', card: <StatCard isUnknown={statsUnknown} label="Net after fees" value={<Money amount={summary?.netAfterFees ?? 0} currency={summary?.currency} direction="in" emphasis />} sub="Gross less platform fees" /> },
   ];
   const statsView = useViewLayout('links.stats', statCards);
 
@@ -145,7 +152,7 @@ export default function LinksPage() {
   };
 
   const columns: Column<PaymentLink>[] = [
-    { key: 'ref', header: 'Ref', render: (l) => <span className="ref" title={l.referenceId}>{l.referenceId}</span> },
+    { key: 'ref', header: 'HigherPays Order', render: (l) => <span className="ref" title={l.referenceId}>{l.referenceId}</span> },
     {
       key: 'type', header: 'Type', render: (l) => <Pill>{LINK_TYPE_LABELS[l.type]}</Pill>,
       isFiltered: filters.type !== '',
@@ -192,6 +199,30 @@ export default function LinksPage() {
       ),
     },
     {
+      key: 'provider', header: 'Provider attempt',
+      render: (l) => l.latestProviderAttempt ? (
+        <div>
+          <Pill tone={PROVIDER_STATUS_TONE[l.latestProviderAttempt.status]}>
+            {PROVIDER_ATTEMPT_STATUS_LABELS[l.latestProviderAttempt.status]}
+          </Pill>
+          <div className="sub">
+            {[l.latestProviderAttempt.replyCode, l.latestProviderAttempt.replyDescription].filter(Boolean).join(' · ') || 'No reply details'}
+            {' · '}<DateCell ts={l.latestProviderAttempt.occurredAt} />
+          </div>
+        </div>
+      ) : '—',
+      isFiltered: filters.providerStatus !== '',
+      filter: (
+        <Select label="Provider attempt" hideLabel value={filters.providerStatus}
+          onChange={(v) => setFilters((f) => ({ ...f, providerStatus: v as LinksFilters['providerStatus'] }))}>
+          <option value="">All provider attempts</option>
+          {PROVIDER_ATTEMPT_STATUSES.map((status) => (
+            <option key={status} value={status}>{PROVIDER_ATTEMPT_STATUS_LABELS[status]}</option>
+          ))}
+        </Select>
+      ),
+    },
+    {
       key: 'created', header: 'Created', sortKey: 'created', render: (l) => <DateCell ts={l.createdAt} />,
       isFiltered: filters.from !== '' || filters.to !== '',
       filter: <Calendar value={range} onChange={setRange} />,
@@ -228,9 +259,9 @@ export default function LinksPage() {
         }
       />
 
-      {isError && (
+      {(isError || isSummaryError) && (
         <div className="warnbar" role="alert">
-          Couldn't load payment links. The figures below are incomplete — reload to try again.
+          Couldn't load all payment-link data. Reload to try again.
         </div>
       )}
       {inverted && (
@@ -244,7 +275,7 @@ export default function LinksPage() {
       </StatGrid>
 
       <FilterBar>
-        <input type="search" className="search-input" aria-label="Search links" placeholder="Search ref, agent"
+        <input type="search" className="search-input" aria-label="Search links" placeholder="Search HigherPays Order, MantaPay ID, agent"
           value={filters.search} onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))} />
         <button className="btn ghost" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear filters</button>
         <ViewPicker label="Edit columns" view={columnsView} />
@@ -276,9 +307,9 @@ export default function LinksPage() {
         {detail && (
           <>
             <div className="modal-topline">
-              <span className="ref">{detail.referenceId}</span>
               <Pill tone={STATUS_TONE[detail.status]}>{LINK_STATUS_LABELS[detail.status]}</Pill>
             </div>
+            <DetailRow label="HigherPays Order"><span className="ref">{detail.referenceId}</span></DetailRow>
             <DetailRow label="Type">{LINK_TYPE_LABELS[detail.type]}</DetailRow>
             {canReassign && detail.status !== 'refunded' ? (
               <ReassignFields
@@ -303,6 +334,20 @@ export default function LinksPage() {
             <DetailRow label="Amount">{detail.amount == null ? '—' : <Money amount={detail.amount} currency={detail.currency} emphasis />}</DetailRow>
             <DetailRow label="Created"><DateCell ts={detail.createdAt} /></DetailRow>
             {detail.paidAt && <DetailRow label="Paid"><DateCell ts={detail.paidAt} /></DetailRow>}
+            {detail.latestProviderAttempt && (
+              <>
+                <DetailRow label="Provider attempt">
+                  <Pill tone={PROVIDER_STATUS_TONE[detail.latestProviderAttempt.status]}>
+                    {PROVIDER_ATTEMPT_STATUS_LABELS[detail.latestProviderAttempt.status]}
+                  </Pill>
+                </DetailRow>
+                <DetailRow label="MantaPay transaction ID">{detail.latestProviderAttempt.transactionId ?? '—'}</DetailRow>
+                <DetailRow label="MantaPay reply">
+                  {[detail.latestProviderAttempt.replyCode, detail.latestProviderAttempt.replyDescription].filter(Boolean).join(' · ') || '—'}
+                </DetailRow>
+                <DetailRow label="Provider attempt time"><DateCell ts={detail.latestProviderAttempt.occurredAt} /></DetailRow>
+              </>
+            )}
             {isShareable(detail.status) && detail.checkoutUrl && (
               <div className="field">
                 <label htmlFor="detail-url">Checkout URL</label>

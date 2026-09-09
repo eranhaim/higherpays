@@ -5,8 +5,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const request = require('supertest');
 const { app, pool } = require('../helpers/setup');
-const { createTenant, createAccount, createAgent, assignAgent, createCategory } = require('../helpers/tenant');
-const { paySale } = require('../helpers/webhook');
+const { createTenant, createAccount, createAgent, assignAgent, createCategory, getPlatformAdmin } = require('../helpers/tenant');
+const { paySale, endpointFor, buildPaidPayload, postWebhook, newTransId } = require('../helpers/webhook');
 
 test('a paid payment waits for details; completing it creates the customer and finishes the link', async () => {
   const t = await createTenant(app);
@@ -77,4 +77,49 @@ test('an account owner sees their own payments and none of the fees', async () =
   const admin = (await request(app).get(`/workspaces/${t.workspaceId}/payments`).set(t.authHeaders).expect(200)).body.items;
   assert.equal(admin.length, 2);
   assert.ok(admin[0].platformFee > 0);
+});
+
+test('payment summaries use all filtered rows and keep checkout-fee revenue platform-only', async () => {
+  const t = await createTenant(app, { checkoutFee: 2 });
+  const account = await createAccount(app, t);
+  const paid = await paySale(app, t, account, 40);
+  const refunded = await paySale(app, t, account, 20);
+  await request(app).post(`/workspaces/${t.workspaceId}/payments/${refunded.paymentId}/refund`)
+    .set(t.authHeaders).expect(200);
+
+  const failedLink = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+    .send({ accountId: account.id, type: 'single_use', amount: 30, currency: 'EUR' }).expect(201)).body;
+  const failedId = newTransId();
+  await postWebhook(app, await endpointFor(t.workspaceId), buildPaidPayload({
+    reference: failedLink.referenceId,
+    transId: failedId,
+    amount: 30,
+    replyCode: '051',
+  })).expect(200);
+
+  const summary = (await request(app).get(`/workspaces/${t.workspaceId}/payments/summary`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(summary.grossContent, 40);
+  assert.ok(summary.platformFees > 0);
+  assert.equal(summary.netProfit, summary.grossContent - summary.platformFees);
+  assert.equal(summary.approvedPayments, 1);
+  assert.equal(summary.attempts, 2);
+  assert.equal(summary.approvalRate, 50);
+  assert.equal(summary.detailsNeeded, 1);
+  assert.equal(summary.refundedCount, 1);
+  assert.equal(summary.refundedAmount, 20);
+  assert.equal(summary.checkoutFeeRevenue, undefined);
+
+  const failed = (await request(app).get(`/workspaces/${t.workspaceId}/payments/summary?status=failed&q=${failedId}`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(failed.attempts, 1);
+  assert.equal(failed.approvedPayments, 0);
+
+  const platform = await getPlatformAdmin(app);
+  const platformSummary = (await request(app).get(`/workspaces/${t.workspaceId}/payments/summary`)
+    .set(platform.headers).expect(200)).body;
+  assert.equal(platformSummary.checkoutFeeRevenue, 4);
+  assert.equal(paid.link.referenceId, (await request(app)
+    .get(`/workspaces/${t.workspaceId}/payments?q=${paid.link.referenceId}`)
+    .set(t.authHeaders).expect(200)).body.items[0].linkReference);
 });

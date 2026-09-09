@@ -1,4 +1,4 @@
-import type { LinkStatus, LinkType } from '../../api/endpoints';
+import type { LinkStatus, LinkType, ProviderAttemptStatus } from '../../api/endpoints';
 
 /**
  * Link list filters. These are sent to the server — the list is cursor
@@ -12,6 +12,7 @@ export interface LinksFilters {
   accountId: string;
   type: '' | LinkType;
   status: '' | LinkStatus;
+  providerStatus: '' | ProviderAttemptStatus;
   min: string;
   max: string;
   from: string;
@@ -20,7 +21,7 @@ export interface LinksFilters {
 }
 
 export const DEFAULT_FILTERS: LinksFilters = {
-  accountId: '', type: '', status: '', min: '', max: '', from: '', to: '', search: '',
+  accountId: '', type: '', status: '', providerStatus: '', min: '', max: '', from: '', to: '', search: '',
 };
 
 /** True when the user has narrowed the list at all. */

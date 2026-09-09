@@ -2,7 +2,7 @@ import { useQuery, useInfiniteQuery, useMutation, useQueryClient, keepPreviousDa
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
   linksApi, accountsApi, workspacesApi,
-  type ListLinksQuery, type PaymentLink, type Account, type LinkLimits, type LinkType, type ReassignInput,
+  type ListLinksQuery, type PaymentLink, type LinksSummary, type Account, type LinkLimits, type LinkType, type ReassignInput,
 } from '../../api/endpoints';
 
 export interface CreateLinkFormInput {
@@ -14,10 +14,13 @@ export interface CreateLinkFormInput {
 
 export interface UseLinksDataResult {
   links: PaymentLink[];
+  summary: LinksSummary | null;
   accounts: Account[];
   linkLimits: LinkLimits | null;
   isLoading: boolean;
   isError: boolean;
+  isSummaryLoading: boolean;
+  isSummaryError: boolean;
   hasMore: boolean;
   isLoadingMore: boolean;
   loadMore: () => void;
@@ -45,6 +48,12 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     enabled,
   });
   const accounts = useQuery({ queryKey: ['accounts', activeWorkspaceId], queryFn: () => accountsApi.list(), enabled });
+  const summary = useQuery({
+    queryKey: ['links-summary', activeWorkspaceId, filters],
+    queryFn: () => linksApi.summary(filters),
+    enabled,
+    placeholderData: keepPreviousData,
+  });
   const linkLimits = useQuery({
     queryKey: ['link-limits', activeWorkspaceId],
     queryFn: () => workspacesApi.getLinkLimits(),
@@ -52,7 +61,10 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     staleTime: 5 * 60_000,
   });
 
-  const invalidateLinks = () => queryClient.invalidateQueries({ queryKey: ['links', activeWorkspaceId] });
+  const invalidateLinks = () => {
+    queryClient.invalidateQueries({ queryKey: ['links', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['links-summary', activeWorkspaceId] });
+  };
 
   const create = useMutation({
     mutationFn: (input: CreateLinkFormInput) => linksApi.create({ ...input, currency }),
@@ -66,10 +78,13 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
   });
   return {
     links: links.data?.pages.flatMap((p) => p.items) ?? [],
+    summary: summary.data ?? null,
     accounts: accounts.data ?? [],
     linkLimits: linkLimits.data ?? null,
     isLoading: links.isLoading,
     isError: links.isError,
+    isSummaryLoading: summary.isPending,
+    isSummaryError: summary.isError,
     hasMore: links.hasNextPage,
     isLoadingMore: links.isFetchingNextPage,
     loadMore: () => { void links.fetchNextPage(); },

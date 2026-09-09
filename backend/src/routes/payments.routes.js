@@ -20,7 +20,7 @@ const { wid, uid } = require('../lib/scope');
 const SELECT = `
   SELECT p.*, a.name AS account, cu.name AS customer, cu.telegram_name AS customer_telegram,
          ca.name AS category, u.full_name AS agent, pl.reference_id AS link_reference, pl.type AS link_type,
-         t.provider_transaction_id, t.fee AS provider_fee,
+         t.provider_transaction_id, t.fee AS provider_fee, t.surcharge,
          (SELECT platform_fee FROM revenue_entries re WHERE re.transaction_id = t.id AND re.entry_type = 'sale') AS platform_fee
     FROM payments p
     JOIN accounts a ON a.id = p.account_id
@@ -64,31 +64,45 @@ function sortFor(req) {
   return { ...PAYMENT_SORTS[key], dir, after: dir === 'ASC' ? '>' : '<' };
 }
 
+function paymentFilterParams(req, scope) {
+  const q = typeof req.query.q === 'string' && req.query.q.trim()
+    ? `%${req.query.q.trim().toLowerCase()}%`
+    : null;
+  return [
+    wid(req), ...scopeParams(scope),
+    req.query.status || null, req.query.accountId || null, req.query.agentId || null,
+    req.query.from || null, req.query.to || null, q, req.query.needsDetails === 'true',
+  ];
+}
+
+const PAYMENT_FILTERS = `
+  ($2::uuid IS NULL OR p.agent_id = $2::uuid)
+  AND ($3::uuid IS NULL OR p.account_id = $3::uuid)
+  AND ($4::text IS NULL OR p.status = $4::text)
+  AND ($5::uuid IS NULL OR p.account_id = $5::uuid)
+  AND ($6::uuid IS NULL OR p.agent_id = $6::uuid)
+  AND ($7::timestamptz IS NULL OR p.occurred_at >= $7::timestamptz)
+  AND ($8::timestamptz IS NULL OR p.occurred_at <= $8::timestamptz)
+  AND ($9::text IS NULL OR lower(COALESCE(t.provider_transaction_id, '')) LIKE $9::text
+       OR lower(COALESCE(cu.name, '')) LIKE $9::text
+       OR lower(a.name) LIKE $9::text
+       OR lower(COALESCE(u.full_name, '')) LIKE $9::text
+       OR lower(COALESCE(pl.reference_id, '')) LIKE $9::text)
+  AND (NOT $10::boolean OR (p.status = 'paid' AND p.category_id IS NULL))`;
+
 // The list and the export answer the same question with the same filters;
 // only the page size differs. `cursor` null and `limit` null mean "all".
 async function listPayments(c, req, { cursor, limit }) {
   const sort = sortFor(req);
   const scope = await resolveDataScope(c, req);
-  const q = typeof req.query.q === 'string' && req.query.q.trim() ? `%${req.query.q.trim().toLowerCase()}%` : null;
   return (await c.query(
     `${SELECT}
       WHERE p.workspace_id = $1
-        AND ($2::uuid IS NULL OR p.agent_id = $2::uuid)
-        AND ($3::uuid IS NULL OR p.account_id = $3::uuid)
-        AND ($4::text IS NULL OR (${sort.expr}, p.id) ${sort.after} ($4::${sort.cast}, $5::uuid))
-        AND ($7::text IS NULL OR p.status = $7::text)
-        AND ($8::uuid IS NULL OR p.account_id = $8::uuid)
-        AND ($9::uuid IS NULL OR p.agent_id = $9::uuid)
-        AND ($10::timestamptz IS NULL OR p.occurred_at >= $10::timestamptz)
-        AND ($11::timestamptz IS NULL OR p.occurred_at <= $11::timestamptz)
-        AND ($12::text IS NULL OR lower(coalesce(t.provider_transaction_id,'')) LIKE $12::text
-             OR lower(coalesce(cu.name,'')) LIKE $12::text OR lower(a.name) LIKE $12::text
-             OR lower(coalesce(u.full_name,'')) LIKE $12::text OR lower(coalesce(pl.reference_id,'')) LIKE $12::text)
-        AND (NOT $13::boolean OR (p.status = 'paid' AND p.category_id IS NULL))
-      ORDER BY ${sort.expr} ${sort.dir}, p.id ${sort.dir} LIMIT $6`,
-    [wid(req), ...scopeParams(scope), cursor ? cursor.value : null, cursor ? cursor.id : null, limit,
-      req.query.status || null, req.query.accountId || null, req.query.agentId || null,
-      req.query.from || null, req.query.to || null, q, req.query.needsDetails === 'true'])).rows;
+        AND ${PAYMENT_FILTERS}
+        AND ($11::text IS NULL OR (${sort.expr}, p.id) ${sort.after} ($11::${sort.cast}, $12::uuid))
+      ORDER BY ${sort.expr} ${sort.dir}, p.id ${sort.dir} LIMIT $13`,
+    [...paymentFilterParams(req, scope),
+      cursor ? cursor.value : null, cursor ? cursor.id : null, limit])).rows;
 }
 
 // GET /?limit&cursor&sort&dir&status&accountId&agentId&from&to&q&needsDetails
@@ -101,13 +115,56 @@ router.get('/', requirePermission('payments.view'), asyncHandler(async (req, res
   res.json({ items: result.items.map((r) => publicPayment(r, { seesFees })), nextCursor: result.nextCursor });
 }));
 
+// GET /summary — the filtered totals across all matching rows, before pagination.
+router.get('/summary', requirePermission('payments.view'), asyncHandler(async (req, res) => {
+  const out = await withTransaction(async (c) => {
+    const scope = await resolveDataScope(c, req);
+    const row = (await c.query(
+      `WITH matching AS (
+         ${SELECT}
+          WHERE p.workspace_id = $1
+            AND ${PAYMENT_FILTERS}
+       )
+       SELECT COALESCE(SUM(amount) FILTER (WHERE status = 'paid'), 0) AS gross_content,
+              COALESCE(SUM(COALESCE(platform_fee, 0)) FILTER (WHERE status = 'paid'), 0) AS platform_fees,
+              COUNT(*) FILTER (WHERE status = 'paid')::int AS approved_payments,
+              COUNT(*) FILTER (WHERE status IN ('pending', 'paid', 'failed'))::int AS attempts,
+              COUNT(*) FILTER (WHERE status = 'paid' AND category_id IS NULL)::int AS details_needed,
+              COUNT(*) FILTER (WHERE status = 'refunded')::int AS refunded_count,
+              COALESCE(SUM(amount) FILTER (WHERE status = 'refunded'), 0) AS refunded_amount,
+              COALESCE(SUM(surcharge) FILTER (WHERE status IN ('paid', 'refunded')), 0) AS checkout_fees,
+              (SELECT currency FROM workspaces WHERE id = $1) AS currency
+         FROM matching`,
+      paymentFilterParams(req, scope))).rows[0];
+    const platform = !req.user.actorId && (await c.query(
+      'SELECT is_platform_admin FROM users WHERE id = $1', [req.user.id])).rows[0]?.is_platform_admin === true;
+    return { row, platform };
+  });
+
+  const grossContent = Number(out.row.gross_content);
+  const platformFees = Number(out.row.platform_fees);
+  const seesFees = hasPermission(req.access, 'data.view_all');
+  res.json({
+    grossContent,
+    ...(seesFees ? { platformFees, netProfit: grossContent - platformFees } : {}),
+    approvedPayments: out.row.approved_payments,
+    attempts: out.row.attempts,
+    approvalRate: out.row.attempts ? Math.round((out.row.approved_payments / out.row.attempts) * 100) : 0,
+    detailsNeeded: out.row.details_needed,
+    refundedCount: out.row.refunded_count,
+    refundedAmount: Number(out.row.refunded_amount),
+    ...(out.platform ? { checkoutFeeRevenue: Number(out.row.checkout_fees) } : {}),
+    currency: out.row.currency,
+  });
+}));
+
 // Every column the export can carry, in file order. Headers are what the agency
-// reads in the file, not our column names; 'Reference' is MantaPay's
-// transaction id. `feesOnly` columns reach only a caller who sees the whole
+// reads in the file, not our column names. `feesOnly` columns reach only a caller who sees the whole
 // workspace. Mirrored in frontend/src/api/endpoints/payments.ts.
 const EXPORT_COLUMNS = [
   { key: 'date', header: 'Date', value: (r) => new Date(r.occurred_at).toISOString() },
-  { key: 'reference', header: 'Reference', value: (r) => r.provider_transaction_id },
+  { key: 'reference', header: 'HigherPays Order', value: (r) => r.link_reference },
+  { key: 'providerTransaction', header: 'MantaPay Transaction ID', value: (r) => r.provider_transaction_id },
   { key: 'status', header: 'Status', value: (r) => r.status },
   { key: 'gross', header: 'Gross Revenue', value: (r) => `${r.amount} ${r.currency}` },
   { key: 'fee', header: 'Platform Fee', feesOnly: true, value: (r) => r.platform_fee },
@@ -164,7 +221,7 @@ router.get('/:id', requirePermission('payments.view'), asyncHandler(async (req, 
 // fee and allocation that produced the result.
 router.get('/:id/flow', requirePermission('payments.view'), requirePlatformAdmin, asyncHandler(async (req, res) => {
   const row = (await query(
-    `SELECT p.id, p.status, p.amount, p.currency,
+    `SELECT p.id, p.status, p.amount, p.currency, pl.reference_id AS link_reference,
             t.provider_transaction_id, t.gross AS transaction_gross, t.surcharge, t.fee_is_estimate,
             re.id AS sale_entry_id, re.gross AS sale_gross,
             re.fee_mdr, re.fee_fixed, re.fee_settlement, re.psp_fee,
@@ -175,6 +232,7 @@ router.get('/:id/flow', requirePermission('payments.view'), requirePlatformAdmin
             pf.fee_model, pf.mdr_pct, pf.psp_rate_pct, pf.settlement_pct,
             pf.margin_rate_pct
        FROM payments p
+       LEFT JOIN payment_links pl ON pl.id = p.payment_link_id
        LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
        LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
        LEFT JOIN accounts a ON a.id = re.account_id
@@ -201,6 +259,7 @@ router.get('/:id/flow', requirePermission('payments.view'), requirePlatformAdmin
     paymentId: row.id,
     status: row.status,
     currency: row.currency,
+    linkReference: row.link_reference,
     providerTransactionId: row.provider_transaction_id,
     customerTotal,
     saleAmount,
