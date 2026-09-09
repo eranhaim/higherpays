@@ -29,6 +29,7 @@ function normalize(i: RawInvite): Invite {
 export interface InvitePreview {
   email: string;
   role: InvitableRole;
+  roleName: string;
   workspace: string;
 }
 

@@ -16,7 +16,7 @@ import {
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import { formatMoney } from '../../lib/format';
 import {
-  isReversed, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, PAYMENT_EXPORT_COLUMNS,
+  isReversed, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, getPaymentExportColumns,
   PROVIDER_FEE_SOURCE_LABELS,
   paymentsApi, type Payment, type PaymentFlow, type PaymentStatus, type PaymentSort, type ListPaymentsQuery,
 } from '../../api/endpoints';
@@ -362,7 +362,7 @@ export default function PaymentsPage() {
       >
         {flow.isPending && <p className="sub">Loading the payment flow…</p>}
         {flow.isError && <div className="warnbar" role="alert">Couldn't load the payment flow. Try again.</div>}
-        {flow.data && <PaymentFlowContent flow={flow.data} />}
+        {flow.data && <PaymentFlowContent flow={flow.data} labels={labels} />}
         <div className="modal-actions">
           <button className="btn ghost" onClick={() => setFlowPayment(null)}>Close</button>
         </div>
@@ -391,6 +391,7 @@ export default function PaymentsPage() {
           range={range}
           loadedCount={payments.length}
           canSeeFees={canScope}
+          labels={labels}
           onClose={() => setExportOpen(false)}
           onSubmit={async (input) => {
             await exportCsv(input);
@@ -418,7 +419,10 @@ export default function PaymentsPage() {
   );
 }
 
-function PaymentFlowContent({ flow }: { flow: PaymentFlow }) {
+function PaymentFlowContent({ flow, labels }: {
+  flow: PaymentFlow;
+  labels: ReturnType<typeof useCurrentSession>['labels'];
+}) {
   const providerItems = [
     ['MDR', flow.fees.mdr, flow.rates.mdr],
     ['Transaction fee', flow.fees.fixed, null],
@@ -488,11 +492,11 @@ function PaymentFlowContent({ flow }: { flow: PaymentFlow }) {
 
           <div className="flow-branches">
             <div className="flow-branch">
-              <span>{rateLabel(flow.distribution.account.name || 'Creator share', flow.distribution.account, flow.currency)}</span>
+              <span>{rateLabel(flow.distribution.account.name || `${labels.account} share`, flow.distribution.account, flow.currency)}</span>
               <Money amount={flow.distribution.account.amount} currency={flow.currency} direction="in" />
             </div>
             <div className="flow-branch">
-              <span>{rateLabel(flow.distribution.agent.name || 'Agent commission', flow.distribution.agent, flow.currency)}</span>
+              <span>{rateLabel(flow.distribution.agent.name || `${labels.agent} commission`, flow.distribution.agent, flow.currency)}</span>
               <Money amount={flow.distribution.agent.amount} currency={flow.currency} direction="in" />
             </div>
             <div className="flow-branch">
@@ -512,14 +516,15 @@ function rateLabel(label: string, rate: { percentage: number; base: number }, cu
 }
 
 /** What goes in the file: the period, how many rows, and which columns. */
-function ExportModal({ range, loadedCount, canSeeFees, onClose, onSubmit }: {
+function ExportModal({ range, loadedCount, canSeeFees, labels, onClose, onSubmit }: {
   range: DateRange;
   loadedCount: number;
   canSeeFees: boolean;
+  labels: ReturnType<typeof useCurrentSession>['labels'];
   onClose: () => void;
   onSubmit: (input: ExportInput) => Promise<void>;
 }) {
-  const columns = PAYMENT_EXPORT_COLUMNS.filter((c) => !c.feesOnly || canSeeFees);
+  const columns = getPaymentExportColumns(labels).filter((c) => !c.feesOnly || canSeeFees);
   const [dates, setDates] = useState<DateRange>(range);
   const [scope, setScope] = useState<'all' | 'loaded'>('all');
   const [selected, setSelected] = useState<string[]>(columns.map((c) => c.key));

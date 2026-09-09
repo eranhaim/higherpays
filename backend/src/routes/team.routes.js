@@ -19,7 +19,8 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
   const rows = (await query(
     `SELECT wu.user_id, wu.role, wr.name AS role_name, wu.status, wu.created_at,
             u.full_name AS name, u.email,
-            ag.id AS agent_id, ac.id AS account_id, ac.name AS account_name
+            ag.id AS agent_id, ac.id AS account_id, ac.name AS account_name,
+            ac.status AS account_status
        FROM workspace_users wu
        JOIN users u ON u.id = wu.user_id
        JOIN workspace_roles wr ON wr.workspace_id=wu.workspace_id AND wr.key=wu.role
@@ -30,7 +31,7 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
   res.json({
     members: rows.map((r) => ({
       userId: r.user_id, name: r.name, email: r.email, role: r.role, roleName: r.role_name, status: r.status,
-      agentId: r.agent_id, accountId: r.account_id, accountName: r.account_name,
+      agentId: r.agent_id, accountId: r.account_id, accountName: r.account_name, accountStatus: r.account_status,
       isSelf: r.user_id === uid(req), joinedAt: r.created_at,
     })),
   });
@@ -146,20 +147,24 @@ router.patch('/:userId/status', requirePermission('team.manage'), asyncHandler(a
   res.json({ userId: req.params.userId, status });
 }));
 
-// DELETE /:userId — remove access entirely. Refused while an agent or account
-// record still hangs off it: suspend instead, so the ledger keeps its names.
+// DELETE /:userId — mark a plain seat removed. The row stays as access history.
+// Profile-backed seats are suspended instead, so their business record remains
+// available to the ledger.
 router.delete('/:userId', requirePermission('team.manage'), asyncHandler(async (req, res) => {
   if (req.params.userId === uid(req)) return res.status(403).json({ error: 'cannot_remove_self' });
   const out = await withTransaction(async (c) => {
     const target = (await c.query(
-      'SELECT role FROM workspace_users WHERE workspace_id=$1 AND user_id=$2', [wid(req), req.params.userId])).rows[0];
+      'SELECT role, status FROM workspace_users WHERE workspace_id=$1 AND user_id=$2', [wid(req), req.params.userId])).rows[0];
     if (!target) return { err: 'not_found', code: 404 };
     if (target.role === 'workspace_owner') return { err: 'transfer_owner', code: 409 };
     const profile = (await c.query(
       `SELECT 1 FROM agents WHERE workspace_id=$1 AND user_id=$2
        UNION ALL SELECT 1 FROM accounts WHERE workspace_id=$1 AND user_id=$2 LIMIT 1`, [wid(req), req.params.userId])).rows[0];
     if (profile) return { err: 'has_profile', code: 409 };
-    await c.query('DELETE FROM workspace_users WHERE workspace_id=$1 AND user_id=$2', [wid(req), req.params.userId]);
+    if (target.status === 'removed') return { err: 'not_found', code: 404 };
+    await c.query(
+      "UPDATE workspace_users SET status='removed' WHERE workspace_id=$1 AND user_id=$2",
+      [wid(req), req.params.userId]);
     return { target };
   });
   if (out.err) return res.status(out.code).json({ error: out.err });

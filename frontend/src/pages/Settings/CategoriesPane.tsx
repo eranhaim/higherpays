@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { HttpError } from '../../api/http';
 import type { Category } from '../../api/endpoints';
 import { useCan } from '../../hooks/usePermission';
+import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { toast } from '../../lib/toast';
 import { EmptyState, ErrorCard, LoadingCard, Pill } from '../../components/ui';
 import { useCategories } from './useSettingsData';
@@ -12,6 +13,7 @@ import { useCategories } from './useSettingsData';
  */
 export function CategoriesPane() {
   const can = useCan();
+  const { labels } = useCurrentSession();
   const editable = can('settings.edit');
   const { categories, create, update } = useCategories();
   const [name, setName] = useState('');
@@ -56,11 +58,11 @@ export function CategoriesPane() {
     <div className="card">
       <div className="sechead">Sale categories</div>
       <p className="sub">
-        After a customer pays, the agent picks one of these to say what the sale was for.
+        After a customer pays, the {labels.agent.toLowerCase()} picks one of these to say what the sale was for.
         Retired categories stay on past payments but leave the picker.
       </p>
 
-      {categories.data.length === 0 ? <EmptyState title="No categories yet." hint="Agents cannot complete a payment until there is at least one." /> : (
+      {categories.data.length === 0 ? <EmptyState title="No categories yet." hint={`${labels.agents} cannot complete a payment until there is at least one.`} /> : (
         <div className="tablewrap">
           <table>
             <thead>

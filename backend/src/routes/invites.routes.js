@@ -65,11 +65,18 @@ const publicRouter = express.Router();
 
 publicRouter.get('/:token', asyncHandler(async (req, res) => {
   const inv = (await query(
-    `SELECT i.email, i.role, w.name AS workspace, i.expires_at, i.accepted_at
-       FROM invites i JOIN workspaces w ON w.id = i.workspace_id
+    `SELECT i.email, i.role, w.name AS workspace, i.expires_at, i.accepted_at,
+            CASE i.role
+              WHEN 'agent' THEN w.agent_label
+              WHEN 'account_owner' THEN w.account_label || ' owner'
+              ELSE wr.name
+            END AS role_name
+       FROM invites i
+       JOIN workspaces w ON w.id = i.workspace_id
+       JOIN workspace_roles wr ON wr.workspace_id=i.workspace_id AND wr.key=i.role
       WHERE i.token_hash=$1`, [hashToken(req.params.token)])).rows[0];
   if (!inv || inv.accepted_at || new Date(inv.expires_at) < new Date()) return res.status(404).json({ error: 'invalid_invite' });
-  res.json({ email: inv.email, role: inv.role, workspace: inv.workspace });
+  res.json({ email: inv.email, role: inv.role, roleName: inv.role_name, workspace: inv.workspace });
 }));
 
 // POST /invites/:token/accept  { password, fullName }
@@ -98,11 +105,15 @@ publicRouter.post('/:token/accept', asyncHandler(async (req, res) => {
     // A creator's seat is created with the profile, before the invite is sent,
     // so an existing seat is only a conflict when it is for another role.
     const seat = (await c.query(
-      'SELECT role FROM workspace_users WHERE workspace_id=$1 AND user_id=$2', [inv.workspace_id, user.id])).rows[0];
+      'SELECT role, status FROM workspace_users WHERE workspace_id=$1 AND user_id=$2', [inv.workspace_id, user.id])).rows[0];
     // Consumed either way, so a stale token cannot be replayed.
     await c.query('UPDATE invites SET accepted_at=now() WHERE id=$1', [inv.id]);
     if (seat && seat.role !== inv.role) return { err: 'already_a_member' };
-    if (!seat) {
+    if (seat?.status === 'removed') {
+      await c.query(
+        "UPDATE workspace_users SET status='active' WHERE workspace_id=$1 AND user_id=$2",
+        [inv.workspace_id, user.id]);
+    } else if (!seat) {
       if (inv.role === 'workspace_owner') {
         const owner = (await c.query(
           "SELECT 1 FROM workspace_users WHERE workspace_id=$1 AND role='workspace_owner'",

@@ -154,11 +154,16 @@ async function recordPaymentOutcome(client, workspaceId, params) {
     || (status === 'declined' && payment.status === 'failed' && tx.status === 'declined');
   if (shouldNotify) {
     await notifySafely(client, payment.id, async () => {
-      const account = (await client.query('SELECT name FROM accounts WHERE id = $1', [link.account_id])).rows[0];
+      const account = (await client.query(
+        `SELECT a.name, w.account_label
+           FROM accounts a
+           JOIN workspaces w ON w.id=a.workspace_id
+          WHERE a.id=$1`,
+        [link.account_id])).rows[0];
       await notifier.notify(client, workspaceId, {
         event: status === 'approved' ? 'payment.paid' : 'payment.failed',
         title: status === 'approved' ? 'Payment received' : 'Payment declined',
-        body: account ? `Creator: ${account.name}` : null,
+        body: account ? `${account.account_label}: ${account.name}` : null,
         accountId: link.account_id,
         agentId: link.created_by_agent_id,
         amount: grossValue,

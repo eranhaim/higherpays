@@ -72,6 +72,8 @@ export interface SettlementFee {
 export interface PlatformWorkspaceDetail {
   id: string;
   name: string;
+  currency: string;
+  currencyChangeAllowed: boolean;
   /** Newest first; the first row is what the agency pays today. */
   feeHistory: PlatformFeeRate[];
   settlementFee: SettlementFee | null;
@@ -119,6 +121,9 @@ export const platformApi = {
     api.patch<{ id: string; name: string; status: string }>(`/platform/workspaces/${id}/status`, { status }, opts),
 
   getWorkspace: (id: string) => api.get<PlatformWorkspaceDetail>(`/platform/workspaces/${id}`, opts),
+
+  setCurrency: (id: string, currency: string) =>
+    api.patch<{ id: string; currency: string; changed: boolean }>(`/platform/workspaces/${id}/currency`, { currency }, opts),
 
   /** A new versioned rate row; the history is kept server-side. */
   setPlatformFee: (id: string, input: PlatformFeeRate) =>

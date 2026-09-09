@@ -162,7 +162,7 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
 // Every column the export can carry, in file order. Headers are what the agency
 // reads in the file, not our column names. `feesOnly` columns reach only a caller who sees the whole
 // workspace. Mirrored in frontend/src/api/endpoints/payments.ts.
-const EXPORT_COLUMNS = [
+const exportColumns = (labels) => [
   { key: 'date', header: 'Date', value: (r) => new Date(r.occurred_at).toISOString() },
   { key: 'reference', header: 'HigherPays Order', value: (r) => r.link_reference },
   { key: 'providerTransaction', header: 'MantaPay Transaction ID', value: (r) => r.provider_transaction_id },
@@ -173,8 +173,8 @@ const EXPORT_COLUMNS = [
     value: (r) => (r.platform_fee == null ? null : (Number(r.amount) - Number(r.platform_fee)).toFixed(2)) },
   { key: 'customer', header: 'Customer', value: (r) => r.customer },
   { key: 'telegram', header: 'Telegram', value: (r) => r.customer_telegram },
-  { key: 'creator', header: 'Creator', value: (r) => r.account },
-  { key: 'agent', header: 'Agent', value: (r) => r.agent },
+  { key: 'creator', header: labels.account, value: (r) => r.account },
+  { key: 'agent', header: labels.agent, value: (r) => r.agent },
   { key: 'category', header: 'Category', value: (r) => r.category },
 ];
 
@@ -183,11 +183,18 @@ const EXPORT_COLUMNS = [
 const EXPORT_MAX_ROWS = 20000;
 router.get('/export', requirePermission('payments.export'), asyncHandler(async (req, res) => {
   const seesFees = hasPermission(req.access, 'data.view_all');
+  const workspace = (await query(
+    'SELECT account_label, agent_label FROM workspaces WHERE id=$1',
+    [wid(req)])).rows[0];
+  const columnsForWorkspace = exportColumns({
+    account: workspace.account_label,
+    agent: workspace.agent_label,
+  });
   // No `columns` means every column the caller may see.
   const requested = typeof req.query.columns === 'string' && req.query.columns.trim()
     ? new Set(req.query.columns.split(',').map((k) => k.trim()))
     : null;
-  const columns = EXPORT_COLUMNS.filter((c) => (!c.feesOnly || seesFees) && (!requested || requested.has(c.key)));
+  const columns = columnsForWorkspace.filter((c) => (!c.feesOnly || seesFees) && (!requested || requested.has(c.key)));
   if (columns.length === 0) return badRequest(res, 'columns must name at least one column', ['columns']);
 
   const asked = Number(req.query.limit);

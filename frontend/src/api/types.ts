@@ -11,14 +11,6 @@ export type WorkspaceRole = SystemWorkspaceRole | (string & {});
 
 export const WORKSPACE_ROLES: SystemWorkspaceRole[] = ['workspace_owner', 'workspace_admin', 'analyst', 'agent', 'account_owner'];
 
-export const WORKSPACE_ROLE_LABELS: Record<SystemWorkspaceRole, string> = {
-  workspace_owner: 'Owner',
-  workspace_admin: 'Admin',
-  analyst: 'Analyst',
-  agent: 'Agent',
-  account_owner: 'Creator owner',
-};
-
 /** What this agency calls a creator and an agent. */
 export interface WorkspaceLabels {
   account: string;

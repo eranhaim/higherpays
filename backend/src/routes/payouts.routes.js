@@ -5,6 +5,7 @@ const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { cashPosition } = require('../services/cash');
+const { status: vocab } = require('../schema/entities');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -17,18 +18,32 @@ function range(req, source) {
   return { F: from.toISOString(), T: to.toISOString() };
 }
 
-// GET /?limit — every payout run, newest first, with who was paid.
+// GET /?limit&q&payeeType&status&from&to — payout history, newest first.
 router.get('/', requirePermission('revenue.view'), asyncHandler(async (req, res) => {
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+  const payeeType = req.query.payeeType || null;
+  const status = req.query.status || null;
+  if (payeeType && !vocab.PAYEE_TYPE.includes(payeeType)) return res.status(400).json({ error: 'invalid_payeeType' });
+  if (status && !vocab.PAYOUT_STATUS.includes(status)) return res.status(400).json({ error: 'invalid_status' });
+  const search = String(req.query.q || '').trim() || null;
+  const from = req.query.from || null;
+  const to = req.query.to || null;
   const rows = (await query(`
     SELECT p.id, p.payee_type, p.period_start::text AS period_start, p.period_end::text AS period_end, p.net, p.currency, p.status, p.created_at,
-           COALESCE(a.name, u.full_name) AS payee
+           COALESCE(a.name, u.full_name, w.name) AS payee
       FROM payouts p
+      JOIN workspaces w ON w.id = p.workspace_id
       LEFT JOIN accounts a ON a.id = p.account_id
       LEFT JOIN agents ag ON ag.id = p.agent_id
       LEFT JOIN users u ON u.id = ag.user_id
      WHERE p.workspace_id = $1
-     ORDER BY p.created_at DESC, p.id DESC LIMIT $2`, [wid(req), limit])).rows;
+       AND ($2::text IS NULL OR COALESCE(a.name, u.full_name, w.name, '') ILIKE '%' || $2 || '%')
+       AND ($3::text IS NULL OR p.payee_type = $3)
+       AND ($4::text IS NULL OR p.status = $4)
+       AND ($5::date IS NULL OR p.created_at >= $5::date)
+       AND ($6::date IS NULL OR p.created_at < $6::date + interval '1 day')
+     ORDER BY p.created_at DESC, p.id DESC LIMIT $7`,
+    [wid(req), search, payeeType, status, from, to, limit])).rows;
   res.json({
     payouts: rows.map((r) => ({
       id: r.id, payeeType: r.payee_type, payee: r.payee, periodStart: r.period_start, periodEnd: r.period_end,
@@ -96,9 +111,29 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
       WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2`, [F, T, wid(req)])).rows[0].received);
   const accountsOwed = perAccount.reduce((s, r) => s + num(r.owed), 0);
   const agentsOwed = perAgent.reduce((s, r) => s + num(r.owed), 0);
+  const summary = (await query(
+    `SELECT COALESCE(SUM(re.gross) FILTER (WHERE re.entry_type='sale'),0) AS gross_sales,
+            COALESCE(SUM(re.distributable),0) AS distributable,
+            COUNT(*) FILTER (WHERE re.entry_type='sale')::int AS successful_sales
+       FROM revenue_entries re
+       JOIN transactions t ON t.id = re.transaction_id
+      WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2`,
+    [F, T, wid(req)])).rows[0];
+  const paidToDate = (await query(
+    `SELECT COALESCE(SUM(net),0) AS paid
+       FROM payouts
+      WHERE workspace_id=$1 AND status IN ('approved','paid')`,
+    [wid(req)])).rows[0].paid;
 
   res.json({
     range: { from: F, to: T },
+    summary: {
+      grossSales: num(summary.gross_sales),
+      distributable: num(summary.distributable),
+      successfulSales: num(summary.successful_sales),
+      paidToDate: num(paidToDate),
+      currentlyOwed: accountsOwed + agentsOwed,
+    },
     perAccount: perAccount.map((r) => ({
       id: r.id, name: r.name, payModel: r.pay_model, revenue: num(r.revenue), owed: num(r.owed),
     })),

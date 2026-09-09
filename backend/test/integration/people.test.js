@@ -98,6 +98,30 @@ test('suspending a member ends their access but keeps the profile; removal is re
   assert.equal(still, 1);
 });
 
+test('removing a plain seat preserves it as former and allows reactivation', async () => {
+  const t = await createTenant(app);
+  const member = await addMember(app, t, 'analyst');
+
+  await request(app).delete(`/workspaces/${t.workspaceId}/team/${member.userId}`)
+    .set(t.authHeaders).expect(204);
+  const stored = (await pool.query(
+    'SELECT status FROM workspace_users WHERE workspace_id=$1 AND user_id=$2',
+    [t.workspaceId, member.userId])).rows[0];
+  assert.equal(stored.status, 'removed');
+  await request(app).get(`/workspaces/${t.workspaceId}/team`).set(member.headers).expect(403);
+  await request(app).post('/auth/refresh').send({ refreshToken: member.refreshToken }).expect(401);
+
+  const former = (await request(app).get(`/workspaces/${t.workspaceId}/team`)
+    .set(t.authHeaders).expect(200)).body.members.find((item) => item.userId === member.userId);
+  assert.equal(former.status, 'removed');
+
+  await request(app).patch(`/workspaces/${t.workspaceId}/team/${member.userId}/status`)
+    .set(t.authHeaders).send({ status: 'active' }).expect(200);
+  const signedIn = await request(app).post('/auth/login')
+    .send({ email: member.email, password: member.password }).expect(200);
+  assert.equal(signedIn.body.workspaces.some((workspace) => workspace.id === t.workspaceId), true);
+});
+
 test('archiving an agent suspends access and hides new assignments until reactivation', async () => {
   const t = await createTenant(app);
   const account = await createAccount(app, t);

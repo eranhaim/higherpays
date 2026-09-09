@@ -46,9 +46,16 @@ const requireWorkspace = asyncHandler(async (req, _res, next) => {
   }
 
   const row = (await query(
-    `SELECT wu.role, wr.name AS role_name, wr.permissions
+    `SELECT wu.role,
+            CASE wu.role
+              WHEN 'agent' THEN w.agent_label
+              WHEN 'account_owner' THEN w.account_label || ' owner'
+              ELSE wr.name
+            END AS role_name,
+            wr.permissions
        FROM workspace_users wu
        JOIN workspace_roles wr ON wr.workspace_id=wu.workspace_id AND wr.key=wu.role
+       JOIN workspaces w ON w.id=wu.workspace_id
       WHERE wu.workspace_id = $1 AND wu.user_id = $2 AND wu.status = 'active'`,
     [workspaceId, req.user.id])).rows[0];
   if (!row) throw new ForbiddenError('not_a_member');

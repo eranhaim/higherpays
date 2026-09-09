@@ -290,6 +290,9 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
   }
 
   const ws = (await query('SELECT * FROM workspaces WHERE id = $1', [wid(req)])).rows[0];
+  if (cur !== ws.currency) {
+    return badRequest(res, `currency must match the workspace currency (${ws.currency})`, ['currency']);
+  }
   // Workspace guardrails, enforced here so the console cannot be bypassed.
   if (ws.min_link_amount != null && amt < Number(ws.min_link_amount)) {
     return badRequest(res, `amount is below the workspace minimum of ${Number(ws.min_link_amount)}`, ['amount']);

@@ -22,6 +22,8 @@ const SORT_VALUES: SortValues<Member> = {
   joined: (m) => m.joinedAt,
 };
 
+type TeamView = 'active' | 'agents' | 'creators' | 'plain' | 'former' | 'invites';
+
 /** A token past its expiry no longer resolves, so the invite is dead. */
 function isExpired(i: Invite): boolean {
   const ts = Date.parse(i.expiresAt);
@@ -54,6 +56,7 @@ export default function TeamPage() {
   const [rolePermissions, setRolePermissions] = useState<Permission[]>([]);
   const [deletingRole, setDeletingRole] = useState<RoleDefinition | null>(null);
   const [access, setAccess] = useState<'' | 'active' | 'suspended'>('');
+  const [view, setView] = useState<TeamView>('active');
   const [sort, setSort] = useState<SortState>({ key: 'name', dir: 'asc' });
   const toggleSort = (key: string) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
@@ -181,7 +184,11 @@ export default function TeamPage() {
     },
     {
       key: 'status', header: 'Access', sortKey: 'status',
-      render: (m) => m.status === 'active' ? <Pill tone="ok">Active</Pill> : <Pill tone="muted">Suspended</Pill>,
+      render: (m) => m.accountStatus === 'archived'
+        ? <Pill tone="muted">Archived</Pill>
+        : m.status === 'active'
+          ? <Pill tone="ok">Active</Pill>
+          : <Pill tone="muted">{m.status === 'removed' ? 'Removed' : 'Suspended'}</Pill>,
       isFiltered: access !== '',
       filter: (
         <Select label="Access" hideLabel value={access} onChange={(v) => setAccess(v as '' | 'active' | 'suspended')}>
@@ -202,7 +209,7 @@ export default function TeamPage() {
       key: 'actions', header: 'Actions', hideHeader: true, align: 'right' as const,
       render: (m: Member) => m.isSelf ? null : (
         <div className="cell-actions">
-          {canManageRoles && m.role !== 'workspace_owner' && (
+          {canManageRoles && m.role !== 'workspace_owner' && m.status !== 'removed' && m.accountStatus !== 'archived' && (
             <select
               aria-label={`Role for ${m.name}`}
               value={m.role}
@@ -231,18 +238,27 @@ export default function TeamPage() {
               }
             }}>Make owner</button>
           )}
-          {m.status === 'active'
+          {m.accountStatus !== 'archived' && (m.status === 'active'
             ? <button className="btn ghost small" onClick={() => setSuspending(m)}>Suspend</button>
-            : <button className="btn ghost small" disabled={isBusy} onClick={() => changeStatus(m, 'active')}>Reactivate</button>}
+            : <button className="btn ghost small" disabled={isBusy} onClick={() => changeStatus(m, 'active')}>Reactivate</button>)}
           {/* Only a plain seat can be removed; a profile keeps its login. */}
-          {!m.agentId && !m.accountId && <button className="btn ghost small" onClick={() => setRemoving(m)}>Remove</button>}
+          {!m.agentId && !m.accountId && m.status !== 'removed' && <button className="btn ghost small" onClick={() => setRemoving(m)}>Remove</button>}
         </div>
       ),
     }] : []),
   ];
 
   const query = search.trim().toLowerCase();
+  const isFormer = (m: Member) => m.status !== 'active' || m.accountStatus === 'archived';
   const matchingMembers = members
+    .filter((m) => {
+      if (view === 'former') return isFormer(m);
+      if (isFormer(m)) return false;
+      if (view === 'agents') return Boolean(m.agentId);
+      if (view === 'creators') return Boolean(m.accountId);
+      if (view === 'plain') return !m.agentId && !m.accountId;
+      return true;
+    })
     .filter((m) => !query || `${m.name} ${m.email}`.toLowerCase().includes(query))
     .filter((m) => !role || m.role === role)
     .filter((m) => !access || m.status === access);
@@ -258,6 +274,14 @@ export default function TeamPage() {
       render: (i: Invite) => <button className="btn ghost small" onClick={() => setCancelling(i)}>{isExpired(i) ? 'Clear' : 'Cancel'}</button>,
     }] : []),
   ];
+  const views: Array<{ id: TeamView; label: string; count: number }> = [
+    { id: 'active', label: 'Active', count: members.filter((m) => !isFormer(m)).length },
+    { id: 'agents', label: labels.agents, count: members.filter((m) => !isFormer(m) && m.agentId).length },
+    { id: 'creators', label: labels.accounts, count: members.filter((m) => !isFormer(m) && m.accountId).length },
+    { id: 'plain', label: 'Admin, analyst, and custom roles', count: members.filter((m) => !isFormer(m) && !m.agentId && !m.accountId).length },
+    { id: 'former', label: 'Former', count: members.filter(isFormer).length },
+    { id: 'invites', label: 'Pending invites', count: pendingInvites.length },
+  ];
 
   return (
     <div>
@@ -265,6 +289,16 @@ export default function TeamPage() {
         title="Team"
         actions={canManage ? <button className="btn" onClick={() => setInviteOpen(true)}>Invite team member</button> : null}
       />
+
+      <div className="tabbar" role="tablist" aria-label="Team views">
+        {views.map((item) => (
+          <button key={item.id} type="button" role="tab" aria-selected={view === item.id}
+            className={`btn ghost tgl${view === item.id ? ' active' : ''}`}
+            onClick={() => setView(item.id)}>
+            {item.label} <span className="sub inline">{item.count}</span>
+          </button>
+        ))}
+      </div>
 
       {canManageRoles && (
         <div className="section">
@@ -289,7 +323,7 @@ export default function TeamPage() {
         </div>
       )}
 
-      {members.length > 0 && (
+      {view !== 'invites' && members.length > 0 && (
         <FilterBar>
           <input type="search" className="search-input" aria-label="Search members" placeholder="Search name or email"
             value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -299,22 +333,20 @@ export default function TeamPage() {
         </FilterBar>
       )}
 
-      <DataTable
-        columns={shownMemberColumns}
-        rows={visibleMembers}
-        sort={sort}
-        onSort={toggleSort}
-        rowKey={(m) => m.userId}
-        isLoading={isLoading}
-        emptyTitle={isError ? "Couldn't load the team." : query ? 'No members match that search.' : 'No members yet.'}
-        emptyHint={isError ? 'Try again in a moment.' : query ? 'Clear the search to see them all.' : undefined}
-      />
-
-      {pendingInvites.length > 0 && (
-        <div className="section">
-          <div className="sechead">Pending invites</div>
-          <DataTable columns={inviteColumns} rows={pendingInvites} rowKey={(i) => i.id} />
-        </div>
+      {view === 'invites' ? (
+        <DataTable columns={inviteColumns} rows={pendingInvites} rowKey={(i) => i.id}
+          emptyTitle="No pending invites." emptyHint="Invite a team member from the button above." />
+      ) : (
+        <DataTable
+          columns={shownMemberColumns}
+          rows={visibleMembers}
+          sort={sort}
+          onSort={toggleSort}
+          rowKey={(m) => m.userId}
+          isLoading={isLoading}
+          emptyTitle={isError ? "Couldn't load the team." : query ? 'No members match that search.' : 'No members in this view.'}
+          emptyHint={isError ? 'Try again in a moment.' : query ? 'Clear the search to see them all.' : undefined}
+        />
       )}
 
       <Modal open={inviteOpen} onClose={closeInvite} title="Invite a team member" subtitle="They receive an email with a link to set their password.">

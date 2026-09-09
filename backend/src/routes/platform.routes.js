@@ -41,7 +41,12 @@ router.get('/impersonation/targets', asyncHandler(async (req, res) => {
   if (req.query.workspaceId) params.push(req.query.workspaceId);
   const rows = (await query(
     `SELECT wu.workspace_id, w.name AS workspace_name, wu.user_id,
-            u.full_name, u.email, wu.role, wr.name AS role_name
+            u.full_name, u.email, wu.role,
+            CASE wu.role
+              WHEN 'agent' THEN w.agent_label
+              WHEN 'account_owner' THEN w.account_label || ' owner'
+              ELSE wr.name
+            END AS role_name
        FROM workspace_users wu
        JOIN users u ON u.id=wu.user_id
        JOIN workspaces w ON w.id=wu.workspace_id
@@ -104,7 +109,9 @@ router.post('/impersonation/start', asyncHandler(async (req, res) => {
       name: target.workspace_name,
       currency: target.currency,
       role: target.role,
-      roleName: target.role_name,
+      roleName: target.role === 'agent' ? target.agent_label
+        : target.role === 'account_owner' ? `${target.account_label} owner`
+          : target.role_name,
       status: 'active',
       labels: {
         account: target.account_label,
@@ -192,12 +199,61 @@ router.get('/workspaces/:id', asyncHandler(async (req, res) => {
   if (!w) return res.status(404).json({ error: 'not_found' });
   const feeHistory = (await query('SELECT * FROM platform_fee_rates WHERE workspace_id=$1 ORDER BY effective_from DESC', [w.id])).rows;
   const settlement = (await query('SELECT * FROM effective_settlement_fees($1, now())', [w.id])).rows[0];
+  const hasMoneyHistory = (await query(
+    `SELECT EXISTS (
+       SELECT 1 FROM payment_links WHERE workspace_id=$1
+       UNION ALL SELECT 1 FROM payments WHERE workspace_id=$1
+       UNION ALL SELECT 1 FROM payouts WHERE workspace_id=$1
+       UNION ALL SELECT 1 FROM settlements WHERE workspace_id=$1
+       UNION ALL SELECT 1 FROM transactions WHERE workspace_id=$1
+     ) AS found`,
+    [w.id])).rows[0].found;
   res.json({
     id: w.id, name: w.name, currency: w.currency, status: w.status, merchantId: w.merchant_id,
     webhookEndpointId: w.webhook_endpoint_id, createdAt: w.created_at,
+    currencyChangeAllowed: !hasMoneyHistory,
     feeHistory: feeHistory.map(publicFee),
     settlementFee: settlement && settlement.id ? publicSettlementFee(settlement) : null,
   });
+}));
+
+// PATCH /platform/workspaces/:id/currency — only a completely unused money
+// workspace may change denomination. The workspace lock makes the history
+// check atomic with child-row inserts, whose foreign keys take a conflicting
+// key-share lock.
+router.patch('/workspaces/:id/currency', asyncHandler(async (req, res) => {
+  const currency = String(req.body?.currency || '').toUpperCase();
+  if (!['EUR', 'USD', 'GBP'].includes(currency)) {
+    return badRequest(res, 'currency must be EUR, USD, or GBP', ['currency']);
+  }
+  const out = await withTransaction(async (c) => {
+    const workspace = (await c.query(
+      'SELECT id, currency FROM workspaces WHERE id=$1 FOR UPDATE',
+      [req.params.id])).rows[0];
+    if (!workspace) return { error: 'not_found', status: 404 };
+    if (workspace.currency === currency) return { workspace, changed: false };
+    const history = (await c.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM payment_links WHERE workspace_id=$1
+         UNION ALL SELECT 1 FROM payments WHERE workspace_id=$1
+         UNION ALL SELECT 1 FROM payouts WHERE workspace_id=$1
+         UNION ALL SELECT 1 FROM settlements WHERE workspace_id=$1
+         UNION ALL SELECT 1 FROM transactions WHERE workspace_id=$1
+       ) AS found`,
+      [workspace.id])).rows[0].found;
+    if (history) return { error: 'currency_history_exists', status: 409 };
+    const updated = (await c.query(
+      'UPDATE workspaces SET currency=$2 WHERE id=$1 RETURNING id, currency',
+      [workspace.id, currency])).rows[0];
+    await c.query(
+      `INSERT INTO audit_log
+         (workspace_id, actor_user_id, effective_user_id, action, entity_type, entity_id, metadata)
+       VALUES ($1,$2,$2,'platform.workspace.currency','workspace',$1,$3)`,
+      [workspace.id, uid(req), { from: workspace.currency, to: currency }]);
+    return { workspace: updated, changed: true };
+  });
+  if (out.error) return res.status(out.status).json({ error: out.error });
+  res.json({ id: out.workspace.id, currency: out.workspace.currency, changed: out.changed });
 }));
 
 // PUT /platform/workspaces/:id/platform-fee — a new versioned rate row.

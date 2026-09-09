@@ -77,7 +77,9 @@ async function workspacesFor(userId, onlyWorkspaceId = null) {
       WHERE wu.user_id = $1 AND wu.status = 'active' AND w.status = 'active'
         AND ($2::uuid IS NULL OR w.id=$2)
       ORDER BY w.name`, [userId, onlyWorkspaceId])).rows.map((w) => ({
-    id: w.id, name: w.name, currency: w.currency, role: w.role, roleName: w.role_name, status: w.status,
+    id: w.id, name: w.name, currency: w.currency, role: w.role,
+    roleName: w.role === 'agent' ? w.agent_label : w.role === 'account_owner' ? `${w.account_label} owner` : w.role_name,
+    status: w.status,
     labels: { account: w.account_label, accounts: w.account_label_plural, agent: w.agent_label, agents: w.agent_label_plural },
   }));
 }

@@ -8,7 +8,7 @@ import { toast } from '../../lib/toast';
 import Modal from '../../components/Modal';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DetailRow, EmptyState, LoadingCard, ErrorCard,
-  FilterBar, DateRangePicker, DataTable, DateCell, type DateRange, type Column,
+  FilterBar, DateRangePicker, DataTable, DateCell, Select, type DateRange, type Column,
 } from '../../components/ui';
 import type { PayoutRecord } from '../../api/endpoints';
 import { usePayoutsData, useEarnings } from './usePayoutsData';
@@ -80,8 +80,18 @@ function AgencyPayouts() {
   const can = useCan();
   const { labels } = useCurrentSession();
   const [range, setRange] = useThisMonth();
+  const [historyRange, setHistoryRange] = useState<DateRange>({ from: '', to: '' });
+  const [historySearch, setHistorySearch] = useState('');
+  const [historyType, setHistoryType] = useState<'' | PayoutRecord['payeeType']>('');
+  const [historyStatus, setHistoryStatus] = useState<'' | PayoutRecord['status']>('');
   const [pending, setPending] = useState<PendingPayout | null>(null);
-  const { data, history, isLoading, isError, pay, isPaying } = usePayoutsData(range);
+  const { data, history, isLoading, isError, pay, isPaying } = usePayoutsData(range, {
+    q: historySearch.trim() || undefined,
+    payeeType: historyType,
+    status: historyStatus,
+    from: historyRange.from || undefined,
+    to: historyRange.to || undefined,
+  });
   const canPay = can('revenue.manage');
 
   const header = (
@@ -110,21 +120,24 @@ function AgencyPayouts() {
     try {
       const result = await pay({ payeeType: p.payeeType, targetId: p.targetId });
       setPending(null);
-      toast(result.ran === 0 ? `Nothing owed to ${p.label}.` : `Paid ${formatMoney(result.total)} to ${p.label}.`);
+      toast(result.ran === 0 ? `Nothing owed to ${p.label}.` : `Recorded ${formatMoney(result.total)} for ${p.label}.`);
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Payout failed.');
+      toast(err instanceof Error ? err.message : 'Could not record the payout.');
     }
   };
 
   const payButton = (payeeType: 'account' | 'agent', targetId: string, label: string, amount: number) =>
-    canPay ? <button className="btn ghost small" onClick={() => setPending({ payeeType, targetId, label, amount, payeeCount: 1 })}>Pay</button> : null;
+    canPay ? <button className="btn ghost small" onClick={() => setPending({ payeeType, targetId, label, amount, payeeCount: 1 })}>Record payout</button> : null;
 
   const historyColumns: Column<PayoutRecord>[] = [
-    { key: 'when', header: 'Paid on', render: (p) => <DateCell ts={p.createdAt} /> },
+    { key: 'when', header: 'Recorded', render: (p) => <DateCell ts={p.createdAt} /> },
     { key: 'payee', header: 'Payee', render: (p) => <span className="cname">{p.payee ?? '—'}</span> },
-    { key: 'type', header: 'Type', render: (p) => <Pill>{p.payeeType === 'account' ? labels.account : labels.agent}</Pill> },
+    { key: 'type', header: 'Type', render: (p) => (
+      <Pill>{p.payeeType === 'account' ? labels.account : p.payeeType === 'agent' ? labels.agent : 'Agency'}</Pill>
+    ) },
     { key: 'period', header: 'Period', render: (p) => <span className="time">{p.periodStart} – {p.periodEnd}</span> },
     { key: 'amount', header: 'Amount', align: 'right', render: (p) => <Money amount={p.amount} currency={p.currency} direction="out" /> },
+    { key: 'status', header: 'Status', render: (p) => <Pill>{p.status}</Pill> },
   ];
 
   return (
@@ -132,15 +145,17 @@ function AgencyPayouts() {
       {header}
 
       <StatGrid>
-        <StatCard label={`Owed to ${labels.accounts.toLowerCase()}`} value={<Money amount={accountsOwed} direction="out" emphasis />} sub="Their share this period" />
-        <StatCard label={`Owed to ${labels.agents.toLowerCase()}`} value={<Money amount={agentsOwed} direction="out" emphasis />} sub="Commissions this period" />
-        <StatCard label="Owed in total" value={<Money amount={owedTotal} direction="out" />} sub="Not yet paid out" />
+        <StatCard label="Gross sales" value={<Money amount={data.summary.grossSales} direction="in" />} sub={`${data.summary.successfulSales} successful sales`} />
+        <StatCard label="Net after platform fees" value={<Money amount={data.summary.distributable} direction="in" emphasis />} sub="Available to distribute" />
+        <StatCard label="Successful sales" value={data.summary.successfulSales} sub="Selected period" />
+        <StatCard label="Currently owed" value={<Money amount={data.summary.currentlyOwed} direction="out" />} sub="Selected period, not yet settled" />
+        <StatCard label="Paid to date" value={<Money amount={data.summary.paidToDate} />} sub="Recorded payouts across all periods" />
       </StatGrid>
 
       {(owedTotal > 0 || cash.heldInReserve > 0) && (
         <div className="card section">
           <div className="sechead">Cash position</div>
-          <p className="sub">What reached you this period after fees, less the reserve MantaPay holds back, is what you can pay out today.</p>
+          <p className="sub">What reached you this period after fees, less the reserve MantaPay holds back, is what is available to settle today.</p>
           <div className="metric-row">
             <span className="ml wide">Received after fees</span>
             <span className="mt"><span className="tone-pos" style={{ width: `${(cash.received / cashScale) * 100}%` }} /></span>
@@ -157,8 +172,8 @@ function AgencyPayouts() {
             <span className="mv">{formatMoney(owedTotal)}</span>
           </div>
           {cash.shortfallIfPaidNow > 0 ? (
-            <div className="warnbar">Paying everyone now leaves you {formatMoney(cash.shortfallIfPaidNow)} short. That is cash you front until the reserve is released.</div>
-          ) : <p className="sub">You can pay everyone in full from this period's receipts.</p>}
+            <div className="warnbar">Settling every balance now leaves you {formatMoney(cash.shortfallIfPaidNow)} short. That is cash you front until the reserve is released.</div>
+          ) : <p className="sub">Every balance can be settled from this period's receipts.</p>}
           {cash.heldInReserve > 0 && data.reserve.source === 'estimated' && (
             <p className="sub">Reserve estimated from your {data.reserve.pct}% rate.</p>
           )}
@@ -170,7 +185,7 @@ function AgencyPayouts() {
           <span>{labels.account} payouts</span>
           {canPay && accountsOwed > 0 && (
             <button className="btn ghost small" onClick={() => setPending({ payeeType: 'account', label: `all ${labels.accounts.toLowerCase()}`, amount: accountsOwed, payeeCount: accountsWithBalance })}>
-              Pay all {labels.accounts.toLowerCase()}
+              Mark all as settled
             </button>
           )}
         </div>
@@ -205,7 +220,7 @@ function AgencyPayouts() {
           <span>{labels.agent} payouts</span>
           {canPay && agentsOwed > 0 && (
             <button className="btn ghost small" onClick={() => setPending({ payeeType: 'agent', label: `all ${labels.agents.toLowerCase()}`, amount: agentsOwed, payeeCount: agentsWithBalance })}>
-              Pay all {labels.agents.toLowerCase()}
+              Mark all as settled
             </button>
           )}
         </div>
@@ -233,29 +248,50 @@ function AgencyPayouts() {
             </tbody>
           </table>
         </div>
-        <p className="sub">Balances accrue from paid sales in the selected period. Paying marks them as settled.</p>
+        <p className="sub">Balances accrue from successful sales in the selected period. Recording a payout marks ledger entries as settled; HigherPays does not send money through an external rail.</p>
       </div>
 
       <div className="section">
         <div className="sechead">Payout history</div>
+        <FilterBar>
+          <input type="search" className="search-input" aria-label="Search payout payees" placeholder="Search payee"
+            value={historySearch} onChange={(event) => setHistorySearch(event.target.value)} />
+          <Select label="Payee type" hideLabel value={historyType} onChange={(value) => setHistoryType(value as '' | PayoutRecord['payeeType'])}>
+            <option value="">All payee types</option>
+            <option value="account">{labels.accounts}</option>
+            <option value="agent">{labels.agents}</option>
+            <option value="agency">Agency</option>
+          </Select>
+          <Select label="Payout status" hideLabel value={historyStatus} onChange={(value) => setHistoryStatus(value as '' | PayoutRecord['status'])}>
+            <option value="">All statuses</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="paid">Paid</option>
+            <option value="on_hold">On hold</option>
+          </Select>
+          <DateRangePicker value={historyRange} onChange={setHistoryRange} />
+          <button className="btn ghost" onClick={() => {
+            setHistorySearch(''); setHistoryType(''); setHistoryStatus(''); setHistoryRange({ from: '', to: '' });
+          }}>Clear filters</button>
+        </FilterBar>
         <DataTable columns={historyColumns} rows={history} rowKey={(p) => p.id} emptyTitle="No payouts run yet."
           emptyHint="Every payout you confirm above is recorded here." />
       </div>
 
-      <Modal open={pending !== null} onClose={() => setPending(null)} title={pending ? `Pay ${pending.label}?` : ''}
-        subtitle="This settles the balance and cannot be undone here.">
+      <Modal open={pending !== null} onClose={() => setPending(null)} title={pending ? `Record payout for ${pending.label}?` : ''}
+        subtitle="This marks the ledger balance as settled. It does not call a bank, wallet, or other external money rail.">
         {pending && (
           <>
             <div className="callout">
               <DetailRow label={pending.payeeCount === 1 ? 'Payee' : 'Payees'}>{pending.payeeCount === 1 ? pending.label : `${pending.payeeCount} with a balance`}</DetailRow>
-              <DetailRow label="Total to pay"><Money amount={pending.amount} direction="out" emphasis /></DetailRow>
+              <DetailRow label="Amount to record"><Money amount={pending.amount} direction="out" emphasis /></DetailRow>
             </div>
             {cash.shortfallIfPaidNow > 0 && (
-              <div className="warnbar">You are {formatMoney(cash.shortfallIfPaidNow)} short across all balances this period. Paying now fronts that cash yourself.</div>
+              <div className="warnbar">You are {formatMoney(cash.shortfallIfPaidNow)} short across all balances this period. Settling now fronts that cash yourself.</div>
             )}
             <div className="modal-actions">
               <button className="btn ghost" onClick={() => setPending(null)}>Cancel</button>
-              <button className="btn" disabled={isPaying} onClick={() => confirmPayout(pending)}>{isPaying ? 'Paying…' : `Pay ${formatMoney(pending.amount)}`}</button>
+              <button className="btn" disabled={isPaying} onClick={() => confirmPayout(pending)}>{isPaying ? 'Recording…' : 'Record payout'}</button>
             </div>
           </>
         )}

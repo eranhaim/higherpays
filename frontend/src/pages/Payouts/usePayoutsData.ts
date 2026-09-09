@@ -2,7 +2,10 @@ import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTimezone } from '../../hooks/useTimezone';
-import { payoutsApi, meApi, type PayoutBreakdown, type PayoutRecord, type RunPayoutInput, type Earnings } from '../../api/endpoints';
+import {
+  payoutsApi, meApi,
+  type PayoutBreakdown, type PayoutRecord, type RunPayoutInput, type Earnings, type PayoutHistoryFilters,
+} from '../../api/endpoints';
 import type { DateRange } from '../../components/ui';
 import { parseDateTZ } from '../../business/timezone';
 
@@ -32,7 +35,7 @@ export interface UsePayoutsDataResult {
   isPaying: boolean;
 }
 
-export function usePayoutsData(selected: DateRange): UsePayoutsDataResult {
+export function usePayoutsData(selected: DateRange, historyFilters: PayoutHistoryFilters): UsePayoutsDataResult {
   const { activeWorkspaceId } = useCurrentSession();
   const queryClient = useQueryClient();
   const range = useIsoRange(selected);
@@ -43,8 +46,8 @@ export function usePayoutsData(selected: DateRange): UsePayoutsDataResult {
     enabled: Boolean(activeWorkspaceId),
   });
   const history = useQuery({
-    queryKey: ['payouts-history', activeWorkspaceId],
-    queryFn: () => payoutsApi.list(),
+    queryKey: ['payouts-history', activeWorkspaceId, historyFilters],
+    queryFn: () => payoutsApi.list(historyFilters),
     enabled: Boolean(activeWorkspaceId),
   });
 

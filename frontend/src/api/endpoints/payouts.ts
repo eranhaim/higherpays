@@ -3,6 +3,13 @@ import { workspacePath } from '../workspacePath';
 
 export interface PayoutBreakdown {
   range: { from: string; to: string };
+  summary: {
+    grossSales: number;
+    distributable: number;
+    successfulSales: number;
+    paidToDate: number;
+    currentlyOwed: number;
+  };
   perAccount: Array<{ id: string; name: string; payModel: 'share' | 'salary'; revenue: number; owed: number }>;
   perAgent: Array<{ id: string; name: string; owed: number; sales: number }>;
   reserve: { pct: number; releaseDays: number; held: number; source: 'settlements' | 'estimated' };
@@ -21,7 +28,7 @@ export interface RunPayoutInput {
 /** One payout that was run: who, how much, for which period. */
 export interface PayoutRecord {
   id: string;
-  payeeType: 'account' | 'agent';
+  payeeType: 'account' | 'agent' | 'agency';
   payee: string | null;
   periodStart: string;
   periodEnd: string;
@@ -31,14 +38,24 @@ export interface PayoutRecord {
   createdAt: string;
 }
 
+export interface PayoutHistoryFilters {
+  q?: string;
+  payeeType?: '' | 'account' | 'agent' | 'agency';
+  status?: '' | PayoutRecord['status'];
+  from?: string;
+  to?: string;
+}
+
 export const payoutsApi = {
   getBreakdown(from: string, to: string): Promise<PayoutBreakdown> {
     const qs = new URLSearchParams({ from, to });
     return api.get<PayoutBreakdown>(workspacePath(`/payouts/breakdown?${qs.toString()}`));
   },
 
-  async list(): Promise<PayoutRecord[]> {
-    const raw = await api.get<{ payouts: PayoutRecord[] }>(workspacePath('/payouts?limit=200'));
+  async list(filters: PayoutHistoryFilters = {}): Promise<PayoutRecord[]> {
+    const qs = new URLSearchParams({ limit: '200' });
+    for (const [key, value] of Object.entries(filters)) if (value) qs.set(key, value);
+    const raw = await api.get<{ payouts: PayoutRecord[] }>(workspacePath(`/payouts?${qs.toString()}`));
     return raw.payouts;
   },
 

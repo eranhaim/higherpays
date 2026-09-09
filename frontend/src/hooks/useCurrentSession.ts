@@ -9,7 +9,7 @@ import { useAuthStore } from '../store/auth';
 import { useSessionStore } from '../store/session';
 import type { AuthUser, AuthWorkspace, WorkspaceLabels, WorkspaceRole } from '../api/types';
 
-const DEFAULT_LABELS: WorkspaceLabels = { account: 'Creator', accounts: 'Creators', agent: 'Agent', agents: 'Agents' };
+const DEFAULT_LABELS: WorkspaceLabels = { account: 'Account', accounts: 'Accounts', agent: 'Salesperson', agents: 'Salespeople' };
 
 export interface CurrentSession {
   isAuthenticated: boolean;

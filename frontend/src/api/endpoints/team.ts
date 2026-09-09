@@ -2,7 +2,7 @@ import { api } from '../http';
 import { workspacePath } from '../workspacePath';
 import type { WorkspaceRole } from '../types';
 
-export type MemberStatus = 'active' | 'suspended';
+export type MemberStatus = 'active' | 'suspended' | 'removed';
 
 /** Anyone with access to the workspace, and the profile behind their role. */
 export interface Member {
@@ -15,6 +15,7 @@ export interface Member {
   agentId: string | null;
   accountId: string | null;
   accountName: string | null;
+  accountStatus: 'active' | 'paused' | 'archived' | null;
   isSelf: boolean;
   joinedAt: string;
 }
@@ -25,8 +26,8 @@ export const teamApi = {
     return raw.members;
   },
 
-  /** Suspending ends the sign-in but keeps the agent or account record. */
-  setStatus: (userId: string, status: MemberStatus) =>
+  /** Active and suspended are direct access controls; removed is set through remove(). */
+  setStatus: (userId: string, status: Exclude<MemberStatus, 'removed'>) =>
     api.patch<{ userId: string; status: MemberStatus }>(workspacePath(`/team/${userId}/status`), { status }),
 
   setRole: (userId: string, role: string) =>
@@ -35,6 +36,6 @@ export const teamApi = {
   transferOwner: (userId: string) =>
     api.post<{ ownerUserId: string }>(workspacePath('/team/owner-transfer'), { userId }),
 
-  /** Removes access entirely. Refused while an agent or account record exists. */
+  /** Marks a plain seat removed while preserving its history. */
   remove: (userId: string) => api.del<void>(workspacePath(`/team/${userId}`)),
 };

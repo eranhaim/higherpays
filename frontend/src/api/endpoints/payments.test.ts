@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, PAYMENT_EXPORT_COLUMNS, PROVIDER_FEE_SOURCE_LABELS,
+  PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, getPaymentExportColumns, PROVIDER_FEE_SOURCE_LABELS,
 } from './payments';
 
 describe('payment outcome labels', () => {
@@ -9,7 +9,12 @@ describe('payment outcome labels', () => {
     expect(PAYMENT_STATUS_LABELS.pending).toBe('Pending');
     expect(PROVIDER_FEE_SOURCE_LABELS.estimated).toBe('Estimated');
     expect(PROVIDER_FEE_SOURCE_LABELS.actual).toBe('Actual');
-    expect(PAYMENT_EXPORT_COLUMNS.find((column) => column.key === 'reference')?.label).toBe('HigherPays Order');
-    expect(PAYMENT_EXPORT_COLUMNS.find((column) => column.key === 'providerTransaction')?.label).toBe('MantaPay Transaction ID');
+    const columns = getPaymentExportColumns({
+      account: 'Model', accounts: 'Models', agent: 'Closer', agents: 'Closers',
+    });
+    expect(columns.find((column) => column.key === 'reference')?.label).toBe('HigherPays Order');
+    expect(columns.find((column) => column.key === 'providerTransaction')?.label).toBe('MantaPay Transaction ID');
+    expect(columns.find((column) => column.key === 'creator')?.label).toBe('Model');
+    expect(columns.find((column) => column.key === 'agent')?.label).toBe('Closer');
   });
 });

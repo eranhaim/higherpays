@@ -35,11 +35,27 @@ test('breakdown reports what is owed per account and per agent, what came in, an
   assert.equal(b.cash.received, 87);
   assert.equal(b.cash.owed, 69.6);
   assert.equal(b.cash.shortfallIfPaidNow, 0);
+  assert.deepEqual(b.summary, {
+    grossSales: 100,
+    distributable: 87,
+    successfulSales: 1,
+    paidToDate: 0,
+    currentlyOwed: 69.6,
+  });
 
   await request(app).post(`/workspaces/${t.workspaceId}/payouts/run`).set(t.authHeaders).send({ payeeType: 'agent', targetId: agent.id }).expect(200);
   const after = (await request(app).get(`/workspaces/${t.workspaceId}/payouts/breakdown`).set(t.authHeaders).expect(200)).body;
   assert.equal(after.perAgent.find((a) => a.id === agent.id).owed, 0);
   assert.equal(after.perAccount.find((a) => a.id === account.id).owed, 60.9);
+  assert.equal(after.summary.paidToDate, 8.7);
+  assert.equal(after.summary.currentlyOwed, 60.9);
+
+  const history = (await request(app)
+    .get(`/workspaces/${t.workspaceId}/payouts`)
+    .query({ q: agent.name, payeeType: 'agent', status: 'approved', from: '2000-01-01', to: '2100-01-01' })
+    .set(t.authHeaders).expect(200)).body.payouts;
+  assert.equal(history.length, 1);
+  assert.equal(history[0].payee, agent.name);
 
   const mine = (await request(app).get(`/workspaces/${t.workspaceId}/me/earnings`).set(agent.headers).expect(200)).body;
   assert.equal(mine.role, 'agent');

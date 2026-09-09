@@ -12,7 +12,7 @@ export interface UseTeamDataResult {
   pendingInvites: Invite[];
   isLoading: boolean;
   isError: boolean;
-  setStatus: (userId: string, status: MemberStatus) => Promise<void>;
+  setStatus: (userId: string, status: Exclude<MemberStatus, 'removed'>) => Promise<void>;
   setRole: (userId: string, role: string) => Promise<void>;
   transferOwner: (userId: string) => Promise<void>;
   removeMember: (userId: string) => Promise<void>;
@@ -43,7 +43,7 @@ export function useTeamData(): UseTeamDataResult {
   const invalidateInvites = () => queryClient.invalidateQueries({ queryKey: ['invites', activeWorkspaceId] });
 
   const status = useMutation({
-    mutationFn: ({ userId, status }: { userId: string; status: MemberStatus }) => teamApi.setStatus(userId, status),
+    mutationFn: ({ userId, status }: { userId: string; status: Exclude<MemberStatus, 'removed'> }) => teamApi.setStatus(userId, status),
     onSuccess: invalidateTeam,
   });
   const remove = useMutation({ mutationFn: (userId: string) => teamApi.remove(userId), onSuccess: invalidateTeam });

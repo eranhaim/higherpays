@@ -154,10 +154,10 @@ function WorkspaceCard({ editable, workspace, onSave }: {
       </div>
       <div className="sechead">Vocabulary</div>
       <p className="sub">What this agency calls its creators and agents. Used across the console; it changes no data.</p>
-      {labelRow('label-account', 'Creator, singular', 'e.g. Creator, Talent, Model', account, setAccount)}
-      {labelRow('label-accounts', 'Creator, plural', 'e.g. Creators, Talent, Models', accounts, setAccounts)}
-      {labelRow('label-agent', 'Agent, singular', 'e.g. Chatter, Closer', agent, setAgent)}
-      {labelRow('label-agents', 'Agent, plural', 'e.g. Chatters, Closers', agents, setAgents)}
+      {labelRow('label-account', `${workspace.labels.account}, singular`, 'e.g. Talent or Model', account, setAccount)}
+      {labelRow('label-accounts', `${workspace.labels.accounts}, plural`, 'e.g. Talent or Models', accounts, setAccounts)}
+      {labelRow('label-agent', `${workspace.labels.agent}, singular`, 'e.g. Chatter or Closer', agent, setAgent)}
+      {labelRow('label-agents', `${workspace.labels.agents}, plural`, 'e.g. Chatters or Closers', agents, setAgents)}
       {editable && (
         <div className="actions-right">
           <button className="btn" onClick={save} disabled={isSaving || !dirty}>{isSaving ? 'Saving…' : 'Save'}</button>

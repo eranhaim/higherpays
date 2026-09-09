@@ -30,12 +30,12 @@ export {
   type LinkEvent, type LinkEventType, type PaymentLinkDetail,
 } from './links';
 export {
-  paymentsApi, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, PAYMENT_EXPORT_COLUMNS,
+  paymentsApi, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, getPaymentExportColumns,
   PROVIDER_FEE_SOURCE_LABELS, isReversed,
   type Payment, type PaymentFlow, type PaymentFlowParty, type PaymentFlowRate, type PaymentsSummary, type PaymentStatus, type ListPaymentsQuery, type CompletePaymentInput, type ReversalResult,
   type ExportColumn, type ExportOptions, type PaymentSort,
 } from './payments';
-export { payoutsApi, type PayoutBreakdown, type RunPayoutInput, type PayoutRecord } from './payouts';
+export { payoutsApi, type PayoutBreakdown, type RunPayoutInput, type PayoutRecord, type PayoutHistoryFilters } from './payouts';
 export { meApi, type Earnings } from './me';
 export { feesApi, type FeesSummary } from './fees';
 export { analyticsApi, type AnalyticsReport, type AnalyticsQuery } from './analytics';

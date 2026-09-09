@@ -17,7 +17,7 @@ const {
 const USER_STATUS = ['active', 'suspended', 'invited'];
 const WORKSPACE_STATUS = ['active', 'suspended', 'archived'];
 const WORKSPACE_ROLE = ['workspace_owner', 'workspace_admin', 'analyst', 'agent', 'account_owner'];
-const ACCESS_STATUS = ['active', 'suspended'];
+const ACCESS_STATUS = ['active', 'suspended', 'removed'];
 
 const ACCOUNT_STATUS = [ 'active', 'paused', 'archived'];
 // How a creator is paid: a share of every sale, or a salary per payout period.

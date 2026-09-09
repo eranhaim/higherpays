@@ -30,7 +30,7 @@ function parseAmount(text: string): number {
 export default function PlatformPage() {
   const {
     isCheckingAccess, isPlatformAdmin, overview, workspaces, isLoading, isError,
-    onboardAgency, setStatus, setPlatformFee,
+    onboardAgency, setStatus, setCurrency, setPlatformFee,
   } = usePlatformData();
   const [onboardOpen, setOnboardOpen] = useState(false);
   const [editingFee, setEditingFee] = useState<PlatformWorkspace | null>(null);
@@ -123,7 +123,8 @@ export default function PlatformPage() {
         <RatesModal
           workspace={editingFee}
           onClose={() => setEditingFee(null)}
-          onSubmit={async (input) => {
+          onSubmit={async (input, currency) => {
+            if (currency !== editingFee.currency) await setCurrency(editingFee.id, currency);
             await setPlatformFee(editingFee.id, input);
             setEditingFee(null);
             toast(`Rates updated for ${editingFee.name}.`);
@@ -247,7 +248,7 @@ function OnboardAgencyModal({ onClose, onSubmit }: {
 function RatesModal({ workspace, onClose, onSubmit }: {
   workspace: PlatformWorkspace;
   onClose: () => void;
-  onSubmit: (input: PlatformFeeRate) => Promise<void>;
+  onSubmit: (input: PlatformFeeRate, currency: string) => Promise<void>;
 }) {
   const detail = useQuery({
     queryKey: ['platform-workspace', workspace.id],
@@ -281,17 +282,20 @@ function RatesModal({ workspace, onClose, onSubmit }: {
         pspFixedFee: current.pspFixedFee,
         checkoutFee: current.checkoutFee,
       }}
+      currencyChangeAllowed={detail.data?.currencyChangeAllowed ?? false}
       onClose={onClose}
       onSubmit={onSubmit}
     />
   );
 }
 
-function RatesForm({ workspace, onClose, onSubmit }: {
+function RatesForm({ workspace, currencyChangeAllowed, onClose, onSubmit }: {
   workspace: PlatformWorkspace;
+  currencyChangeAllowed: boolean;
   onClose: () => void;
-  onSubmit: (input: PlatformFeeRate) => Promise<void>;
+  onSubmit: (input: PlatformFeeRate, currency: string) => Promise<void>;
 }) {
+  const [currency, setCurrency] = useState(workspace.currency);
   const [pspRate, setPspRate] = useState(String(workspace.pspRatePct));
   const [settlementPct, setSettlementPct] = useState(String(workspace.settlementPct));
   const [margin, setMargin] = useState(String(workspace.marginRatePct));
@@ -309,7 +313,7 @@ function RatesForm({ workspace, onClose, onSubmit }: {
   const submit = async () => {
     if (!valid) { toast('Enter valid rates and fees.'); return; }
     setIsSaving(true);
-    try { await onSubmit({ pspRatePct: psp, settlementPct: settlement, marginRatePct: mrg, pspFixedFee: fixed, checkoutFee: checkout }); }
+    try { await onSubmit({ pspRatePct: psp, settlementPct: settlement, marginRatePct: mrg, pspFixedFee: fixed, checkoutFee: checkout }, currency); }
     catch (err) { toast(err instanceof Error ? err.message : 'Could not save the rates.'); }
     finally { setIsSaving(false); }
   };
@@ -318,6 +322,15 @@ function RatesForm({ workspace, onClose, onSubmit }: {
     <Modal open onClose={onClose} title={`Rates for ${workspace.name}`}
       subtitle={`Currently ${workspace.blendedRatePct}% blended. A new rate applies to sales from now on; the history is kept.`}>
       <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
+        <Select id="rates-currency" label="Workspace currency" value={currency} onChange={setCurrency}
+          disabled={!currencyChangeAllowed}>
+          {CURRENCIES.map((item) => <option key={item} value={item}>{item}</option>)}
+        </Select>
+        <p className="sub">
+          {currencyChangeAllowed
+            ? 'Currency can change only before the workspace has links or any money history.'
+            : 'Currency is locked because this workspace already has links or money history. Historical workspaces cannot switch currency.'}
+        </p>
         <div className="form-row">
           <div className="field">
             <label htmlFor="rates-psp">MDR rate</label>

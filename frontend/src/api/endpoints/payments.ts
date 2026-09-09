@@ -1,6 +1,7 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
 import type { Page } from '../types';
+import type { WorkspaceLabels } from '../types';
 import type { LinkType, ReassignImpact, ReassignInput } from './links';
 
 /** Mirrors PAYMENT_STATUS in the schema. */
@@ -139,7 +140,8 @@ export interface ExportColumn {
   feesOnly?: boolean;
 }
 
-export const PAYMENT_EXPORT_COLUMNS: ExportColumn[] = [
+export function getPaymentExportColumns(labels: WorkspaceLabels): ExportColumn[] {
+  return [
   { key: 'date', label: 'Date' },
   { key: 'reference', label: 'HigherPays Order' },
   { key: 'providerTransaction', label: 'MantaPay Transaction ID' },
@@ -149,10 +151,11 @@ export const PAYMENT_EXPORT_COLUMNS: ExportColumn[] = [
   { key: 'net', label: 'Net Revenue', feesOnly: true },
   { key: 'customer', label: 'Customer' },
   { key: 'telegram', label: 'Telegram' },
-  { key: 'creator', label: 'Creator' },
-  { key: 'agent', label: 'Agent' },
+  { key: 'creator', label: labels.account },
+  { key: 'agent', label: labels.agent },
   { key: 'category', label: 'Category' },
-];
+  ];
+}
 
 export interface ExportOptions {
   columns?: string[];

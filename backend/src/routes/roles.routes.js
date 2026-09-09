@@ -26,7 +26,7 @@ async function roleRows(client, workspaceId) {
   await ensureWorkspaceRoles(client, workspaceId);
   return (await client.query(
     `SELECT wr.key, wr.name, wr.permissions, wr.is_system,
-            count(wu.user_id)::int AS member_count
+            count(wu.user_id) FILTER (WHERE wu.status <> 'removed')::int AS member_count
        FROM workspace_roles wr
        LEFT JOIN workspace_users wu
          ON wu.workspace_id=wr.workspace_id AND wu.role=wr.key
@@ -110,7 +110,7 @@ router.patch('/:key', requirePermission('roles.manage'), asyncHandler(async (req
         RETURNING key, name, permissions, is_system`,
       [wid(req), current.key, hasName, name, hasPermissions, hasPermissions ? req.body.permissions : []])).rows[0];
     const count = (await client.query(
-      'SELECT count(*)::int AS count FROM workspace_users WHERE workspace_id=$1 AND role=$2',
+      "SELECT count(*)::int AS count FROM workspace_users WHERE workspace_id=$1 AND role=$2 AND status <> 'removed'",
       [wid(req), current.key])).rows[0].count;
     return { row: { ...row, member_count: count }, before: current };
   });
