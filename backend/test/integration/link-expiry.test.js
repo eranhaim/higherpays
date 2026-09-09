@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 const { app, pool } = require('../helpers/setup');
 const { createTenant, createAccount } = require('../helpers/tenant');
+const config = require('../../src/config');
 
 test('a single-use link expires after the workspace setting, not the platform default', async () => {
   const t = await createTenant(app);
@@ -39,7 +40,7 @@ test('the limits endpoint reports the platform default until one is set', async 
   const t = await createTenant(app);
   const limits = (await request(app).get(`/workspaces/${t.workspaceId}/link-limits`)
     .set(t.authHeaders).expect(200)).body;
-  assert.equal(limits.linkTtlMinutes, 24 * 60);
+  assert.equal(limits.linkTtlMinutes, config.linkTtlMinutes);
 
   await request(app).patch(`/workspaces/${t.workspaceId}/link-limits`).set(t.authHeaders)
     .send({ linkTtlMinutes: 0 }).expect(400);

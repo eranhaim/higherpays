@@ -223,8 +223,12 @@ router.get('/workspaces/:id', asyncHandler(async (req, res) => {
 // key-share lock.
 router.patch('/workspaces/:id/currency', asyncHandler(async (req, res) => {
   const currency = String(req.body?.currency || '').toUpperCase();
-  if (!['EUR', 'USD', 'GBP'].includes(currency)) {
-    return badRequest(res, 'currency must be EUR, USD, or GBP', ['currency']);
+  if (!config.supportedCurrencies.includes(currency)) {
+    return badRequest(
+      res,
+      `currency must be one of ${config.supportedCurrencies.join(', ')}`,
+      ['currency'],
+    );
   }
   const out = await withTransaction(async (c) => {
     const workspace = (await c.query(

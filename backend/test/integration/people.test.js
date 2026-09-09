@@ -47,7 +47,7 @@ test('an account owner cannot also be made an agent in the same workspace', asyn
   const t = await createTenant(app);
   const account = await createAccount(app, t);
   const res = await request(app).post(`/workspaces/${t.workspaceId}/agents`).set(t.authHeaders)
-    .send({ email: account.ownerEmail, fullName: 'Same Person', password: PASSWORD }).expect(400);
+    .send({ email: account.ownerEmail, fullName: 'Same Person', password: PASSWORD, commissionPct: 10 }).expect(400);
   assert.match(res.body.detail, /already a account_owner/);
 });
 
@@ -55,14 +55,14 @@ test('a new login needs a password; an existing user is attached without one', a
   const t = await createTenant(app);
   const email = `nopw+${tag()}@test.local`;
   const res = await request(app).post(`/workspaces/${t.workspaceId}/agents`).set(t.authHeaders)
-    .send({ email, fullName: 'No Password' }).expect(400);
+    .send({ email, fullName: 'No Password', commissionPct: 10 }).expect(400);
   assert.deepEqual(res.body.fields, ['password']);
 
   // The same person can be an agent in two agencies with one login.
   const other = await createTenant(app);
   const first = await createAgent(app, t, { email: `twice+${tag()}@test.local` });
   await request(app).post(`/workspaces/${other.workspaceId}/agents`).set(other.authHeaders)
-    .send({ email: first.email, fullName: 'Twice' }).expect(201);
+    .send({ email: first.email, fullName: 'Twice', commissionPct: 10 }).expect(201);
   const users = (await pool.query('SELECT count(*)::int AS c FROM users WHERE email = $1', [first.email])).rows[0].c;
   assert.equal(users, 1);
 });
@@ -71,7 +71,9 @@ test('the database refuses an agent profile for a user without the agent role', 
   const t = await createTenant(app);
   const analyst = await addMember(app, t, 'analyst');
   await assert.rejects(
-    () => pool.query('INSERT INTO agents (workspace_id, user_id) VALUES ($1,$2)', [t.workspaceId, analyst.userId]),
+    () => pool.query(
+      'INSERT INTO agents (workspace_id, user_id, commission_pct) VALUES ($1,$2,10)',
+      [t.workspaceId, analyst.userId]),
     /foreign key/);
 });
 

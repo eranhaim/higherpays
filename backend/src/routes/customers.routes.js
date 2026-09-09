@@ -73,7 +73,7 @@ router.get('/', requirePermission('customers.view'), asyncHandler(async (req, re
     return (await c.query(
       `SELECT c.* FROM customers c WHERE ${where.join(' AND ')}
         ORDER BY ${sortColumn} ${dir} NULLS LAST, created_at DESC
-        LIMIT ${vals.length - 1} OFFSET ${vals.length}`, vals)).rows;
+        LIMIT $${vals.length - 1} OFFSET $${vals.length}`, vals)).rows;
   });
   res.json({ customers: rows.map(publicCustomer), limit, offset });
 }));

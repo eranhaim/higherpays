@@ -7,6 +7,7 @@
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-only-secret-fixed-value-for-deterministic-tokens';
 process.env.PORT = process.env.PORT || '0'; // never actually listened on
+process.env.SUPPORTED_CURRENCIES = process.env.SUPPORTED_CURRENCIES || 'EUR,USD,GBP';
 process.env.DATABASE_URL =
   process.env.DATABASE_URL ||
   `postgres://${process.env.HP_APP_USER || 'hp_app'}:${process.env.HP_APP_PASSWORD || 'hp_app_dev'}@${process.env.PGHOST || 'localhost'}:${process.env.PGPORT || '5432'}/${process.env.PGDATABASE || 'higherpays'}`;
