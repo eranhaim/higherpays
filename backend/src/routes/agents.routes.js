@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const { query, withTransaction } = require('../db');
-const { requirePermission } = require('../middleware');
+const { requirePermission, requireArchiveManager } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { isStr, badRequest } = require('../util/validate');
@@ -120,7 +120,7 @@ router.patch('/:id', requirePermission('agents.manage'), asyncHandler(async (req
   res.json(publicAgent(out.row));
 }));
 
-router.post('/:id/archive', requirePermission('agents.manage'), asyncHandler(async (req, res) => {
+router.post('/:id/archive', requirePermission('archive.manage'), requireArchiveManager, asyncHandler(async (req, res) => {
   const out = await withTransaction(async (c) => {
     const row = (await c.query(
       `UPDATE workspace_users wu
@@ -142,7 +142,7 @@ router.post('/:id/archive', requirePermission('agents.manage'), asyncHandler(asy
   res.json({ id: out.id, status: 'suspended' });
 }));
 
-router.post('/:id/reactivate', requirePermission('agents.manage'), asyncHandler(async (req, res) => {
+router.post('/:id/reactivate', requirePermission('archive.manage'), requireArchiveManager, asyncHandler(async (req, res) => {
   const row = (await query(
     `UPDATE workspace_users wu
         SET status = 'active'

@@ -143,6 +143,9 @@ router.post('/', requirePermission('accounts.manage'), asyncHandler(async (req, 
 router.patch('/:id', requirePermission('accounts.manage'), asyncHandler(async (req, res) => {
   const body = req.body || {};
   const sets = [], vals = [];
+  if (body.status === 'archived' && !req.access.permissions.has('archive.manage')) {
+    return res.status(403).json({ error: 'archive_manager_required' });
+  }
   if ('name' in body) { if (!isStr(body.name, 100)) return badRequest(res, 'name is required', ['name']); vals.push(body.name.trim()); sets.push(`name = $${vals.length}`); }
   if ('handle' in body) { if (!isOptStr(body.handle, 100)) return badRequest(res, 'invalid handle', ['handle']); vals.push(body.handle || null); sets.push(`handle = $${vals.length}`); }
   if ('country' in body) {
@@ -182,7 +185,11 @@ router.patch('/:id', requirePermission('accounts.manage'), asyncHandler(async (r
   });
   if (out.notFound) return res.status(404).json({ error: 'not_found' });
   if (out.err) return badRequest(res, out.err, ['revenueSplitPct']);
-  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'account.update', entityType: 'account', entityId: out.row.id, metadata: body });
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req),
+    action: body.status === 'archived' ? 'account.archive' : 'account.update',
+    entityType: 'account', entityId: out.row.id, metadata: body,
+  });
   res.json(visible(out.row, { kind: 'workspace' }));
 }));
 

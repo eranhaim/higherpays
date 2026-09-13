@@ -36,7 +36,9 @@ router.get('/', requirePermission('fees.view'), asyncHandler(async (req, res) =>
        COALESCE(SUM(re.account_amount),0)   AS account,
        COALESCE(SUM(re.agent_amount),0)     AS agent,
        COALESCE(SUM(re.agency_amount),0)    AS agency
-     FROM revenue_entries re JOIN transactions t ON t.id = re.transaction_id
+     FROM revenue_entries re
+     JOIN transactions t ON t.id = re.transaction_id
+     JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
     WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2`, [F, T, wid(req)])).rows[0];
   const card = (await query('SELECT * FROM effective_platform_fee($1, now())', [wid(req)])).rows[0] || {};
 
@@ -83,6 +85,7 @@ router.get('/transactions', requirePermission('fees.view'), asyncHandler(async (
             re.distributable, re.account_amount, re.agent_amount, re.agency_amount
        FROM revenue_entries re
        JOIN transactions t ON t.id = re.transaction_id
+       JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
        LEFT JOIN accounts a ON a.id = re.account_id
        LEFT JOIN agents ag ON ag.id = re.agent_id LEFT JOIN users u ON u.id = ag.user_id
       WHERE re.workspace_id = $4 AND t.occurred_at >= $1 AND t.occurred_at <= $2

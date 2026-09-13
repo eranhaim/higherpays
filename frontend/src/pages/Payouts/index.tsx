@@ -85,7 +85,9 @@ function AgencyPayouts() {
   const [historyType, setHistoryType] = useState<'' | PayoutRecord['payeeType']>('');
   const [historyStatus, setHistoryStatus] = useState<'' | PayoutRecord['status']>('');
   const [pending, setPending] = useState<PendingPayout | null>(null);
-  const { data, history, isLoading, isError, pay, isPaying } = usePayoutsData(range, {
+  const {
+    data, history, isLoading, isError, isHistoryLoading, isHistoryError, pay, isPaying,
+  } = usePayoutsData(range, {
     q: historySearch.trim() || undefined,
     payeeType: historyType,
     status: historyStatus,
@@ -274,8 +276,10 @@ function AgencyPayouts() {
             setHistorySearch(''); setHistoryType(''); setHistoryStatus(''); setHistoryRange({ from: '', to: '' });
           }}>Clear filters</button>
         </FilterBar>
-        <DataTable columns={historyColumns} rows={history} rowKey={(p) => p.id} emptyTitle="No payouts run yet."
-          emptyHint="Every payout you confirm above is recorded here." />
+        {isHistoryLoading ? <LoadingCard label="Loading payout history…" />
+          : isHistoryError ? <ErrorCard message="Couldn't load payout history." />
+            : <DataTable columns={historyColumns} rows={history} rowKey={(p) => p.id} emptyTitle="No payouts run yet."
+              emptyHint="Every payout you confirm above is recorded here." />}
       </div>
 
       <Modal open={pending !== null} onClose={() => setPending(null)} title={pending ? `Record payout for ${pending.label}?` : ''}

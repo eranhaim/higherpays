@@ -7,6 +7,8 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useRateCard } from '../../hooks/useRateCard';
 import Modal from '../../components/Modal';
 import ReassignFields from '../../components/ReassignFields';
+import { HttpError } from '../../api/http';
+import EnableTwoFactorModal from '../../components/EnableTwoFactorModal';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DateCell,
@@ -16,7 +18,7 @@ import {
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import { formatMoney } from '../../lib/format';
 import {
-  isReversed, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, getPaymentExportColumns,
+  isReversed, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, paymentStatusLabel, getPaymentExportColumns,
   PROVIDER_FEE_SOURCE_LABELS,
   paymentsApi, type Payment, type PaymentFlow, type PaymentStatus, type PaymentSort, type ListPaymentsQuery,
 } from '../../api/endpoints';
@@ -31,8 +33,7 @@ const STATUS_TONE: Record<PaymentStatus, 'ok' | 'no' | 'warn'> = {
 
 function StatusPill({ payment }: { payment: Payment }) {
   if (payment.reviewRequired) return <Pill tone="warn">Review required</Pill>;
-  if (payment.needsDetails) return <Pill tone="warn">Details needed</Pill>;
-  return <Pill tone={STATUS_TONE[payment.status]}>{PAYMENT_STATUS_LABELS[payment.status]}</Pill>;
+  return <Pill tone={payment.needsDetails ? 'warn' : STATUS_TONE[payment.status]}>{paymentStatusLabel(payment)}</Pill>;
 }
 
 interface Filters {
@@ -56,6 +57,7 @@ export default function PaymentsPage() {
   const canScope = can('data.view_all');
   const canComplete = can('payments.complete');
   const canReverse = can('revenue.manage');
+  const canArchive = can('archive.manage');
   const canExport = can('payments.export');
 
   // Another page can point here at one payment ("complete the details for
@@ -87,15 +89,18 @@ export default function PaymentsPage() {
   const {
     payments, summary, categories, customers, accounts, agents,
     areCustomersLoading, hasCustomersError, retryCustomers,
-    isLoading, isError, isSummaryLoading, isSummaryError, hasMore, isLoadingMore, loadMore, complete, recordReversal, reassign, exportCsv,
+    isLoading, isError, isSummaryLoading, isSummaryError, hasMore, isLoadingMore, loadMore, complete, recordReversal, reassign, archivePayment, exportCsv,
   } = usePaymentsData(query, canScope);
 
   const [detail, setDetail] = useState<Payment | null>(null);
   const [flowPayment, setFlowPayment] = useState<Payment | null>(null);
   const [completing, setCompleting] = useState<Payment | null>(null);
   const [reversing, setReversing] = useState<{ payment: Payment; kind: ReversalKind } | null>(null);
+  const [archiving, setArchiving] = useState<Payment | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
+  const [enableTwoFactorOpen, setEnableTwoFactorOpen] = useState(false);
   const canViewFlow = Boolean(user?.isPlatformAdmin);
+  const flowNeedsTwoFactor = canViewFlow && !user?.twoFactorEnabled;
   const flow = useQuery<PaymentFlow>({
     queryKey: ['payment-flow', activeWorkspaceId, flowPayment?.id],
     queryFn: () => paymentsApi.flow(flowPayment!.id),
@@ -135,8 +140,8 @@ export default function PaymentsPage() {
       ),
     },
     {
-      key: 'detailsNeeded', label: 'Details needed',
-      card: <StatCard isUnknown={statsUnknown} label="Details needed" value={summary?.detailsNeeded ?? 0} sub="Paid, not yet completed" />,
+      key: 'detailsNeeded', label: 'Waiting to fill details',
+      card: <StatCard isUnknown={statsUnknown} label="Waiting to fill details" value={summary?.detailsNeeded ?? 0} sub="Payment received, details incomplete" />,
     },
     {
       key: 'refunded', label: 'Refunded amount',
@@ -160,6 +165,10 @@ export default function PaymentsPage() {
     {
       key: 'reference', header: 'HigherPays Order',
       render: (p) => <span className="ref" title={p.linkReference ?? undefined}>{p.linkReference ?? '—'}</span>,
+    },
+    {
+      key: 'providerTransaction', header: 'MantaPay transaction',
+      render: (p) => <span className="ref" title={p.providerTransactionId ?? undefined}>{p.providerTransactionId ?? '—'}</span>,
     },
     {
       key: 'customer', header: 'Customer',
@@ -205,7 +214,7 @@ export default function PaymentsPage() {
           onChange={(v) => setFilters((f) => ({ ...f, needsDetails: v === 'needs_details', status: v === 'needs_details' ? '' : v as Filters['status'] }))}
         >
           <option value="">All statuses</option>
-          <option value="needs_details">Details needed</option>
+          <option value="needs_details">Waiting to fill details</option>
           {PAYMENT_STATUSES.map((s) => <option key={s} value={s}>{PAYMENT_STATUS_LABELS[s]}</option>)}
         </Select>
       ),
@@ -223,18 +232,18 @@ export default function PaymentsPage() {
     // The actions cell is a control, not data: it is never hidden or moved.
     ...(canComplete ? [{
       key: 'actions', header: 'Actions', hideHeader: true, align: 'right' as const,
-      // "Details needed" is a job, not a status: the row carries the way to do it
+      // Filling details is a job, not a separate provider status: the row carries the way to do it
       // rather than hiding it behind opening the payment.
       render: (p: Payment) => p.needsDetails
-        ? <button className="btn ghost small" onClick={() => setCompleting(p)}>Complete</button>
+        ? <button className="btn ghost small" onClick={() => setCompleting(p)}>Fill details</button>
         : null,
     }] : []),
     ...(canViewFlow ? [{
       key: 'flow', header: 'Flow', hideHeader: true, align: 'right' as const,
       render: (p: Payment) => (
-        <button className="btn ghost small" onClick={() => setFlowPayment(p)}>
-          View flow
-        </button>
+        flowNeedsTwoFactor
+          ? <button className="btn ghost small" onClick={() => setEnableTwoFactorOpen(true)}>Enable 2FA</button>
+          : <button className="btn ghost small" onClick={() => setFlowPayment(p)}>View flow</button>
       ),
     }] : []),
   ];
@@ -345,13 +354,16 @@ export default function PaymentsPage() {
             {isReversed(detail.status) && <div className="warnbar">This sale has been reversed.</div>}
             <div className="modal-actions">
               {detail.needsDetails && canComplete && (
-                <button className="btn" onClick={() => setCompleting(detail)}>Complete details</button>
+                <button className="btn" onClick={() => setCompleting(detail)}>Fill details</button>
               )}
               {detail.status === 'paid' && !detail.reviewRequired && canReverse && (
                 <>
                   <button className="btn danger" onClick={() => setReversing({ payment: detail, kind: 'refund' })}>Record refund</button>
                   <button className="btn ghost" onClick={() => setReversing({ payment: detail, kind: 'chargeback' })}>Record chargeback</button>
                 </>
+              )}
+              {canArchive && (
+                <button className="btn ghost" onClick={() => setArchiving(detail)}>Archive payment</button>
               )}
               <span className="spacer" />
               <button className="btn ghost" onClick={() => setDetail(null)}>Close</button>
@@ -361,13 +373,40 @@ export default function PaymentsPage() {
       </Modal>
 
       <Modal
+        open={archiving !== null}
+        onClose={() => setArchiving(null)}
+        title={archiving ? 'Archive this payment?' : ''}
+        subtitle="It will leave normal lists, metrics, and future payout calculations. The transaction and payout history will remain unchanged."
+      >
+        <div className="modal-actions">
+          <button className="btn ghost" onClick={() => setArchiving(null)}>Keep payment</button>
+          <button
+            className="btn danger"
+            onClick={async () => {
+              if (!archiving) return;
+              try {
+                await archivePayment(archiving.id);
+                setArchiving(null);
+                setDetail(null);
+                toast('Payment archived.');
+              } catch (err) {
+                toast(err instanceof Error ? err.message : 'Could not archive the payment.');
+              }
+            }}
+          >
+            Archive payment
+          </button>
+        </div>
+      </Modal>
+
+      <Modal
         open={flowPayment !== null}
         onClose={() => setFlowPayment(null)}
         title="Payment flow"
         subtitle={flowPayment ? `HigherPays Order ${flowPayment.linkReference ?? '—'} · recorded waterfall` : undefined}
       >
         {flow.isPending && <p className="sub">Loading the payment flow…</p>}
-        {flow.isError && <div className="warnbar" role="alert">Couldn't load the payment flow. Try again.</div>}
+        {flow.isError && <div className="warnbar" role="alert">{paymentFlowError(flow.error)}</div>}
         {flow.data && <PaymentFlowContent flow={flow.data} labels={labels} />}
         <div className="modal-actions">
           <button className="btn ghost" onClick={() => setFlowPayment(null)}>Close</button>
@@ -421,8 +460,24 @@ export default function PaymentsPage() {
           }}
         />
       )}
+      {enableTwoFactorOpen && (
+        <EnableTwoFactorModal onClose={() => setEnableTwoFactorOpen(false)} />
+      )}
     </div>
   );
+}
+
+function paymentFlowError(error: unknown): string {
+  if (error instanceof HttpError && typeof error.body === 'object' && error.body !== null) {
+    const code = (error.body as { error?: unknown }).error;
+    if (code === 'platform_two_factor_required') {
+      return 'Enable 2FA in Settings → My account before viewing payment flows.';
+    }
+    if (code === 'not_platform_admin') {
+      return 'Only a HigherPays platform admin can view payment flows.';
+    }
+  }
+  return "Couldn't load the payment flow. Try again.";
 }
 
 function PaymentFlowContent({ flow, labels }: {
@@ -646,12 +701,12 @@ function ReversalModal({ payment, kind, fee, onClose, onSubmit }: {
 interface CompleteDetailsModalProps {
   payment: Payment;
   categories: { id: string; name: string }[];
-  customers: { id: string; name: string; telegramName: string | null }[];
+  customers: { id: string; name: string; telegramName: string | null; email: string | null }[];
   areCustomersLoading: boolean;
   hasCustomersError: boolean;
   retryCustomers: () => void;
   onClose: () => void;
-  onSubmit: (input: { categoryId: string; customerId?: string; customer?: { name: string; telegramName?: string } }) => Promise<void>;
+  onSubmit: (input: { categoryId: string; customerId?: string; customer?: { name: string; telegramName?: string; email?: string } }) => Promise<void>;
 }
 
 /** The agent says who paid and what for. An existing customer or a new one. */
@@ -662,6 +717,7 @@ function CompleteDetailsModal({
   const [customerId, setCustomerId] = useState(payment.customerId ?? '');
   const [name, setName] = useState('');
   const [telegramName, setTelegramName] = useState('');
+  const [email, setEmail] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const typingNew = customerId === '';
 
@@ -674,7 +730,13 @@ function CompleteDetailsModal({
       await onSubmit({
         categoryId,
         ...(typingNew
-          ? { customer: { name: name.trim(), ...(telegramName.trim() ? { telegramName: telegramName.trim() } : {}) } }
+          ? {
+            customer: {
+              name: name.trim(),
+              ...(telegramName.trim() ? { telegramName: telegramName.trim() } : {}),
+              ...(email.trim() ? { email: email.trim() } : {}),
+            },
+          }
           : { customerId }),
       });
     } catch (err) {
@@ -685,7 +747,7 @@ function CompleteDetailsModal({
   };
 
   return (
-    <Modal open onClose={onClose} title="Complete payment details" subtitle={`${formatMoney(payment.amount, payment.currency)} · ${payment.account}`}>
+    <Modal open onClose={onClose} title="Fill payment details" subtitle={`${formatMoney(payment.amount, payment.currency)} · ${payment.account}`}>
       {hasCustomersError && (
         <div className="warnbar" role="alert">
           Existing customers could not be loaded. Retry before creating a new one.{' '}
@@ -695,7 +757,11 @@ function CompleteDetailsModal({
       <Select id="complete-customer" label="Customer" value={customerId} onChange={setCustomerId}
         disabled={areCustomersLoading || hasCustomersError}>
         <option value="">{areCustomersLoading ? 'Loading customers…' : hasCustomersError ? 'Customers unavailable' : 'New customer…'}</option>
-        {customers.map((c) => <option key={c.id} value={c.id}>{c.name}{c.telegramName ? ` · ${c.telegramName}` : ''}</option>)}
+        {customers.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}{c.email ? ` · ${c.email}` : c.telegramName ? ` · ${c.telegramName}` : ''}
+          </option>
+        ))}
       </Select>
       {typingNew && !areCustomersLoading && !hasCustomersError && (
         <div className="form-row">
@@ -706,6 +772,10 @@ function CompleteDetailsModal({
           <div className="field">
             <label htmlFor="complete-telegram">Telegram name</label>
             <input id="complete-telegram" type="text" placeholder="@name" value={telegramName} onChange={(e) => setTelegramName(e.target.value)} />
+          </div>
+          <div className="field">
+            <label htmlFor="complete-email">Email (optional)</label>
+            <input id="complete-email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
         </div>
       )}

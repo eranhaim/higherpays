@@ -56,9 +56,8 @@ async function send(path: string, opts: HttpOptions): Promise<Response> {
     credentials: 'include',
   });
   if (res.status === 401 && useAuthStore.getState().originalSession) {
-    const originalWorkspaceId = useAuthStore.getState().originalWorkspaceId;
     useAuthStore.getState().endImpersonation();
-    if (originalWorkspaceId) useSessionStore.getState().setActiveWorkspaceId(originalWorkspaceId);
+    window.dispatchEvent(new Event('higherpays:impersonation-ended'));
     return res;
   }
   if (res.status === 401 && !opts.skipRefresh && useAuthStore.getState().refreshToken) {

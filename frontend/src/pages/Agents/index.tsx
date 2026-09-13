@@ -30,6 +30,7 @@ export default function AgentsPage() {
   const can = useCan();
   const { labels } = useCurrentSession();
   const canManage = can('agents.manage');
+  const canArchive = can('archive.manage');
   const canViewCommission = can('revenue.view');
   const { agents, accounts, isLoading, isError, createAgent, updateAgent, setArchived, setAssignedAccounts } = useAgentsData();
 
@@ -93,14 +94,14 @@ export default function AgentsPage() {
   const shownColumns: Column<Agent>[] = [
     ...orderBy(columns, columnsView.visibleKeys),
     // The actions cell is a control, not data: it is never hidden or moved.
-    ...(canManage ? [{
+    ...((canManage || canArchive) ? [{
       key: 'actions', header: 'Actions', hideHeader: true, align: 'right' as const,
       render: (a: Agent) => (
         <div className="cell-actions">
-          {a.status === 'active' && <button className="btn ghost small" onClick={() => setEditing(a)}>Edit</button>}
-          {a.status === 'active'
+          {a.status === 'active' && canManage && <button className="btn ghost small" onClick={() => setEditing(a)}>Edit</button>}
+          {canArchive && (a.status === 'active'
             ? <button className="btn ghost small" onClick={() => setArchiving(a)}>Archive</button>
-            : <button className="btn ghost small" onClick={() => changeArchived(a, false)} disabled={isChangingStatus}>Reactivate</button>}
+            : <button className="btn ghost small" onClick={() => changeArchived(a, false)} disabled={isChangingStatus}>Reactivate</button>)}
         </div>
       ),
     }] : []),
@@ -162,7 +163,11 @@ export default function AgentsPage() {
           canEditCommission={can('revenue.manage')}
           onClose={() => setEditing(null)}
           onSubmit={async (values, accountIds) => {
-            await updateAgent(editing.id, { fullName: values.fullName, commissionPct: values.commissionPct, country: values.country });
+            await updateAgent(editing.id, {
+              fullName: values.fullName,
+              ...(can('revenue.manage') ? { commissionPct: values.commissionPct } : {}),
+              country: values.country,
+            });
             await setAssignedAccounts(editing.id, editing.accounts.map((account) => account.id), accountIds);
             setEditing(null);
             toast('Saved.');
@@ -209,10 +214,12 @@ function AgentFormModal({ title, subtitle, agent, accounts, canEditCommission, o
   const [email, setEmail] = useState(agent?.email ?? '');
   const [password, setPassword] = useState('');
   const [country, setCountry] = useState(agent?.country ?? '');
-  const [commissionText, setCommissionText] = useState(agent ? String(agent.commissionPct) : '');
+  const [commissionText, setCommissionText] = useState(
+    agent ? String(agent.commissionPct) : canEditCommission ? '' : '0',
+  );
   const [assigned, setAssigned] = useState<string[]>(agent?.accounts.map((account) => account.id) ?? []);
   const [isSaving, setIsSaving] = useState(false);
-  const commission = parsePct(commissionText);
+  const commission = canEditCommission ? parsePct(commissionText) : 0;
   const creating = !agent;
 
   const submit = async () => {

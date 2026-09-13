@@ -264,17 +264,24 @@ function LinkLimitsCard({ editable, limits, rateCard, onSave }: {
   editable: boolean;
   limits: LinkLimits;
   rateCard: RateCard;
-  onSave: (input: { minLinkAmount: number | null; maxLinkAmount: number | null; linkTtlMinutes: number }) => Promise<unknown>;
+  onSave: (input: {
+    minLinkAmount: number | null;
+    maxLinkAmount: number | null;
+    linkTtlMinutes: number;
+    reusableLinksEnabled: boolean;
+  }) => Promise<unknown>;
 }) {
   const { labels } = useCurrentSession();
   const savedMin = limits.minLinkAmount == null ? '' : String(limits.minLinkAmount);
   const savedMax = limits.maxLinkAmount == null ? '' : String(limits.maxLinkAmount);
   const savedHours = String(limits.linkTtlMinutes / 60);
+  const savedReusable = limits.reusableLinksEnabled;
   const [min, setMin] = useState(savedMin);
   const [max, setMax] = useState(savedMax);
   const [hours, setHours] = useState(savedHours);
+  const [reusableEnabled, setReusableEnabled] = useState(savedReusable);
   const [isSaving, setIsSaving] = useState(false);
-  useUnsavedChanges('link-limits', min !== savedMin || max !== savedMax || hours !== savedHours);
+  useUnsavedChanges('link-limits', min !== savedMin || max !== savedMax || hours !== savedHours || reusableEnabled !== savedReusable);
 
   const minAmount = parseFloat(min);
   const feeAtMin = minAmount > 0 ? effectivePct(minAmount, rateCard) : '—';
@@ -288,7 +295,12 @@ function LinkLimitsCard({ editable, limits, rateCard, onSave }: {
     if (!(ttlHours > 0)) { toast('An unpaid link has to expire after some number of hours.'); return; }
     setIsSaving(true);
     try {
-      await onSave({ minLinkAmount: minValue, maxLinkAmount: maxValue, linkTtlMinutes: Math.round(ttlHours * 60) });
+      await onSave({
+        minLinkAmount: minValue,
+        maxLinkAmount: maxValue,
+        linkTtlMinutes: Math.round(ttlHours * 60),
+        reusableLinksEnabled: reusableEnabled,
+      });
       toast('Link limits saved.');
     }
     catch (err) { toast(err instanceof Error ? err.message : 'Could not save link limits.'); }
@@ -335,6 +347,15 @@ function LinkLimitsCard({ editable, limits, rateCard, onSave }: {
             </div>
           )
           : <span className="mono-val">{hours} hours</span>}
+      </div>
+      <div className="setrow">
+        <div>
+          <div className="k">Reusable links</div>
+          <div className="d">Allow links that stay open for multiple payments.</div>
+        </div>
+        {editable
+          ? <label className="check-row"><input type="checkbox" checked={reusableEnabled} onChange={(e) => setReusableEnabled(e.target.checked)} /> Enabled</label>
+          : <span className="mono-val">{reusableEnabled ? 'enabled' : 'disabled'}</span>}
       </div>
       <div className="setrow">
         <div><div className="k">Effective fee at your minimum</div><div className="d">Total platform fees on a link at this amount.</div></div>

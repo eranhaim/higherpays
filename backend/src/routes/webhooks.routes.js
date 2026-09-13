@@ -1,4 +1,5 @@
 'use strict';
+const crypto = require('crypto');
 const express = require('express');
 const { query, withTransaction } = require('../db');
 const { asyncHandler } = require('../lib/http');
@@ -35,7 +36,28 @@ router.post('/payment/:endpoint', asyncHandler(async (req, res) => {
     || !ws.merchant_id
     || (ev.merchantId && ev.merchantId === ws.merchant_id);
 
-  // Idempotency: record every event we receive (authentic or not, for audit).
+  // Rejected deliveries are audit records, not canonical inbox rows. Their
+  // noncanonical ids cannot suppress a later authentic retry of the event.
+  if (!signatureValid || !merchantOk) {
+    const rejection = !signatureValid ? 'bad_signature' : 'merchant_mismatch';
+    await query(
+      `INSERT INTO webhook_events
+         (workspace_id, provider, event_type, provider_event_id, signature_valid,
+          processed, processing_error, payload, processed_at)
+       VALUES ($1,$2,$3,$4,$5,true,$6,$7,now())`,
+      [
+        ws.id,
+        PROVIDER,
+        ev.status,
+        `${ev.providerEventId}:rejected:${crypto.randomUUID()}`,
+        signatureValid,
+        rejection,
+        ev.fields,
+      ]);
+    return res.status(signatureValid ? 400 : 401).json({ error: rejection });
+  }
+
+  // Idempotency: only authenticated events occupy the provider's canonical key.
   // A duplicate provider_event_id is acknowledged only once the earlier
   // delivery was fully processed; if processing failed, the provider's retry
   // is our second chance. The no-op DO UPDATE makes RETURNING yield the row.
@@ -46,14 +68,6 @@ router.post('/payment/:endpoint', asyncHandler(async (req, res) => {
      RETURNING id, processed`,
     [ws.id, PROVIDER, ev.status, ev.providerEventId, signatureValid, ev.fields])).rows[0];
   if (event.processed) return res.status(200).json({ ok: true, duplicate: true });
-
-  // Rejected events count as handled: a retry with the same bad signature
-  // should not keep them in the unprocessed backlog.
-  if (!signatureValid || !merchantOk) {
-    await query('UPDATE webhook_events SET processed=true, processed_at=now(), signature_valid=$2 WHERE id=$1', [event.id, signatureValid]);
-    if (!signatureValid) return res.status(401).json({ error: 'bad_signature' });
-    return res.status(400).json({ error: 'merchant_mismatch' });
-  }
 
   if (ev.kind !== 'chargeback' && !['pending', 'approved', 'declined'].includes(ev.status)) {
     await query('UPDATE webhook_events SET processed=true, processed_at=now() WHERE id=$1', [event.id]);

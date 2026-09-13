@@ -41,6 +41,7 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
               COALESCE(SUM(${amountCol}),0)                                         AS earned
          FROM revenue_entries re
          JOIN transactions t ON t.id = re.transaction_id
+         JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
         WHERE ${scopeCol} = $1 AND t.occurred_at >= $2 AND t.occurred_at <= $3`,
       [scopeVal, F, T])).rows[0];
 
@@ -48,7 +49,10 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
     const balance = (await c.query(
       `SELECT COALESCE(SUM(${amountCol}) FILTER (WHERE ${paidCol} IS NULL),0)     AS unpaid,
               COALESCE(SUM(${amountCol}) FILTER (WHERE ${paidCol} IS NOT NULL),0) AS paid
-         FROM revenue_entries re WHERE ${scopeCol} = $1`, [scopeVal])).rows[0];
+         FROM revenue_entries re
+         JOIN transactions t ON t.id = re.transaction_id
+         JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
+        WHERE ${scopeCol} = $1`, [scopeVal])).rows[0];
 
     return { isAccount, rate: n(rate && rate.pct), period, balance };
   });

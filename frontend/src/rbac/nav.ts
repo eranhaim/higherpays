@@ -12,7 +12,7 @@ import type { WorkspaceLabels } from '../api/types';
 
 export type NavIconName =
   | 'payments' | 'links' | 'analytics' | 'payouts'
-  | 'accounts' | 'agents' | 'customers' | 'team' | 'settings';
+  | 'accounts' | 'agents' | 'customers' | 'team' | 'archive' | 'settings';
 
 export interface NavItem {
   path: string;
@@ -50,6 +50,7 @@ export const NAV: NavGroup[] = [
     label: 'Administer',
     items: [
       { path: '/team', label: 'Team', perm: 'team.view', icon: 'team' },
+      { path: '/archive', label: 'Archive', perm: 'archive.manage', icon: 'archive' },
       // Everyone has personal settings (2FA, sessions, notifications); the
       // workspace tabs inside gate themselves on settings.view.
       { path: '/settings', label: 'Settings', perm: 'payments.view', icon: 'settings' },

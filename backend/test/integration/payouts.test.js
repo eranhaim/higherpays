@@ -62,3 +62,36 @@ test('breakdown reports what is owed per account and per agent, what came in, an
   assert.equal(mine.period.earned, 8.7);
   assert.equal(mine.balance.paidToDate, 8.7);
 });
+
+test('estimated reserve and received cash follow reversal signs and fees', async () => {
+  const t = await createTenant(app, {
+    feeModel: 'flat',
+    pspRatePct: 8,
+    marginRatePct: 5,
+    pspFixedFee: 0,
+    refundFee: 15,
+  });
+  await pool.query(
+    `INSERT INTO settlement_fee_config
+       (workspace_id, refund_fee, chargeback_fee, reserve_pct)
+     VALUES ($1, 15, 60, 10)`,
+    [t.workspaceId]);
+  const account = await createAccount(app, t, { revenueSplitPct: 70 });
+  const sale = await paySale(app, t, account, 100);
+
+  const before = (await request(app)
+    .get(`/workspaces/${t.workspaceId}/payouts/breakdown`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(before.reserve.source, 'estimated');
+  assert.equal(before.reserve.held, 10);
+  assert.equal(before.cash.received, 87);
+
+  await request(app).post(`/workspaces/${t.workspaceId}/payments/${sale.paymentId}/refund`)
+    .set(t.authHeaders).expect(200);
+  const after = (await request(app)
+    .get(`/workspaces/${t.workspaceId}/payouts/breakdown`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(after.reserve.held, 0);
+  assert.equal(after.cash.received, -15);
+  assert.equal(after.perAccount.find((row) => row.id === account.id).owed, -15);
+});

@@ -46,19 +46,29 @@ test('a reusable link stays active after a payment and takes a second one', asyn
   assert.equal(count, 2);
 });
 
-test('bad signature is rejected with 401 and the event is recorded for audit', async () => {
+test('a rejected signature cannot poison the canonical idempotency key', async () => {
   const t = await createTenant(app);
   const account = await createAccount(app, t);
   const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
     .send({ accountId: account.id, type: 'single_use', amount: 25, currency: 'EUR' }).expect(201)).body;
-  const payload = buildPaidPayload({ reference: link.referenceId, transId: newTransId(), amount: 25 });
-  payload.signature = 'deadbeef';
-  await postWebhook(app, await endpointFor(t.workspaceId), payload).expect(401);
-  const ev = (await pool.query('SELECT signature_valid, processed FROM webhook_events WHERE provider_event_id = $1', [payload.trans_id])).rows[0];
-  assert.equal(ev.signature_valid, false);
-  assert.equal(ev.processed, true);
-  const paid = (await pool.query('SELECT count(*)::int AS c FROM payments WHERE payment_link_id = $1', [link.id])).rows[0].c;
-  assert.equal(paid, 0);
+  const valid = buildPaidPayload({ reference: link.referenceId, transId: newTransId(), amount: 25 });
+  await postWebhook(app, await endpointFor(t.workspaceId), { ...valid, signature: 'deadbeef' }).expect(401);
+  const rejected = (await pool.query(
+    `SELECT signature_valid, processed, processing_error
+       FROM webhook_events
+      WHERE provider_event_id LIKE $1`,
+    [`${valid.trans_id}:rejected:%`])).rows[0];
+  assert.equal(rejected.signature_valid, false);
+  assert.equal(rejected.processed, true);
+  assert.equal(rejected.processing_error, 'bad_signature');
+
+  await postWebhook(app, await endpointFor(t.workspaceId), valid).expect(200);
+  assert.equal((await pool.query(
+    'SELECT count(*)::int AS count FROM payments WHERE payment_link_id = $1',
+    [link.id])).rows[0].count, 1);
+  assert.equal((await pool.query(
+    'SELECT processed FROM webhook_events WHERE provider_event_id = $1',
+    [valid.trans_id])).rows[0].processed, true);
 });
 
 test('unknown endpoint id returns 404', async () => {
@@ -103,6 +113,37 @@ test('a delivery that failed mid-processing is processed on the provider retry',
   assert.equal(retry.body.duplicate, undefined);
   const after = (await pool.query('SELECT status FROM payments WHERE provider_payment_id = $1', [payload.trans_id])).rows[0];
   assert.equal(after.status, 'paid');
+});
+
+test('an authentic unmatched reusable payment remains retriable', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+    .send({ accountId: account.id, type: 'reusable', amount: 25, currency: 'EUR' }).expect(201)).body;
+  const missingReference = `missing-${newTransId()}`;
+  const payload = buildPaidPayload({
+    reference: missingReference,
+    transId: newTransId(),
+    amount: 25,
+  });
+  const endpoint = await endpointFor(t.workspaceId);
+
+  const missing = await postWebhook(app, endpoint, payload).expect(422);
+  assert.equal(missing.body.error, 'payment_link_not_found');
+  const before = (await pool.query(
+    'SELECT processed, processing_error FROM webhook_events WHERE provider_event_id = $1',
+    [payload.trans_id])).rows[0];
+  assert.equal(before.processed, false);
+  assert.equal(before.processing_error, 'payment_link_not_found');
+
+  await pool.query('UPDATE payment_links SET reference_id=$2 WHERE id=$1', [link.id, missingReference]);
+  await postWebhook(app, endpoint, payload).expect(200);
+  assert.equal((await pool.query(
+    'SELECT status FROM payments WHERE provider_payment_id=$1',
+    [payload.trans_id])).rows[0].status, 'paid');
+  assert.equal((await pool.query(
+    'SELECT status FROM payment_links WHERE id=$1',
+    [link.id])).rows[0].status, 'active');
 });
 
 test('signed provider amount and currency mismatches stay visible and post no money', async () => {

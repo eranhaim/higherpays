@@ -29,7 +29,7 @@ function parseAmount(text: string): number {
  */
 export default function PlatformPage() {
   const {
-    isPlatformAdmin, requiresTwoFactor, overview, workspaces, isLoading, isError,
+    isPlatformAdmin, requiresTwoFactor, overview, workspaces, supportedCurrencies, isLoading, isError,
     onboardAgency, setStatus, setCurrency, setPlatformFee,
   } = usePlatformData();
   const [onboardOpen, setOnboardOpen] = useState(false);
@@ -121,6 +121,7 @@ export default function PlatformPage() {
 
       {onboardOpen && (
         <OnboardAgencyModal
+          currencies={supportedCurrencies}
           onClose={() => setOnboardOpen(false)}
           onSubmit={async (input) => {
             const created = await onboardAgency(input);
@@ -134,6 +135,7 @@ export default function PlatformPage() {
       {editingFee && (
         <RatesModal
           workspace={editingFee}
+          currencies={supportedCurrencies}
           onClose={() => setEditingFee(null)}
           onSubmit={async (input, currency) => {
             if (currency !== editingFee.currency) await setCurrency(editingFee.id, currency);
@@ -158,12 +160,13 @@ export default function PlatformPage() {
 }
 
 /** Everything a new agency needs, in one form. The first admin gets an invite. */
-function OnboardAgencyModal({ onClose, onSubmit }: {
+function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
+  currencies: string[];
   onClose: () => void;
   onSubmit: (input: OnboardAgencyInput) => Promise<{ workspaceId: string; webhookEndpointId: string }>;
 }) {
   const [name, setName] = useState('');
-  const [currency, setCurrency] = useState(CURRENCIES[0]);
+  const [currency, setCurrency] = useState(currencies[0] ?? CURRENCIES[0]);
   const [merchantId, setMerchantId] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
   const [pspRate, setPspRate] = useState('8');
@@ -223,7 +226,7 @@ function OnboardAgencyModal({ onClose, onSubmit }: {
             <input id="agency-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
           </div>
           <Select id="agency-currency" label="Currency" value={currency} onChange={setCurrency}>
-            {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            {currencies.map((c) => <option key={c} value={c}>{c}</option>)}
           </Select>
         </div>
         <div className="form-row">
@@ -257,8 +260,9 @@ function OnboardAgencyModal({ onClose, onSubmit }: {
 }
 
 /** A new versioned rate row for one agency. */
-function RatesModal({ workspace, onClose, onSubmit }: {
+function RatesModal({ workspace, currencies, onClose, onSubmit }: {
   workspace: PlatformWorkspace;
+  currencies: string[];
   onClose: () => void;
   onSubmit: (input: PlatformFeeRate, currency: string) => Promise<void>;
 }) {
@@ -294,6 +298,7 @@ function RatesModal({ workspace, onClose, onSubmit }: {
         pspFixedFee: current.pspFixedFee,
         checkoutFee: current.checkoutFee,
       }}
+      currencies={currencies}
       currencyChangeAllowed={detail.data?.currencyChangeAllowed ?? false}
       onClose={onClose}
       onSubmit={onSubmit}
@@ -301,8 +306,9 @@ function RatesModal({ workspace, onClose, onSubmit }: {
   );
 }
 
-function RatesForm({ workspace, currencyChangeAllowed, onClose, onSubmit }: {
+function RatesForm({ workspace, currencies, currencyChangeAllowed, onClose, onSubmit }: {
   workspace: PlatformWorkspace;
+  currencies: string[];
   currencyChangeAllowed: boolean;
   onClose: () => void;
   onSubmit: (input: PlatformFeeRate, currency: string) => Promise<void>;
@@ -336,7 +342,7 @@ function RatesForm({ workspace, currencyChangeAllowed, onClose, onSubmit }: {
       <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
         <Select id="rates-currency" label="Workspace currency" value={currency} onChange={setCurrency}
           disabled={!currencyChangeAllowed}>
-          {CURRENCIES.map((item) => <option key={item} value={item}>{item}</option>)}
+          {currencies.map((item) => <option key={item} value={item}>{item}</option>)}
         </Select>
         <p className="sub">
           {currencyChangeAllowed

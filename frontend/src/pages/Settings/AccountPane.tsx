@@ -1,14 +1,13 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { authApi } from '../../api/endpoints';
 import { HttpError } from '../../api/http';
 import { TZ_LIST, detectedTZ, tzTimeLabel } from '../../business/timezone';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { usePreferencesStore } from '../../store/preferences';
 import Modal from '../../components/Modal';
-import { toast } from '../../lib/toast';
+import EnableTwoFactorModal from '../../components/EnableTwoFactorModal';
 import { CopyButton } from '../../components/ui';
-import { useTwoFactor } from './useSettingsData';
+import { toast } from '../../lib/toast';
+import { useTwoFactor } from '../../hooks/useTwoFactor';
 import { SessionsCard } from './SessionsCard';
 
 /**
@@ -25,9 +24,9 @@ export function AccountPane() {
   );
 }
 
-function codeErrorMessage(err: unknown): string {
-  if (err instanceof HttpError && err.status === 400) return 'That code was not accepted. Try again.';
-  return err instanceof Error ? err.message : 'Something went wrong.';
+function codeErrorMessage(error: unknown): string {
+  if (error instanceof HttpError && error.status === 400) return 'That code was not accepted. Try again.';
+  return error instanceof Error ? error.message : 'Something went wrong.';
 }
 
 function SecurityCard() {
@@ -59,75 +58,6 @@ function SecurityCard() {
       {disableOpen && <DisableTwoFactorModal onClose={() => setDisableOpen(false)} />}
       {recoveryOpen && <RecoveryCodesModal onClose={() => setRecoveryOpen(false)} />}
     </div>
-  );
-}
-
-function EnableTwoFactorModal({ onClose }: { onClose: () => void }) {
-  const { enable } = useTwoFactor();
-  const [code, setCode] = useState('');
-  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
-
-  // Each setup call issues a new pending secret, so fetch once per modal open and never refetch.
-  const setup = useQuery({
-    queryKey: ['two-factor-setup'],
-    queryFn: () => authApi.setupTwoFactor(),
-    staleTime: Infinity,
-    gcTime: 0,
-    refetchOnWindowFocus: false,
-  });
-
-  const verify = async () => {
-    if (!/^\d{6}$/.test(code)) { toast('Enter the 6-digit code from your app.'); return; }
-    try {
-      const result = await enable.mutateAsync(code);
-      setRecoveryCodes(result.recoveryCodes);
-      toast('Two-factor authentication enabled.');
-    }
-    catch (err) { toast(codeErrorMessage(err)); }
-  };
-
-  if (recoveryCodes) {
-    return (
-      <Modal open onClose={onClose} title="Save your recovery codes"
-        subtitle="Store these one-time codes somewhere safe. They will not be shown again.">
-        <RecoveryCodesView codes={recoveryCodes} />
-        <div className="modal-actions"><button className="btn" onClick={onClose}>Done</button></div>
-      </Modal>
-    );
-  }
-
-  return (
-    <Modal open onClose={onClose} title="Enable two-factor authentication"
-      subtitle="Add a new account in your authenticator app using this setup key or link, then enter the 6-digit code it shows.">
-      {setup.isError ? <p className="sub">Could not start the setup. Close this and try again.</p>
-        : setup.isLoading ? <p className="sub">Generating your setup key…</p>
-        : (
-          <>
-            <div className="field">
-              <label htmlFor="tfa-secret">Setup key</label>
-              <div className="field-row">
-                <input id="tfa-secret" type="text" readOnly value={setup.data?.secret ?? ''} onFocus={(e) => e.target.select()} />
-                <CopyButton value={setup.data?.secret ?? ''} />
-              </div>
-            </div>
-            <div className="field">
-              <label htmlFor="tfa-link">Setup link</label>
-              <div className="field-row">
-                <input id="tfa-link" type="text" readOnly value={setup.data?.otpauthUrl ?? ''} onFocus={(e) => e.target.select()} />
-                <CopyButton value={setup.data?.otpauthUrl ?? ''} />
-              </div>
-            </div>
-            <div className="field">
-              <label htmlFor="tfa-enable-code">6-digit code from your app</label>
-              <input id="tfa-enable-code" type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value)} />
-            </div>
-          </>
-        )}
-      <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>Cancel</button>
-        <button className="btn" disabled={!setup.data || enable.isPending} onClick={verify}>Verify &amp; enable</button>
-      </div>
-    </Modal>
   );
 }
 

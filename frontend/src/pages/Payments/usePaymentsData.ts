@@ -36,6 +36,7 @@ export interface UsePaymentsDataResult {
   recordReversal: (id: string, kind: 'refund' | 'chargeback') => Promise<void>;
   /** Moves one payment to another creator or agent. */
   reassign: (id: string, input: ReassignInput) => Promise<void>;
+  archivePayment: (id: string) => Promise<void>;
   exportCsv: (input: ExportInput) => Promise<void>;
 }
 
@@ -87,6 +88,7 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     queryClient.invalidateQueries({ queryKey: ['links-summary', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['customers', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['payouts-breakdown', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['analytics', activeWorkspaceId] });
   };
 
   const complete = useMutation({
@@ -100,6 +102,10 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
   const reverse = useMutation({
     mutationFn: ({ id, kind }: { id: string; kind: 'refund' | 'chargeback' }) =>
       kind === 'refund' ? paymentsApi.refund(id) : paymentsApi.chargeback(id),
+    onSuccess: invalidate,
+  });
+  const archive = useMutation({
+    mutationFn: (id: string) => paymentsApi.archive(id),
     onSuccess: invalidate,
   });
 
@@ -123,6 +129,7 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     complete: (id, input) => complete.mutateAsync({ id, input }),
     recordReversal: async (id, kind) => { await reverse.mutateAsync({ id, kind }); },
     reassign: async (id, input) => { await reassign.mutateAsync({ id, input }); },
+    archivePayment: (id) => archive.mutateAsync(id).then(() => undefined),
     exportCsv: (input) => paymentsApi.exportCsv(
       { ...filters, from: input.from || undefined, to: input.to || undefined },
       { columns: input.columns, limit: input.limit },

@@ -40,6 +40,7 @@ const SHAPES: Record<NavIconName, ReactNode> = {
       <path d="M17 14c2.5 0 4 2 4 4.5" />
     </>
   ),
+  archive: <><path d="M4 7h16v13H4z" /><path d="M3 4h18v3H3zM9 11h6" /></>,
   settings: (
     <>
       <circle cx="12" cy="12" r="3" />

@@ -21,6 +21,10 @@ const app = require('../../src/server');
 const { pool } = require('../../src/db');
 
 // Close the pool at the very end so `node --test` exits cleanly.
-process.on('beforeExit', () => { try { pool.end(); } catch { /* noop */ } });
+process.on('beforeExit', () => {
+  try {
+    if (!pool.ending) pool.end();
+  } catch { /* noop */ }
+});
 
 module.exports = { app, pool };

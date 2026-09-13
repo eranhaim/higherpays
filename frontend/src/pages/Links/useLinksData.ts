@@ -67,6 +67,11 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     queryClient.invalidateQueries({ queryKey: ['links', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['links-summary', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['link', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['payments', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['payments-summary', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['customers', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['payouts-breakdown', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['analytics', activeWorkspaceId] });
   };
 
   const create = useMutation({
@@ -95,7 +100,7 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     linkLimits: linkLimits.data ?? null,
     isLoading: links.isLoading,
     isError: links.isError,
-    isSummaryLoading: summary.isPending,
+    isSummaryLoading: summary.isFetching || summary.isPlaceholderData,
     isSummaryError: summary.isError,
     hasMore: links.hasNextPage,
     isLoadingMore: links.isFetchingNextPage,

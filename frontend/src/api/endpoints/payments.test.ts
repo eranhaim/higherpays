@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
-  PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, getPaymentExportColumns, PROVIDER_FEE_SOURCE_LABELS,
+  PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, paymentStatusLabel, getPaymentExportColumns, PROVIDER_FEE_SOURCE_LABELS,
 } from './payments';
 
 describe('payment outcome labels', () => {
-  it('shows pending attempts and distinguishes estimated provider fees', () => {
+  it('uses the customer-facing payment lifecycle labels', () => {
     expect(PAYMENT_STATUSES).toContain('pending');
-    expect(PAYMENT_STATUS_LABELS.pending).toBe('Pending');
+    expect(PAYMENT_STATUS_LABELS.pending).toBe('Waiting for payment');
+    expect(PAYMENT_STATUS_LABELS.paid).toBe('Completed');
+    expect(paymentStatusLabel({ status: 'paid', needsDetails: true })).toBe('Waiting to fill details');
     expect(PROVIDER_FEE_SOURCE_LABELS.estimated).toBe('Estimated');
     expect(PROVIDER_FEE_SOURCE_LABELS.actual).toBe('Actual');
     const columns = getPaymentExportColumns({

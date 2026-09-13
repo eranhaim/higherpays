@@ -22,6 +22,7 @@ const notificationsRoutes = require('./routes/notifications.routes');
 const settlementsRoutes = require('./routes/settlements.routes');
 const feesRoutes = require('./routes/fees.routes');
 const meRoutes = require('./routes/me.routes');
+const archiveRoutes = require('./routes/archive.routes');
 const webhooksRoutes = require('./routes/webhooks.routes');
 const publicPaymentRoutes = require('./routes/public-payment.routes');
 const { wsRouter: invitesWsRoutes, publicRouter: invitesPublicRoutes } = require('./routes/invites.routes');
@@ -114,6 +115,7 @@ app.use('/workspaces/:workspaceId/notifications', ws, notificationsRoutes);
 app.use('/workspaces/:workspaceId/settlements', ws, settlementsRoutes);
 app.use('/workspaces/:workspaceId/fees', ws, feesRoutes);
 app.use('/workspaces/:workspaceId/me', ws, meRoutes);
+app.use('/workspaces/:workspaceId/archive', ws, archiveRoutes.router);
 app.use('/workspaces/:workspaceId/invites', invitesWsRoutes);
 app.use('/invites', invitesPublicRoutes);
 

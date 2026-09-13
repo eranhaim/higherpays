@@ -12,6 +12,12 @@ const { verifyAccessToken } = require('../../src/auth/tokens');
 test('roles enforce dependencies, profile restrictions, and explicit owner transfer', async () => {
   const owner = await createTenant(app);
   const member = await addMember(app, owner, 'analyst', { email: `role-member+${tag()}@test.local` });
+  const admin = await addMember(app, owner, 'workspace_admin', { email: `role-admin+${tag()}@test.local` });
+
+  await request(app)
+    .post(`/workspaces/${owner.workspaceId}/roles`).set(admin.authHeaders)
+    .send({ name: 'Admin cannot edit roles', permissions: ['payments.view', 'data.view_all'] })
+    .expect(403);
 
   const invalid = await request(app)
     .post(`/workspaces/${owner.workspaceId}/roles`).set(owner.authHeaders)
@@ -142,4 +148,53 @@ test('platform owner recovery appoints only an active plain member when no owner
     [tenant.workspaceId])).rows[0];
   assert.equal(action.actor_user_id, admin.userId);
   assert.equal(action.entity_id, member.userId);
+});
+
+test('platform admin promotion preserves existing roles and demotion removes only granted seats', async () => {
+  const tenant = await createTenant(app);
+  const admin = await getPlatformAdmin(app);
+  const member = await addMember(app, tenant, 'analyst');
+  const setPlatformAdmin = (userId, isPlatformAdmin) => request(app)
+    .patch(`/platform/users/${userId}/platform-admin`)
+    .set(admin.headers)
+    .send({ isPlatformAdmin });
+
+  await setPlatformAdmin(member.userId, true).expect(200);
+  let seat = (await pool.query(
+    `SELECT role, platform_granted
+       FROM workspace_users
+      WHERE workspace_id=$1 AND user_id=$2`,
+    [tenant.workspaceId, member.userId])).rows[0];
+  assert.equal(seat.role, 'analyst');
+  assert.equal(seat.platform_granted, false);
+  await setPlatformAdmin(member.userId, false).expect(200);
+  seat = (await pool.query(
+    'SELECT role FROM workspace_users WHERE workspace_id=$1 AND user_id=$2',
+    [tenant.workspaceId, member.userId])).rows[0];
+  assert.equal(seat.role, 'analyst');
+
+  await setPlatformAdmin(tenant.userId, true).expect(200);
+  assert.equal((await pool.query(
+    'SELECT role FROM workspace_users WHERE workspace_id=$1 AND user_id=$2',
+    [tenant.workspaceId, tenant.userId])).rows[0].role, 'workspace_owner');
+  await setPlatformAdmin(tenant.userId, false).expect(200);
+  assert.equal((await pool.query(
+    'SELECT role FROM workspace_users WHERE workspace_id=$1 AND user_id=$2',
+    [tenant.workspaceId, tenant.userId])).rows[0].role, 'workspace_owner');
+
+  const platformOnly = (await pool.query(
+    `INSERT INTO users (email, full_name)
+     VALUES ($1, 'Platform only') RETURNING id`,
+    [`platform-only+${tag()}@test.local`])).rows[0];
+  await setPlatformAdmin(platformOnly.id, true).expect(200);
+  const granted = (await pool.query(
+    `SELECT platform_granted
+       FROM workspace_users
+      WHERE workspace_id=$1 AND user_id=$2`,
+    [tenant.workspaceId, platformOnly.id])).rows[0];
+  assert.equal(granted.platform_granted, true);
+  await setPlatformAdmin(platformOnly.id, false).expect(200);
+  assert.equal((await pool.query(
+    'SELECT count(*)::int AS count FROM workspace_users WHERE user_id=$1',
+    [platformOnly.id])).rows[0].count, 0);
 });

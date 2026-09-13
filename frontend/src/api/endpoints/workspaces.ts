@@ -48,6 +48,7 @@ export interface LinkLimits {
   maxLinkAmount: number | null;
   /** How long a single-use link lives. Always a number: the platform default when unset. */
   linkTtlMinutes: number;
+  reusableLinksEnabled: boolean;
   providerMinimum: number;
 }
 
@@ -80,7 +81,12 @@ export const workspacesApi = {
 
   getLinkLimits: () => api.get<LinkLimits>(workspacePath('/link-limits')),
 
-  setLinkLimits: (input: { minLinkAmount?: number | null; maxLinkAmount?: number | null; linkTtlMinutes?: number }) =>
+  setLinkLimits: (input: {
+    minLinkAmount?: number | null;
+    maxLinkAmount?: number | null;
+    linkTtlMinutes?: number;
+    reusableLinksEnabled?: boolean;
+  }) =>
     api.patch<LinkLimits>(workspacePath('/link-limits'), input),
 
   getPermissions: () => api.get<WorkspacePermissions>(workspacePath('/permissions')),

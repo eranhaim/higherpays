@@ -5,7 +5,7 @@
 // their access.
 const express = require('express');
 const { query, withTransaction } = require('../db');
-const { requirePermission } = require('../middleware');
+const { requirePermission, requireRoleManager } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { revokeUserSessions } = require('../auth/sessions');
@@ -49,7 +49,7 @@ async function targetForRoleChange(client, workspaceId, userId) {
     [workspaceId, userId])).rows[0];
 }
 
-router.patch('/:userId/role', requirePermission('roles.manage'), asyncHandler(async (req, res) => {
+router.patch('/:userId/role', requireRoleManager, asyncHandler(async (req, res) => {
   const nextRole = String(req.body?.role || '');
   if (!nextRole) return res.status(400).json({ error: 'role_required' });
   if (nextRole === 'workspace_owner') return res.status(409).json({ error: 'use_owner_transfer' });
@@ -65,7 +65,7 @@ router.patch('/:userId/role', requirePermission('roles.manage'), asyncHandler(as
       'SELECT key, permissions FROM workspace_roles WHERE workspace_id=$1 AND key=$2',
       [wid(req), nextRole])).rows[0];
     if (!role) return { error: 'unknown_role', status: 400 };
-    if (role.permissions.some((permission) => !req.access.permissions.has(permission))) {
+    if (!req.canGrantAllRolePermissions && role.permissions.some((permission) => !req.access.permissions.has(permission))) {
       return { error: 'role_not_assignable', status: 403 };
     }
     if (target.has_agent && nextRole !== 'agent') return { error: 'profile_role_locked', status: 409 };

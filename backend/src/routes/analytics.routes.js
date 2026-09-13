@@ -41,7 +41,7 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
     // $1 from, $2 to, $3 workspace, ($4 scope)
     const P = scoped ? [from, to, wid(req), val] : [from, to, wid(req)];
     const RE_FROM = 'FROM revenue_entries re JOIN transactions t ON t.id = re.transaction_id JOIN payments p ON p.id = t.payment_id';
-    const RE_WHERE = 'WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2' + (scoped ? ` AND ${col} = $4` : '');
+    const RE_WHERE = 'WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND p.archived_at IS NULL' + (scoped ? ` AND ${col} = $4` : '');
 
     const h = (await c.query(`
       SELECT
@@ -68,18 +68,20 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
       .map((r) => ({ d: r.d, gross: num(r.gross), net: num(r.net) }));
 
     // Link funnel: links issued in the window, and what happened to them.
-    const linkWhere = 'WHERE pl.workspace_id = $3 AND pl.created_at >= $1 AND pl.created_at <= $2' + (scoped ? ` AND ${linkCol} = $4` : '');
+    const linkWhere = 'WHERE pl.workspace_id = $3 AND pl.created_at >= $1 AND pl.created_at <= $2 AND pl.archived_at IS NULL';
+    const scopedLinkWhere = linkWhere + (scoped ? ` AND ${linkCol} = $4` : '');
     const fn = (await c.query(`
       SELECT COUNT(*) AS created,
         COUNT(*) FILTER (WHERE pl.status IN ('pending','done') OR pl.paid_at IS NOT NULL
-                            OR EXISTS (SELECT 1 FROM payments p WHERE p.payment_link_id = pl.id AND p.status = 'paid')) AS paid,
+                            OR EXISTS (SELECT 1 FROM payments p WHERE p.payment_link_id = pl.id AND p.status = 'paid' AND p.archived_at IS NULL)) AS paid,
         COUNT(*) FILTER (WHERE pl.status = 'cancelled') AS cancelled,
         COUNT(*) FILTER (WHERE pl.status = 'expired' OR (pl.status = 'active' AND pl.expires_at < now())) AS expired
-      FROM payment_links pl ${linkWhere}`, P)).rows[0];
+      FROM payment_links pl ${scopedLinkWhere}`, P)).rows[0];
     const created = num(fn.created);
     const failed = num((await c.query(`
       SELECT COUNT(*) AS c FROM payments p
-       WHERE p.workspace_id = $3 AND p.status = 'failed' AND p.occurred_at >= $1 AND p.occurred_at <= $2
+       WHERE p.workspace_id = $3 AND p.status = 'failed' AND p.archived_at IS NULL
+         AND p.occurred_at >= $1 AND p.occurred_at <= $2
          ${scoped ? `AND ${payCol} = $4` : ''}`, P)).rows[0].c);
 
     const agents = (await c.query(`
@@ -91,7 +93,7 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
     const agentLinks = (await c.query(`
       SELECT pl.created_by_agent_id AS agent_id, COUNT(*) AS created,
              COUNT(*) FILTER (WHERE pl.status IN ('pending','done')) AS paid
-      FROM payment_links pl ${linkWhere} AND pl.created_by_agent_id IS NOT NULL GROUP BY pl.created_by_agent_id`, P)).rows;
+      FROM payment_links pl ${scopedLinkWhere} AND pl.created_by_agent_id IS NOT NULL GROUP BY pl.created_by_agent_id`, P)).rows;
     const byAgent = Object.fromEntries(agentLinks.map((r) => [r.agent_id, r]));
 
     const accounts = (await c.query(`
@@ -112,7 +114,7 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
     const repeat = (await c.query(`
       SELECT COUNT(*) FILTER (WHERE n>=2) AS repeat_c, COUNT(*) AS any_c, COALESCE(AVG(n),0) AS freq
         FROM (SELECT p.customer_id, COUNT(*) n FROM payments p
-               WHERE p.workspace_id = $1 AND p.status='paid' AND p.customer_id IS NOT NULL
+               WHERE p.workspace_id = $1 AND p.status='paid' AND p.archived_at IS NULL AND p.customer_id IS NOT NULL
                  AND ($2::uuid IS NULL OR ${payCol || 'p.id'} = $2::uuid)
                GROUP BY p.customer_id) q`, [wid(req), scoped ? val : null])).rows[0];
     const categories = (await c.query(`
@@ -121,7 +123,7 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
       ${RE_WHERE} AND re.entry_type='sale' GROUP BY ca.name ORDER BY rev DESC`, P)).rows
       .map((r) => ({ category: r.category, revenue: num(r.rev) }));
     const nr = (await c.query(`
-      WITH firsts AS (SELECT customer_id, MIN(occurred_at) AS first_ts FROM payments WHERE workspace_id = $3 AND status='paid' GROUP BY customer_id)
+      WITH firsts AS (SELECT customer_id, MIN(occurred_at) AS first_ts FROM payments WHERE workspace_id = $3 AND status='paid' AND archived_at IS NULL GROUP BY customer_id)
       SELECT COALESCE(SUM(re.gross) FILTER (WHERE f.first_ts >= $1),0) AS new_rev,
              COALESCE(SUM(re.gross) FILTER (WHERE f.first_ts <  $1),0) AS ret_rev
       ${RE_FROM} JOIN firsts f ON f.customer_id = p.customer_id

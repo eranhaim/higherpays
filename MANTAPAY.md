@@ -294,11 +294,14 @@ reply 500.
 
 ### Incomplete
 
-**3. The Search API is dead code.**
+**3. Actual-fee reconciliation is blocked.**
 `mantapay-search.js` is written and unit-tested, but nothing calls
 `searchTransactions`. Per-transaction fees are the one thing MantaPay gives us
-that the webhook does not, and we never fetch them. `getStatusById` is also
-exported and uncalled.
+that the webhook does not. It is deliberately not scheduled because the body
+signature salt contract is still unconfirmed and no reliable live response has
+been validated. Transactions therefore remain labelled as calculated estimates.
+Do not update `fee_is_estimate` until MantaPay confirms the salt and captured
+transactions have been checked to contain complete, stable `TransactionFees`.
 
 **4. Two unused order constants.**
 `HOSTED_FIELD_ORDER_REQUEST` / `HOSTED_FIELD_ORDER_JS` in

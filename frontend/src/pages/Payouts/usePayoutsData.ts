@@ -30,6 +30,8 @@ export interface UsePayoutsDataResult {
   history: PayoutRecord[];
   isLoading: boolean;
   isError: boolean;
+  isHistoryLoading: boolean;
+  isHistoryError: boolean;
   /** Settles unpaid balances for one payee, or every payee of that type when `targetId` is omitted. */
   pay: (input: Pick<RunPayoutInput, 'payeeType' | 'targetId'>) => Promise<{ ran: number; total: number }>;
   isPaying: boolean;
@@ -65,6 +67,8 @@ export function usePayoutsData(selected: DateRange, historyFilters: PayoutHistor
     history: history.data ?? [],
     isLoading: breakdown.isLoading,
     isError: breakdown.isError,
+    isHistoryLoading: history.isLoading,
+    isHistoryError: history.isError,
     pay: async (input) => {
       const result = await run.mutateAsync(input);
       return { ran: result.ran, total: result.total };

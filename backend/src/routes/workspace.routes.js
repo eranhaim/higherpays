@@ -93,16 +93,17 @@ router.get('/platform-fee', requirePermission('payments.view'), asyncHandler(asy
 // GET /workspaces/:id/link-limits
 router.get('/link-limits', requirePermission('payments.view'), asyncHandler(async (req, res) => {
   const w = (await query(
-    'SELECT min_link_amount, max_link_amount, link_ttl_minutes FROM workspaces WHERE id=$1', [wid(req)])).rows[0];
+    'SELECT min_link_amount, max_link_amount, link_ttl_minutes, reusable_links_enabled FROM workspaces WHERE id=$1', [wid(req)])).rows[0];
   res.json({
     minLinkAmount: w.min_link_amount == null ? null : Number(w.min_link_amount),
     maxLinkAmount: w.max_link_amount == null ? null : Number(w.max_link_amount),
     linkTtlMinutes: w.link_ttl_minutes == null ? config.linkTtlMinutes : Number(w.link_ttl_minutes),
+    reusableLinksEnabled: w.reusable_links_enabled,
     providerMinimum: 3,
   });
 }));
 
-// PATCH /workspaces/:id/link-limits  { minLinkAmount, maxLinkAmount, linkTtlMinutes }
+// PATCH /workspaces/:id/link-limits  { minLinkAmount, maxLinkAmount, linkTtlMinutes, reusableLinksEnabled }
 // (null clears an amount; a null TTL falls back to the platform default)
 router.patch('/link-limits', requirePermission('settings.edit'), asyncHandler(async (req, res) => {
   const body = req.body || {};
@@ -115,16 +116,25 @@ router.patch('/link-limits', requirePermission('settings.edit'), asyncHandler(as
   if (ttl != null && !(Number.isInteger(ttl) && ttl > 0)) {
     return badRequest(res, 'linkTtlMinutes must be a whole number of minutes above zero', ['linkTtlMinutes']);
   }
+  const reusableLinksEnabled = 'reusableLinksEnabled' in body ? body.reusableLinksEnabled : undefined;
+  if (reusableLinksEnabled !== undefined && typeof reusableLinksEnabled !== 'boolean') {
+    return badRequest(res, 'reusableLinksEnabled must be boolean', ['reusableLinksEnabled']);
+  }
   const w = (await query(
     `UPDATE workspaces SET min_link_amount=$2, max_link_amount=$3,
-            link_ttl_minutes = CASE WHEN $5::boolean THEN $4::int ELSE link_ttl_minutes END
-      WHERE id=$1 RETURNING min_link_amount, max_link_amount, link_ttl_minutes`,
-    [wid(req), min, max, ttl ?? null, ttl !== undefined])).rows[0];
-  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'workspace.link_limits', metadata: { min, max, ttl } });
+            link_ttl_minutes = CASE WHEN $5::boolean THEN $4::int ELSE link_ttl_minutes END,
+            reusable_links_enabled = CASE WHEN $7::boolean THEN $6::boolean ELSE reusable_links_enabled END
+      WHERE id=$1 RETURNING min_link_amount, max_link_amount, link_ttl_minutes, reusable_links_enabled`,
+    [wid(req), min, max, ttl ?? null, ttl !== undefined, reusableLinksEnabled ?? null, reusableLinksEnabled !== undefined])).rows[0];
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'workspace.link_limits',
+    metadata: { min, max, ttl, reusableLinksEnabled },
+  });
   res.json({
     minLinkAmount: w.min_link_amount == null ? null : Number(w.min_link_amount),
     maxLinkAmount: w.max_link_amount == null ? null : Number(w.max_link_amount),
     linkTtlMinutes: w.link_ttl_minutes == null ? config.linkTtlMinutes : Number(w.link_ttl_minutes),
+    reusableLinksEnabled: w.reusable_links_enabled,
   });
 }));
 

@@ -94,6 +94,26 @@ test('type is required, the provider minimum is enforced, and an unknown account
     .send({ accountId: '00000000-0000-0000-0000-000000000000', type: 'single_use', amount: 25, currency: 'EUR' }).expect(404);
 });
 
+test('link amount must be numeric finite cents within workspace bounds', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const path = `/workspaces/${t.workspaceId}/links`;
+  const base = { accountId: account.id, type: 'single_use', currency: 'EUR' };
+
+  await request(app).post(path).set(t.authHeaders).send({ ...base, amount: '25' }).expect(400);
+  await request(app).post(path).set(t.authHeaders).send({ ...base, amount: 25.001 }).expect(400);
+  await request(app).post(path).set(t.authHeaders)
+    .set('Content-Type', 'application/json')
+    .send(`{"accountId":"${account.id}","type":"single_use","amount":1e400,"currency":"EUR"}`)
+    .expect(400);
+
+  await request(app).patch(`/workspaces/${t.workspaceId}/link-limits`).set(t.authHeaders)
+    .send({ minLinkAmount: 10, maxLinkAmount: 20 }).expect(200);
+  await request(app).post(path).set(t.authHeaders).send({ ...base, amount: 9 }).expect(400);
+  await request(app).post(path).set(t.authHeaders).send({ ...base, amount: 21 }).expect(400);
+  await request(app).post(path).set(t.authHeaders).send({ ...base, amount: 10 }).expect(201);
+});
+
 test('a paused account takes no new links', async () => {
   const t = await createTenant(app);
   const account = await createAccount(app, t);

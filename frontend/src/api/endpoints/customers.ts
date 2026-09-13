@@ -26,6 +26,7 @@ export interface Customer {
   segment: CustomerSegment;
   totalSpend: number;
   lastPurchaseAt: string | null;
+  archivedAt: string | null;
   createdAt: string;
 }
 
@@ -34,6 +35,7 @@ export interface CustomerPayment {
   amount: number;
   currency: string;
   status: PaymentStatus;
+  needsDetails: boolean;
   occurredAt: string;
   account: string;
   agent: string | null;

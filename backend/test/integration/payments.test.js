@@ -41,6 +41,7 @@ test('a paid payment waits for details; completing it creates the customer and f
     .set(agent.headers).expect(200)).body;
   assert.equal(customerDetail.payments[0].linkId, link.id);
   assert.equal(customerDetail.payments[0].linkReference, link.referenceId);
+  assert.equal(customerDetail.payments[0].needsDetails, false);
 
   const timeline = (await request(app).get(`/workspaces/${t.workspaceId}/links/${link.id}`)
     .set(agent.headers).expect(200)).body.events;
@@ -115,9 +116,9 @@ test('payment summaries use all filtered rows and keep checkout-fee revenue plat
   assert.equal(summary.grossContent, 40);
   assert.ok(summary.platformFees > 0);
   assert.equal(summary.netProfit, summary.grossContent - summary.platformFees);
-  assert.equal(summary.approvedPayments, 1);
-  assert.equal(summary.attempts, 2);
-  assert.equal(summary.approvalRate, 50);
+  assert.equal(summary.approvedPayments, 2, 'a refunded payment was still an approved provider attempt');
+  assert.equal(summary.attempts, 3);
+  assert.equal(summary.approvalRate, 67);
   assert.equal(summary.detailsNeeded, 1);
   assert.equal(summary.refundedCount, 1);
   assert.equal(summary.refundedAmount, 20);

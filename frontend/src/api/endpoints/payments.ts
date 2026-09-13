@@ -9,11 +9,15 @@ export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded';
 export const PAYMENT_STATUSES: PaymentStatus[] = ['pending', 'paid', 'failed', 'refunded'];
 
 export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
-  pending: 'Pending',
-  paid: 'Paid',
+  pending: 'Waiting for payment',
+  paid: 'Completed',
   failed: 'Failed',
   refunded: 'Refunded',
 };
+
+export function paymentStatusLabel(payment: { status: PaymentStatus; needsDetails?: boolean }): string {
+  return payment.needsDetails ? 'Waiting to fill details' : PAYMENT_STATUS_LABELS[payment.status];
+}
 
 /** Money that was returned after a successful sale. */
 export function isReversed(status: PaymentStatus): boolean {
@@ -44,6 +48,7 @@ export interface Payment {
   linkType: LinkType | null;
   reviewRequired: boolean;
   reviewReason: 'duplicate_single_use_charge' | null;
+  archivedAt: string | null;
   /** Paid, but the agent has not yet said who paid and what for. */
   needsDetails: boolean;
   /** Only sent to callers who see the whole workspace. */
@@ -168,7 +173,7 @@ export interface ExportOptions {
 export interface CompletePaymentInput {
   categoryId: string;
   customerId?: string;
-  customer?: { name: string; telegramName?: string };
+  customer?: { name: string; telegramName?: string; email?: string };
 }
 
 export interface ReversalResult {
@@ -222,6 +227,10 @@ export const paymentsApi = {
   refund: (id: string) => api.post<ReversalResult>(workspacePath(`/payments/${id}/refund`), {}),
 
   chargeback: (id: string) => api.post<ReversalResult>(workspacePath(`/payments/${id}/chargeback`), {}),
+
+  archive: (id: string) => api.post<Payment>(workspacePath(`/payments/${id}/archive`), {}),
+
+  reactivate: (id: string) => api.post<Payment>(workspacePath(`/payments/${id}/reactivate`), {}),
 
   /** What reassigning this payment would move, read before confirming it. */
   impact: (id: string) => api.get<ReassignImpact>(workspacePath(`/payments/${id}/impact`)),

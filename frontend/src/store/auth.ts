@@ -100,15 +100,7 @@ export const useAuthStore = create<AuthState>()(
           originalSession: null,
           impersonationExpiresAt: null,
           originalWorkspaceId: null,
-        } : {
-          accessToken: null,
-          refreshToken: null,
-          user: null,
-          workspaces: [],
-          originalSession: null,
-          impersonationExpiresAt: null,
-          originalWorkspaceId: null,
-        }),
+        } : state),
 
       clear: () =>
         set({

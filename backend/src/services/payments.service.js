@@ -48,11 +48,14 @@ async function recordPaymentOutcome(client, workspaceId, params) {
            FOR UPDATE`,
         [workspaceId, linkReference])).rows[0]
     : null;
-  // A payment must belong to an account. Without a link there is nothing to
-  // credit, so the event is kept in webhook_events only.
+  // A payment must belong to an account. Keep an authentic unmatched event
+  // retriable so correcting the reference/link lets the provider retry it.
   if (!link) {
     log.warn({ workspaceId, providerTransactionId, linkReference }, 'payment outcome without a matching link');
-    return { paymentId: null, transactionId: null, linkId: null, newSale: false };
+    throw Object.assign(new Error('payment_link_not_found'), {
+      code: 'payment_link_not_found',
+      status: 422,
+    });
   }
 
   validateProviderMoney({
@@ -75,7 +78,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
          FROM payments p
          JOIN transactions t ON t.payment_id=p.id AND t.type='payment'
          JOIN revenue_entries re ON re.transaction_id=t.id AND re.entry_type='sale'
-        WHERE p.payment_link_id=$1
+        WHERE p.payment_link_id=$1 AND p.archived_at IS NULL
         LIMIT 1`,
       [link.id])).rows[0];
     if (winner && winner.provider_payment_id !== providerTransactionId) {
@@ -248,6 +251,7 @@ async function recordPaymentReversal(client, workspaceId, {
        FROM payments p
        LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment' AND t.status = 'approved'
       WHERE p.workspace_id = $1
+        AND p.archived_at IS NULL
         AND (($2::uuid IS NOT NULL AND p.id = $2::uuid)
           OR ($3::text IS NOT NULL AND t.provider_transaction_id = $3::text))
       FOR UPDATE OF p`,

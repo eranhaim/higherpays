@@ -9,6 +9,7 @@ import type { SystemWorkspaceRole } from '../api/types';
 export type Permission =
   | 'payments.view' | 'payments.complete' | 'payments.export'
   | 'links.view' | 'links.create'
+  | 'archive.manage'
   | 'analytics.view'
   | 'accounts.view' | 'accounts.manage'
   | 'agents.view' | 'agents.manage'
@@ -23,6 +24,7 @@ export type Permission =
 const ALL: Permission[] = [
   'payments.view', 'payments.complete', 'payments.export',
   'links.view', 'links.create',
+  'archive.manage',
   'analytics.view',
   'accounts.view', 'accounts.manage',
   'agents.view', 'agents.manage',

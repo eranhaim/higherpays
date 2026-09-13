@@ -4,7 +4,7 @@
  * so an agent only sees what they can act on.
  */
 
-import { useEffect, useRef, useState, type MouseEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../store/auth';
@@ -72,13 +72,21 @@ export default function Layout() {
     enabled: impersonationOpen && Boolean(user?.isPlatformAdmin) && !originalSession,
   });
 
-  const restorePlatformSession = () => {
+  const restorePlatformSession = useCallback(() => {
     const workspaceId = originalWorkspaceId;
     endImpersonation();
     if (workspaceId) setActiveWorkspaceId(workspaceId);
     queryClient.clear();
     navigate('/platform', { replace: true });
-  };
+  }, [endImpersonation, navigate, originalWorkspaceId, queryClient, setActiveWorkspaceId]);
+
+  useEffect(() => {
+    const onImpersonationEnded = () => {
+      if (useAuthStore.getState().originalSession) restorePlatformSession();
+    };
+    window.addEventListener('higherpays:impersonation-ended', onImpersonationEnded);
+    return () => window.removeEventListener('higherpays:impersonation-ended', onImpersonationEnded);
+  }, [restorePlatformSession]);
 
   const exitImpersonation = async () => {
     try {
@@ -97,9 +105,7 @@ export default function Layout() {
     }
     const timer = window.setTimeout(restorePlatformSession, remaining);
     return () => window.clearTimeout(timer);
-  // restorePlatformSession reads current store values when the timer fires.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [originalSession, impersonationExpiresAt]);
+  }, [impersonationExpiresAt, originalSession, restorePlatformSession]);
 
   const startImpersonation = useMutation({
     mutationFn: async () => {
@@ -140,7 +146,8 @@ export default function Layout() {
 
   const logout = useMutation({
     mutationFn: async () => {
-      const refreshToken = useAuthStore.getState().refreshToken;
+      const state = useAuthStore.getState();
+      const refreshToken = state.originalSession?.refreshToken ?? state.refreshToken;
       if (refreshToken) await authApi.logout(refreshToken);
     },
     onSettled: () => {

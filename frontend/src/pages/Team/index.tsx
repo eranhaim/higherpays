@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { HttpError } from '../../api/http';
@@ -32,14 +32,14 @@ function isExpired(i: Invite): boolean {
 
 export default function TeamPage() {
   const can = useCan();
-  const { labels, role: currentRole } = useCurrentSession();
+  const { labels, role: currentRole, user } = useCurrentSession();
   const {
     members, roles, pendingInvites, isLoading, isError,
     setStatus, setRole: assignRole, transferOwner, removeMember,
     createRole, updateRole, removeRole, invite, cancelInvite,
   } = useTeamData();
   const canManage = can('team.manage');
-  const canManageRoles = can('roles.manage');
+  const canManageRoles = currentRole === 'workspace_owner' || Boolean(user?.isPlatformAdmin);
 
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
@@ -67,11 +67,15 @@ export default function TeamPage() {
     if (key === 'account_owner') return `${labels.account} owner`;
     return roles.find((item) => item.key === key)?.name ?? key;
   };
+  const canAssignRole = (item: RoleDefinition) =>
+    item.permissions.every((permission) => can(permission));
 
   const openRoleEditor = (target: RoleDefinition | 'new') => {
     setEditingRole(target);
     setRoleName(target === 'new' ? '' : target.name);
-    setRolePermissions(target === 'new' ? ['data.view_all'] : target.permissions);
+    setRolePermissions(target === 'new'
+      ? ['data.view_all']
+      : target.permissions.filter((permission) => permission !== 'roles.manage'));
   };
 
   const togglePermission = (permission: Permission) => {
@@ -225,6 +229,7 @@ export default function TeamPage() {
               {roles
                 .filter((item) => item.key !== 'workspace_owner')
                 .filter((item) => m.agentId ? item.key === 'agent' : m.accountId ? item.key === 'account_owner' : !['agent', 'account_owner'].includes(item.key))
+                .filter((item) => item.key === m.role || canAssignRole(item))
                 .map((item) => <option key={item.key} value={item.key}>{roleLabel(item.key)}</option>)}
             </select>
           )}
@@ -284,17 +289,33 @@ export default function TeamPage() {
   ];
 
   return (
-    <div>
+    <div className="team-page">
       <PageHeader
         title="Team"
         actions={canManage ? <button className="btn" onClick={() => setInviteOpen(true)}>Invite team member</button> : null}
       />
 
       <div className="tabbar" role="tablist" aria-label="Team views">
-        {views.map((item) => (
-          <button key={item.id} type="button" role="tab" aria-selected={view === item.id}
+        {views.map((item, index) => (
+          <button
+            key={item.id}
+            id={`team-tab-${item.id}`}
+            type="button"
+            role="tab"
+            aria-selected={view === item.id}
+            aria-controls={`team-panel-${item.id}`}
+            tabIndex={view === item.id ? 0 : -1}
             className={`btn ghost tgl${view === item.id ? ' active' : ''}`}
-            onClick={() => setView(item.id)}>
+            onClick={() => setView(item.id)}
+            onKeyDown={(event) => {
+              const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+              if (step === 0) return;
+              event.preventDefault();
+              const next = views[(index + step + views.length) % views.length];
+              setView(next.id);
+              document.getElementById(`team-tab-${next.id}`)?.focus();
+            }}
+          >
             {item.label} <span className="sub inline">{item.count}</span>
           </button>
         ))}
@@ -333,21 +354,23 @@ export default function TeamPage() {
         </FilterBar>
       )}
 
-      {view === 'invites' ? (
-        <DataTable columns={inviteColumns} rows={pendingInvites} rowKey={(i) => i.id}
-          emptyTitle="No pending invites." emptyHint="Invite a team member from the button above." />
-      ) : (
-        <DataTable
-          columns={shownMemberColumns}
-          rows={visibleMembers}
-          sort={sort}
-          onSort={toggleSort}
-          rowKey={(m) => m.userId}
-          isLoading={isLoading}
-          emptyTitle={isError ? "Couldn't load the team." : query ? 'No members match that search.' : 'No members in this view.'}
-          emptyHint={isError ? 'Try again in a moment.' : query ? 'Clear the search to see them all.' : undefined}
-        />
-      )}
+      <div id={`team-panel-${view}`} role="tabpanel" aria-labelledby={`team-tab-${view}`}>
+        {view === 'invites' ? (
+          <DataTable columns={inviteColumns} rows={pendingInvites} rowKey={(i) => i.id}
+            emptyTitle="No pending invites." emptyHint="Invite a team member from the button above." />
+        ) : (
+          <DataTable
+            columns={shownMemberColumns}
+            rows={visibleMembers}
+            sort={sort}
+            onSort={toggleSort}
+            rowKey={(m) => m.userId}
+            isLoading={isLoading}
+            emptyTitle={isError ? "Couldn't load the team." : query ? 'No members match that search.' : 'No members in this view.'}
+            emptyHint={isError ? 'Try again in a moment.' : query ? 'Clear the search to see them all.' : undefined}
+          />
+        )}
+      </div>
 
       <Modal open={inviteOpen} onClose={closeInvite} title="Invite a team member" subtitle="They receive an email with a link to set their password.">
         <div className="field">
@@ -358,6 +381,7 @@ export default function TeamPage() {
           <label htmlFor="invite-role">Role</label>
           <select id="invite-role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as InvitableRole)}>
             {roles.filter((item) => !['workspace_owner', 'agent', 'account_owner'].includes(item.key))
+              .filter(canAssignRole)
               .map((item) => <option key={item.key} value={item.key}>{roleLabel(item.key)}</option>)}
           </select>
         </div>
@@ -374,21 +398,35 @@ export default function TeamPage() {
           <input id="role-name" value={roleName} disabled={editingRole !== 'new' && editingRole?.isSystem}
             onChange={(event) => setRoleName(event.target.value)} />
         </div>
-        <div className="permission-matrix">
-          {ROLE_PERMISSION_GROUPS.map((group) => (
-            <fieldset key={group.label}>
-              <legend>{group.label}</legend>
-              {group.permissions.map((permission) => (
-                <label key={permission.key}>
-                  <input type="checkbox" checked={rolePermissions.includes(permission.key)}
-                    disabled={permission.key === 'data.view_all'}
-                    onChange={() => togglePermission(permission.key)} />
-                  {permission.label}
-                </label>
+        <div className="tablewrap">
+          <table>
+            <thead>
+              <tr><th scope="col">Permission</th><th scope="col">Enabled</th></tr>
+            </thead>
+            <tbody>
+              {ROLE_PERMISSION_GROUPS.map((group) => (
+                <Fragment key={group.label}>
+                  <tr><th scope="rowgroup" colSpan={2} className="field-label">{group.label}</th></tr>
+                  {group.permissions.map((permission) => (
+                    <tr key={permission.key}>
+                      <th scope="row">{permission.label}</th>
+                      <td>
+                        <input
+                          type="checkbox"
+                          aria-label={`${permission.label} for ${roleName}`}
+                          checked={rolePermissions.includes(permission.key)}
+                          disabled={permission.key === 'data.view_all'}
+                          onChange={() => togglePermission(permission.key)}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </Fragment>
               ))}
-            </fieldset>
-          ))}
+            </tbody>
+          </table>
         </div>
+        <p className="sub">Workspace data access is required for custom roles. Role changes are restricted to the agency owner and platform admins.</p>
         <div className="modal-actions">
           <button className="btn ghost" onClick={() => setEditingRole(null)}>Cancel</button>
           <button className="btn" disabled={isBusy || !roleName.trim()} onClick={saveRole}>Save role</button>

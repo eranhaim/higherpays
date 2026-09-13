@@ -20,6 +20,18 @@ const { uid } = require('../lib/scope');
 const pct = (v) => typeof v === 'number' && v >= 0 && v <= 100;
 const n = (v) => Number(v || 0);
 const r2 = (v) => Math.round(v * 100) / 100;
+const PROVIDER_MIN_LINK_AMOUNT = 3;
+
+function checkoutFeeValidation(checkoutFee, workspaceMinimum = null) {
+  if (typeof checkoutFee !== 'number' || !Number.isFinite(checkoutFee) || checkoutFee < 0) {
+    return 'checkoutFee must be a finite number >= 0';
+  }
+  const minimum = Math.max(PROVIDER_MIN_LINK_AMOUNT, Number(workspaceMinimum || 0));
+  if (config.mantapayFeeMode === 'additive' && checkoutFee >= minimum) {
+    return `checkoutFee must be less than the minimum permitted link amount (${minimum}) in additive mode`;
+  }
+  return null;
+}
 
 router.post('/impersonation/stop', asyncHandler(async (req, res) => {
   if (!req.user.actorId) return res.status(400).json({ error: 'not_impersonating' });
@@ -151,13 +163,42 @@ const publicSettlementFee = (s) => ({
 // everywhere. Both go through here.
 async function grantPlatformAdminsAccess(c, workspaceId) {
   await c.query(
-    `INSERT INTO workspace_users (workspace_id, user_id, role)
-     SELECT $1, id, 'workspace_admin' FROM users WHERE is_platform_admin
-     ON CONFLICT (workspace_id, user_id)
-     DO UPDATE SET role='workspace_admin', status='active'`, [workspaceId]);
+    `INSERT INTO workspace_users (workspace_id, user_id, role, platform_granted)
+     SELECT $1, id, 'workspace_admin', true FROM users WHERE is_platform_admin
+     ON CONFLICT (workspace_id, user_id) DO NOTHING`, [workspaceId]);
 }
 
 router.get('/me', (req, res) => res.json({ isPlatformAdmin: true }));
+
+router.get('/archive', asyncHandler(async (_req, res) => {
+  const rows = (await query(
+    `SELECT id, name, currency, status, updated_at AS archived_at
+       FROM workspaces
+      WHERE status = 'archived'
+      ORDER BY updated_at DESC, id DESC`)).rows;
+  res.json({
+    type: 'workspaces',
+    items: rows.map((w) => ({
+      id: w.id, type: 'workspaces', name: w.name, detail: w.currency,
+      status: w.status, currency: w.currency, archivedAt: w.archived_at,
+    })),
+  });
+}));
+
+router.post('/archive/workspaces/:id/restore', asyncHandler(async (req, res) => {
+  const workspace = (await query(
+    `UPDATE workspaces SET status = 'active'
+       WHERE id = $1 AND status = 'archived'
+       RETURNING id, name, status`,
+    [req.params.id])).rows[0];
+  if (!workspace) return res.status(404).json({ error: 'not_found_or_active' });
+  await audit({
+    actorUserId: uid(req), action: 'archive.restore',
+    entityType: 'workspace', entityId: workspace.id,
+    metadata: { archiveType: 'workspaces' },
+  });
+  res.json({ id: workspace.id, type: 'workspaces', restored: true });
+}));
 
 // GET /platform/overview
 router.get('/overview', asyncHandler(async (req, res) => {
@@ -173,8 +214,10 @@ router.get('/overview', asyncHandler(async (req, res) => {
            COALESCE(SUM(re.platform_fee),0) AS platform_fees,
            COALESCE(SUM(re.platform_margin),0) AS higherpays_margin,
            COUNT(*) FILTER (WHERE re.entry_type='sale') AS sales
-      FROM revenue_entries re`)).rows[0];
-  res.json({ counts, money });
+      FROM revenue_entries re
+      JOIN transactions t ON t.id = re.transaction_id
+      JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL`)).rows[0];
+  res.json({ counts, money, supportedCurrencies: config.supportedCurrencies });
 }));
 
 // GET /platform/workspaces — every agency with its rate and live counters.
@@ -184,9 +227,9 @@ router.get('/workspaces', asyncHandler(async (req, res) => {
            (SELECT count(*) FROM accounts a WHERE a.workspace_id = w.id) AS accounts,
            (SELECT count(*) FROM agents ag WHERE ag.workspace_id = w.id) AS agents,
            (SELECT count(*) FROM workspace_users wu WHERE wu.workspace_id = w.id AND wu.status='active') AS members,
-           (SELECT count(*) FROM payments p WHERE p.workspace_id = w.id AND p.status='paid') AS paid_payments,
+           (SELECT count(*) FROM payments p WHERE p.workspace_id = w.id AND p.status='paid' AND p.archived_at IS NULL) AS paid_payments,
            (SELECT COALESCE(SUM(amount),0) FROM payments p
-             WHERE p.workspace_id = w.id AND p.status='paid' AND p.review_reason IS NULL) AS gross_volume,
+             WHERE p.workspace_id = w.id AND p.status='paid' AND p.review_reason IS NULL AND p.archived_at IS NULL) AS gross_volume,
            (SELECT max(created_at) FROM audit_log a WHERE a.workspace_id = w.id) AS last_activity,
            f.blended_rate_pct, f.psp_rate_pct, f.settlement_pct, f.margin_rate_pct,
            f.psp_fixed_fee, f.checkout_fee
@@ -335,11 +378,14 @@ router.put('/workspaces/:id/platform-fee', asyncHandler(async (req, res) => {
   if (b.mdrPct != null && !pct(b.mdrPct)) return badRequest(res, 'mdrPct must be 0..100', ['mdrPct']);
   if (!pct(settlementPct)) return badRequest(res, 'settlementPct must be 0..100', ['settlementPct']);
   if (!(pspFixedFee >= 0)) return badRequest(res, 'pspFixedFee must be >= 0', ['pspFixedFee']);
-  const checkoutFee = Number(b.checkoutFee || 0);
-  if (!(checkoutFee >= 0)) return badRequest(res, 'checkoutFee must be >= 0', ['checkoutFee']);
+  const checkoutFee = b.checkoutFee == null ? 0 : b.checkoutFee;
 
-  const ws = (await query('SELECT 1 FROM workspaces WHERE id=$1', [req.params.id])).rows[0];
+  const ws = (await query(
+    'SELECT min_link_amount FROM workspaces WHERE id=$1',
+    [req.params.id])).rows[0];
   if (!ws) return res.status(404).json({ error: 'not_found' });
+  const checkoutFeeError = checkoutFeeValidation(checkoutFee, ws.min_link_amount);
+  if (checkoutFeeError) return badRequest(res, checkoutFeeError, ['checkoutFee']);
   const fee = (await query(
     `INSERT INTO platform_fee_rates (workspace_id, fee_model, psp_rate_pct, mdr_pct, settlement_pct, psp_fixed_fee, margin_rate_pct, checkout_fee, created_by_user_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
@@ -378,7 +424,14 @@ router.patch('/workspaces/:id/status', asyncHandler(async (req, res) => {
   if (!vocab.WORKSPACE_STATUS.includes(status)) return badRequest(res, 'invalid status', ['status']);
   const w = (await query('UPDATE workspaces SET status=$2 WHERE id=$1 RETURNING id, name, status', [req.params.id, status])).rows[0];
   if (!w) return res.status(404).json({ error: 'not_found' });
-  await audit({ workspaceId: w.id, actorUserId: uid(req), action: 'platform.workspace.status', entityType: 'workspace', entityId: w.id, metadata: { status } });
+  await audit({
+    workspaceId: w.id,
+    actorUserId: uid(req),
+    action: status === 'archived' ? 'workspace.archive' : 'platform.workspace.status',
+    entityType: 'workspace',
+    entityId: w.id,
+    metadata: { status },
+  });
   res.json(w);
 }));
 
@@ -389,11 +442,14 @@ router.post('/agencies', asyncHandler(async (req, res) => {
   const b = req.body || {};
   const currency = (b.currency || 'EUR').toUpperCase();
   const settlementPct = b.settlementPct == null ? 0 : Number(b.settlementPct);
+  const checkoutFee = b.checkoutFee == null ? 0 : b.checkoutFee;
   if (!isStr(b.name, 120)) return badRequest(res, 'name is required', ['name']);
   if (!isStr(b.adminEmail, 120) || !b.adminEmail.includes('@')) return badRequest(res, 'a valid adminEmail is required', ['adminEmail']);
   if (!config.supportedCurrencies.includes(currency)) return badRequest(res, `currency ${currency} is not enabled`, ['currency']);
   if (!pct(b.pspRatePct) || !pct(b.marginRatePct)) return badRequest(res, 'pspRatePct/marginRatePct must be 0..100', ['pspRatePct', 'marginRatePct']);
   if (!pct(settlementPct)) return badRequest(res, 'settlementPct must be 0..100', ['settlementPct']);
+  const checkoutFeeError = checkoutFeeValidation(checkoutFee);
+  if (checkoutFeeError) return badRequest(res, checkoutFeeError, ['checkoutFee']);
 
   const token = crypto.randomBytes(32).toString('base64url');
   const out = await withTransaction(async (c) => {
@@ -407,7 +463,7 @@ router.post('/agencies', asyncHandler(async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'-infinity',$9)`,
       [ws.id, settlementPct > 0 ? 'cascade' : vocab.FEE_MODEL.includes(b.feeModel) ? b.feeModel : 'flat',
         b.pspRatePct, settlementPct > 0 ? Number(b.pspRatePct) : b.mdrPct ?? null,
-        settlementPct, Number(b.pspFixedFee || 0), b.marginRatePct, Number(b.checkoutFee || 0), uid(req)]);
+        settlementPct, Number(b.pspFixedFee || 0), b.marginRatePct, checkoutFee, uid(req)]);
     await c.query(
       `INSERT INTO settlement_fee_config (workspace_id, chargeback_fee, refund_fee, decline_fee, effective_from, created_by_user_id)
        VALUES ($1,$2,$3,$4,'-infinity',$5)`,
@@ -449,9 +505,13 @@ router.patch('/users/:id/platform-admin', asyncHandler(async (req, res) => {
     if (!u) return null;
     if (on) {
       await c.query(
-        `INSERT INTO workspace_users (workspace_id, user_id, role) SELECT id, $1, 'workspace_admin' FROM workspaces
-         ON CONFLICT (workspace_id, user_id)
-         DO UPDATE SET role='workspace_admin', status='active'`, [u.id]);
+        `INSERT INTO workspace_users (workspace_id, user_id, role, platform_granted)
+         SELECT id, $1, 'workspace_admin', true FROM workspaces
+         ON CONFLICT (workspace_id, user_id) DO NOTHING`, [u.id]);
+    } else {
+      await c.query(
+        'DELETE FROM workspace_users WHERE user_id=$1 AND platform_granted=true',
+        [u.id]);
     }
     return u;
   });
@@ -491,8 +551,9 @@ router.get('/fees', asyncHandler(async (req, res) => {
        FROM workspaces w
        LEFT JOIN revenue_entries re ON re.workspace_id = w.id
        LEFT JOIN transactions t ON t.id = re.transaction_id AND t.occurred_at >= $1 AND t.occurred_at <= $2
+       LEFT JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
        LEFT JOIN LATERAL effective_platform_fee(w.id, now()) p ON true
-      WHERE t.id IS NOT NULL OR re.id IS NULL
+      WHERE (t.id IS NOT NULL AND pay.id IS NOT NULL) OR re.id IS NULL
       GROUP BY w.id, w.name, p.fee_model, p.mdr_pct, p.settlement_pct, p.psp_fixed_fee, p.margin_rate_pct, p.psp_rate_pct
       ORDER BY gross DESC`, [from.toISOString(), to.toISOString()])).rows;
 

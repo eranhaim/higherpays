@@ -67,7 +67,9 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
       LEFT JOIN (
         SELECT re.account_id, SUM(re.gross) AS revenue,
                SUM(re.account_amount) FILTER (WHERE re.account_payout_id IS NULL) AS owed
-          FROM revenue_entries re JOIN transactions t ON t.id = re.transaction_id
+          FROM revenue_entries re
+          JOIN transactions t ON t.id = re.transaction_id
+          JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
          WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 GROUP BY re.account_id
       ) agg ON agg.account_id = a.id
       LEFT JOIN LATERAL (
@@ -82,7 +84,9 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
       LEFT JOIN (
         SELECT re.agent_id, SUM(re.agent_amount) FILTER (WHERE re.agent_payout_id IS NULL) AS owed,
                COUNT(*) FILTER (WHERE re.entry_type='sale') AS sales
-          FROM revenue_entries re JOIN transactions t ON t.id = re.transaction_id
+          FROM revenue_entries re
+          JOIN transactions t ON t.id = re.transaction_id
+          JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
          WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 GROUP BY re.agent_id
       ) agg ON agg.agent_id = ag.id
      WHERE ag.workspace_id = $3 ORDER BY owed DESC`, [F, T, wid(req)])).rows;
@@ -100,14 +104,20 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
     reserve = { pct, releaseDays: days, held: round2(num(settled.held)), source: 'settlements' };
   } else {
     const gross = (await query(
-      `SELECT COALESCE(SUM(gross),0) AS g FROM transactions
-        WHERE workspace_id = $3 AND status='approved' AND occurred_at>=$1 AND occurred_at<=$2`, [F, T, wid(req)])).rows[0].g;
+      `SELECT GREATEST(COALESCE(SUM(re.gross),0),0) AS g
+         FROM revenue_entries re
+         JOIN transactions t ON t.id = re.transaction_id
+         JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
+        WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2`,
+      [F, T, wid(req)])).rows[0].g;
     reserve = { pct, releaseDays: days, held: round2(num(gross) * pct / 100), source: 'estimated' };
   }
 
   const received = num((await query(
-    `SELECT COALESCE(SUM(re.distributable),0) AS received
-       FROM revenue_entries re JOIN transactions t ON t.id = re.transaction_id
+    `SELECT COALESCE(SUM(re.distributable - re.chargeback_fee),0) AS received
+       FROM revenue_entries re
+       JOIN transactions t ON t.id = re.transaction_id
+       JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
       WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2`, [F, T, wid(req)])).rows[0].received);
   const accountsOwed = perAccount.reduce((s, r) => s + num(r.owed), 0);
   const agentsOwed = perAgent.reduce((s, r) => s + num(r.owed), 0);
@@ -117,6 +127,7 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
             COUNT(*) FILTER (WHERE re.entry_type='sale')::int AS successful_sales
        FROM revenue_entries re
        JOIN transactions t ON t.id = re.transaction_id
+       JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
       WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2`,
     [F, T, wid(req)])).rows[0];
   const paidToDate = (await query(
@@ -150,7 +161,9 @@ const PAYOUT_SQL = {
     unpaid: `
       SELECT re.account_id AS rid, SUM(re.account_amount) AS amount,
              MIN(t.occurred_at)::date AS ps, MAX(t.occurred_at)::date AS pe
-        FROM revenue_entries re JOIN transactions t ON t.id = re.transaction_id
+        FROM revenue_entries re
+        JOIN transactions t ON t.id = re.transaction_id
+        JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
        WHERE re.workspace_id = $1 AND t.occurred_at >= $2 AND t.occurred_at <= $3
          AND re.account_payout_id IS NULL AND re.account_id IS NOT NULL
          AND ($4::uuid IS NULL OR re.account_id = $4::uuid)
@@ -161,13 +174,19 @@ const PAYOUT_SQL = {
     settle: `
       UPDATE revenue_entries SET account_payout_id = $1, account_paid_at = now()
        WHERE workspace_id = $5 AND account_id = $2 AND account_payout_id IS NULL
-         AND transaction_id IN (SELECT id FROM transactions WHERE occurred_at >= $3 AND occurred_at <= $4)`,
+         AND transaction_id IN (
+           SELECT t.id FROM transactions t
+           JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
+          WHERE t.occurred_at >= $3 AND t.occurred_at <= $4
+         )`,
   },
   agent: {
     unpaid: `
       SELECT re.agent_id AS rid, SUM(re.agent_amount) AS amount,
              MIN(t.occurred_at)::date AS ps, MAX(t.occurred_at)::date AS pe
-        FROM revenue_entries re JOIN transactions t ON t.id = re.transaction_id
+        FROM revenue_entries re
+        JOIN transactions t ON t.id = re.transaction_id
+        JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
        WHERE re.workspace_id = $1 AND t.occurred_at >= $2 AND t.occurred_at <= $3
          AND re.agent_payout_id IS NULL AND re.agent_id IS NOT NULL
          AND ($4::uuid IS NULL OR re.agent_id = $4::uuid)
@@ -178,7 +197,11 @@ const PAYOUT_SQL = {
     settle: `
       UPDATE revenue_entries SET agent_payout_id = $1, agent_paid_at = now()
        WHERE workspace_id = $5 AND agent_id = $2 AND agent_payout_id IS NULL
-         AND transaction_id IN (SELECT id FROM transactions WHERE occurred_at >= $3 AND occurred_at <= $4)`,
+         AND transaction_id IN (
+           SELECT t.id FROM transactions t
+           JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
+          WHERE t.occurred_at >= $3 AND t.occurred_at <= $4
+         )`,
   },
 };
 

@@ -2,7 +2,7 @@
 
 const express = require('express');
 const { query, withTransaction } = require('../db');
-const { requirePermission } = require('../middleware');
+const { requirePermission, requireRoleManager } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { PERMISSIONS } = require('../auth/permissions');
@@ -37,7 +37,8 @@ async function roleRows(client, workspaceId) {
 }
 
 function validateInputPermissions(req, permissions) {
-  return validateRolePermissions(permissions, [...req.access.permissions]);
+  const allowed = req.canGrantAllRolePermissions ? PERMISSIONS : [...req.access.permissions];
+  return validateRolePermissions(permissions, allowed);
 }
 
 router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) => {
@@ -45,7 +46,7 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
   res.json({ roles: roles.map(publicRole), permissions: PERMISSIONS });
 }));
 
-router.post('/', requirePermission('roles.manage'), asyncHandler(async (req, res) => {
+router.post('/', requireRoleManager, asyncHandler(async (req, res) => {
   const name = String(req.body?.name || '').trim();
   const permissions = req.body?.permissions ?? [];
   if (!name || name.length > 80) return res.status(400).json({ error: 'name_invalid' });
@@ -72,7 +73,7 @@ router.post('/', requirePermission('roles.manage'), asyncHandler(async (req, res
   res.status(201).json(publicRole(row));
 }));
 
-router.patch('/:key', requirePermission('roles.manage'), asyncHandler(async (req, res) => {
+router.patch('/:key', requireRoleManager, asyncHandler(async (req, res) => {
   const hasName = Object.hasOwn(req.body || {}, 'name');
   const hasPermissions = Object.hasOwn(req.body || {}, 'permissions');
   if (!hasName && !hasPermissions) return res.status(400).json({ error: 'no_changes' });
@@ -122,7 +123,7 @@ router.patch('/:key', requirePermission('roles.manage'), asyncHandler(async (req
   res.json(publicRole(out.row));
 }));
 
-router.delete('/:key', requirePermission('roles.manage'), asyncHandler(async (req, res) => {
+router.delete('/:key', requireRoleManager, asyncHandler(async (req, res) => {
   const out = await withTransaction(async (client) => {
     const role = (await client.query(
       'SELECT is_system FROM workspace_roles WHERE workspace_id=$1 AND key=$2 FOR UPDATE',

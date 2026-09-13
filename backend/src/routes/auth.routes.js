@@ -1,7 +1,7 @@
 'use strict';
 const crypto = require('crypto');
 const express = require('express');
-const { query } = require('../db');
+const { query, withTransaction } = require('../db');
 const { verifyPassword } = require('../auth/passwords');
 const { signAccessToken, generateRefreshToken, hashRefreshToken } = require('../auth/tokens');
 const { requireAuth } = require('../middleware');
@@ -28,20 +28,28 @@ const limitByIp = ipLimiter.middleware((req) => ipOf(req) || 'unknown');
 const accountKey = (email) => String(email || '').trim().toLowerCase();
 
 // A new sign-in starts a token family; rotation continues the same one.
-async function issueRefreshToken(userId, req, familyId = null, twoFactorAuthenticated = false) {
+// Rotation passes its transaction client so every family change is atomic.
+async function issueRefreshToken(client, userId, req, {
+  familyId = null,
+  twoFactorAuthenticated = false,
+  absoluteExpiresAt = null,
+} = {}) {
+  const db = client || { query };
   const token = generateRefreshToken();
   const resolvedFamilyId = familyId || crypto.randomUUID();
   const now = Date.now();
-  let absoluteExpires = new Date(now + config.sessionAbsoluteDays * 86400 * 1000);
-  if (familyId) {
-    const family = (await query(
+  let absoluteExpires = absoluteExpiresAt
+    ? new Date(absoluteExpiresAt)
+    : new Date(now + config.sessionAbsoluteDays * 86400 * 1000);
+  if (familyId && !absoluteExpiresAt) {
+    const family = (await db.query(
       'SELECT min(absolute_expires_at) AS absolute_expires_at FROM refresh_tokens WHERE family_id = $1',
       [familyId])).rows[0];
     if (family?.absolute_expires_at) absoluteExpires = new Date(family.absolute_expires_at);
   }
-  const inactivityExpires = new Date(now + config.sessionInactivityDays * 86400 * 1000);
+  const inactivityExpires = new Date(now + config.sessionInactivityHours * 3600 * 1000);
   const expires = new Date(Math.min(inactivityExpires.getTime(), absoluteExpires.getTime()));
-  const row = (await query(
+  const row = (await db.query(
     `INSERT INTO refresh_tokens
        (user_id, token_hash, expires_at, absolute_expires_at, two_factor_authenticated,
         user_agent, ip, family_id)
@@ -132,7 +140,9 @@ router.post('/login', limitByIp, asyncHandler(async (req, res) => {
   accountFailures.reset(accountKey(email));
   await query('UPDATE users SET last_login_at = now() WHERE id = $1', [user.id]);
   await audit({ actorUserId: user.id, action: 'auth.login', ip: ipOf(req) });
-  const session = await issueRefreshToken(user.id, req, null, twoFactorAuthenticated);
+  const session = await issueRefreshToken(null, user.id, req, {
+    twoFactorAuthenticated,
+  });
   res.json({
     accessToken: signAccessToken({ ...user, two_factor_authenticated: twoFactorAuthenticated }, session.familyId),
     refreshToken: session.token,
@@ -214,28 +224,59 @@ router.post('/refresh', limitByIp, asyncHandler(async (req, res) => {
   if (!refreshToken) return res.status(400).json({ error: 'missing_token' });
   const hash = hashRefreshToken(refreshToken);
 
-  const rec = (await query(
-    `SELECT rt.id, rt.user_id, rt.expires_at, rt.absolute_expires_at,
-            rt.two_factor_authenticated, rt.revoked_at,
-            rt.family_id, u.email, u.full_name
-       FROM refresh_tokens rt JOIN users u ON u.id = rt.user_id
-      WHERE rt.token_hash = $1`, [hash])).rows[0];
-  if (!rec) return res.status(401).json({ error: 'invalid_refresh' });
-  if (rec.revoked_at) {
-    // A rotated token presented again was copied. Nobody can tell which
-    // holder is the real user, so the whole session chain ends.
-    await query('UPDATE refresh_tokens SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL', [rec.family_id]);
-    await audit({ actorUserId: rec.user_id, action: 'auth.refresh.reuse', metadata: { familyId: rec.family_id }, ip: ipOf(req) });
-    return res.status(401).json({ error: 'refresh_token_reused' });
+  const outcome = await withTransaction(async (c) => {
+    const rec = (await c.query(
+      `SELECT rt.id, rt.user_id, rt.expires_at, rt.absolute_expires_at,
+              rt.two_factor_authenticated, rt.revoked_at,
+              rt.family_id, u.email, u.full_name, u.status AS user_status
+         FROM refresh_tokens rt
+         JOIN users u ON u.id = rt.user_id
+        WHERE rt.token_hash = $1
+        FOR UPDATE OF rt`,
+      [hash])).rows[0];
+    if (!rec) return { error: 'invalid_refresh' };
+
+    // Lock the whole family before deciding whether to rotate or revoke it.
+    await c.query('SELECT id FROM refresh_tokens WHERE family_id = $1 FOR UPDATE', [rec.family_id]);
+    if (rec.revoked_at) {
+      await c.query(
+        'UPDATE refresh_tokens SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL',
+        [rec.family_id]);
+      return { error: 'refresh_token_reused', rec, auditReuse: true };
+    }
+    if (rec.user_status !== 'active') {
+      await c.query(
+        'UPDATE refresh_tokens SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL',
+        [rec.family_id]);
+      return { error: 'user_not_active', rec };
+    }
+    const now = new Date();
+    if (new Date(rec.expires_at) <= now || new Date(rec.absolute_expires_at) <= now) {
+      await c.query(
+        'UPDATE refresh_tokens SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL',
+        [rec.family_id]);
+      return { error: 'session_expired', rec };
+    }
+    await c.query('UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1', [rec.id]);
+    const next = await issueRefreshToken(c, rec.user_id, req, {
+      familyId: rec.family_id,
+      twoFactorAuthenticated: rec.two_factor_authenticated,
+      absoluteExpiresAt: rec.absolute_expires_at,
+    });
+    return { rec, next };
+  });
+  if (outcome.error) {
+    if (outcome.auditReuse) {
+      await audit({
+        actorUserId: outcome.rec.user_id,
+        action: 'auth.refresh.reuse',
+        metadata: { familyId: outcome.rec.family_id },
+        ip: ipOf(req),
+      });
+    }
+    return res.status(401).json({ error: outcome.error });
   }
-  const now = new Date();
-  if (new Date(rec.expires_at) <= now || new Date(rec.absolute_expires_at) <= now) {
-    await query('UPDATE refresh_tokens SET revoked_at = now() WHERE family_id = $1 AND revoked_at IS NULL', [rec.family_id]);
-    return res.status(401).json({ error: 'session_expired' });
-  }
-  await query('UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1', [rec.id]);
-  const next = await issueRefreshToken(
-    rec.user_id, req, rec.family_id, rec.two_factor_authenticated);
+  const { rec, next } = outcome;
   const accessToken = signAccessToken({
     id: rec.user_id,
     email: rec.email,

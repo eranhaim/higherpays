@@ -33,7 +33,7 @@ const config = {
   jwtSecret: required('JWT_SECRET', 'dev-only-insecure-secret-change-me'),
   accessTokenTtl: process.env.ACCESS_TOKEN_TTL || '15m',
   sessionAbsoluteDays: parseInt(process.env.SESSION_ABSOLUTE_DAYS || process.env.REFRESH_TOKEN_DAYS || '30', 10),
-  sessionInactivityDays: parseInt(process.env.SESSION_INACTIVITY_DAYS || '7', 10),
+  sessionInactivityHours: parseFloat(process.env.SESSION_INACTIVITY_HOURS || '1'),
 
   // Supported agency and link currencies. FX is deliberately out of scope:
   // every workspace keeps its own currency and all amounts stay in it.

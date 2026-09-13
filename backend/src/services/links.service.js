@@ -1,13 +1,9 @@
 'use strict';
 
 /**
- * Reconciliation: the safety net for single-use links whose final webhook never
- * arrived. Polls the provider for every active one older than the grace period
- * and applies the outcome through the same service the webhook uses, so a link
- * that was already settled is never posted twice.
- *
- * Reusable links are not polled: they carry many payments and only the webhook
- * can tell them apart.
+ * Reconciliation: the safety net for a webhook that never arrived. Polls every
+ * active link older than the grace period and applies provider transactions
+ * through the same service the webhook uses.
  */
 
 const { query, withTransaction } = require('../db');
@@ -23,9 +19,10 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
   const summary = { checked: 0, updated: [], skipped: [] };
 
   const stuck = (await c.query(
-    `SELECT id, reference_id, amount, checkout_fee, currency, expires_at < now() AS is_expired
+    `SELECT id, reference_id, type, amount, checkout_fee, currency, expires_at < now() AS is_expired
        FROM payment_links
-      WHERE workspace_id = $1 AND type = 'single_use' AND status = 'active'
+      WHERE workspace_id = $1 AND status = 'active'
+        AND archived_at IS NULL
         AND created_at < now() - ($2 || ' minutes')::interval`,
     [ws.id, String(graceMinutes)])).rows;
 
@@ -38,6 +35,32 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
     if (statusResp.transaction_id) {
       await c.query('UPDATE payment_links SET provider_request_id=$2 WHERE id=$1', [link.id, statusResp.transaction_id]);
     }
+
+    if (link.type === 'reusable') {
+      for (const [index, transaction] of (statusResp.transactions || []).entries()) {
+        if (!transaction.transId || !['approved', 'pending', 'declined'].includes(transaction.status)) continue;
+        const outcome = await paymentsService.recordPaymentOutcome(c, ws.id, {
+          providerTransactionId: transaction.transId,
+          status: transaction.status,
+          gross: transaction.amount != null
+            ? Number(transaction.amount)
+            : Number(link.amount || 0) + Number(link.checkout_fee || 0),
+          fee: null,
+          currency: (transaction.currency || link.currency || 'EUR').toString().toUpperCase(),
+          linkReference: link.reference_id,
+          rawPayload: transaction,
+        });
+        summary.updated.push({
+          linkId: link.id,
+          paymentId: outcome.paymentId,
+          newSale: outcome.newSale,
+          reviewRequired: outcome.reviewRequired,
+          attempt: index + 1,
+        });
+      }
+      continue;
+    }
+
     const st = statusResp.status;   // approved | declined | pending | abandoned | unknown
 
     if (st === 'approved' || (st === 'pending' && statusResp.transaction_id)) {

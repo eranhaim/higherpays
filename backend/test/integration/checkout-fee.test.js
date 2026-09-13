@@ -5,7 +5,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const request = require('supertest');
 const { app, pool } = require('../helpers/setup');
-const { createTenant, createAccount } = require('../helpers/tenant');
+const { createTenant, createAccount, getPlatformAdmin } = require('../helpers/tenant');
 const { buildPaidPayload, postWebhook, endpointFor, newTransId } = require('../helpers/webhook');
 
 test('the customer pays the price plus the checkout fee, and only the price is split', async () => {
@@ -68,4 +68,29 @@ test('a provider webhook reporting the content amount does not subtract the chec
     'SELECT gross, surcharge FROM transactions WHERE provider_transaction_id=$1', [transId])).rows[0];
   assert.equal(Number(tx.gross), 3);
   assert.equal(Number(tx.surcharge), 2);
+});
+
+test('additive checkout fees are rejected against the configured and actual link minimum', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const admin = await getPlatformAdmin(app);
+
+  await request(app).patch(`/workspaces/${t.workspaceId}/link-limits`).set(t.authHeaders)
+    .send({ minLinkAmount: 10, maxLinkAmount: null }).expect(200);
+  const invalid = await request(app).put(`/platform/workspaces/${t.workspaceId}/platform-fee`)
+    .set(admin.headers)
+    .send({ feeModel: 'flat', pspRatePct: 8, marginRatePct: 5, pspFixedFee: 0, checkoutFee: 10 })
+    .expect(400);
+  assert.match(invalid.body.message, /less than the minimum permitted link amount/);
+
+  await request(app).put(`/platform/workspaces/${t.workspaceId}/platform-fee`)
+    .set(admin.headers)
+    .send({ feeModel: 'flat', pspRatePct: 8, marginRatePct: 5, pspFixedFee: 0, checkoutFee: 5 })
+    .expect(201);
+  await request(app).patch(`/workspaces/${t.workspaceId}/link-limits`).set(t.authHeaders)
+    .send({ minLinkAmount: 4, maxLinkAmount: null }).expect(200);
+  const link = await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+    .send({ accountId: account.id, type: 'single_use', amount: 4, currency: 'EUR' })
+    .expect(400);
+  assert.match(link.body.message, /checkout fee must be less than the link amount/);
 });

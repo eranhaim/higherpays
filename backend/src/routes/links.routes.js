@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const { query, withTransaction } = require('../db');
-const { requirePermission } = require('../middleware');
+const { requirePermission, requireArchiveManager } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { badRequest } = require('../util/validate');
@@ -18,7 +18,13 @@ const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
 
 const MIN_FIXED_AMOUNT = 3;             // provider minimum: 3 USD/EUR
-const AGENT_RATE_WINDOW_SECONDS = 30;   // one link per agent per 30s
+
+function isValidMoneyAmount(value) {
+  return typeof value === 'number'
+    && Number.isFinite(value)
+    && value > 0
+    && Math.abs(value * 100 - Math.round(value * 100)) < 0.000001;
+}
 
 // A single-use link that went unpaid past its deadline reads as expired even
 // though the column still says active; the reconciler writes it later.
@@ -43,7 +49,7 @@ const LATEST_ATTEMPT = `
              t.raw_payload->>'reply_description'
            ) AS provider_reply_description
       FROM payments p
-      JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
+      JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment' AND p.archived_at IS NULL
      WHERE p.payment_link_id = pl.id
      ORDER BY t.occurred_at DESC, t.id DESC
      LIMIT 1
@@ -70,7 +76,7 @@ function numberFilter(value) {
   return value === undefined || value === '' || Number.isNaN(Number(value)) ? null : Number(value);
 }
 
-function linkFilterParams(req, scope) {
+function linkFilterParams(req, scope, includeArchived = null) {
   const q = typeof req.query.q === 'string' && req.query.q.trim()
     ? `%${req.query.q.trim().toLowerCase()}%`
     : null;
@@ -80,7 +86,7 @@ function linkFilterParams(req, scope) {
     numberFilter(req.query.min), numberFilter(req.query.max),
     req.query.from || null, req.query.to || null,
     req.query.accountId || null, q, req.query.providerStatus || null,
-    req.query.showArchived === 'true',
+    includeArchived === false ? false : req.query.showArchived === 'true',
   ];
 }
 
@@ -192,6 +198,7 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
            FROM payments p
            JOIN matching_links ml ON ml.id = p.payment_link_id
            JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment' AND t.status = 'approved'
+             AND p.archived_at IS NULL
            LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
           GROUP BY p.payment_link_id
        )
@@ -208,7 +215,7 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
               (SELECT currency FROM workspaces WHERE id = $1) AS currency
          FROM matching_links
          LEFT JOIN successful ON successful.payment_link_id = matching_links.id`,
-      linkFilterParams(req, scope))).rows[0];
+      linkFilterParams(req, scope, false))).rows[0];
   });
   res.json({
     totalLinks: row.total_links,
@@ -282,8 +289,10 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
   if (description != null && typeof description !== 'string') return badRequest(res, 'description must be text', ['description']);
   if (!vocab.LINK_TYPE.includes(type)) return badRequest(res, `type must be one of ${vocab.LINK_TYPE.join(', ')}`, ['type']);
   if (!/^[A-Za-z]{3}$/.test(currency || '')) return badRequest(res, 'currency must be a 3-letter code', ['currency']);
-  const amt = Number(amount);
-  if (!(amt > 0)) return badRequest(res, 'amount is required', ['amount']);
+  if (!isValidMoneyAmount(amount)) {
+    return badRequest(res, 'amount must be a finite positive number with at most 2 decimal places', ['amount']);
+  }
+  const amt = amount;
   if (amt < MIN_FIXED_AMOUNT) return badRequest(res, `minimum amount is ${MIN_FIXED_AMOUNT}`, ['amount']);
   const cur = currency.toUpperCase();
   if (!config.supportedCurrencies.includes(cur)) {
@@ -297,10 +306,13 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
     // This conflicts with the platform currency update's FOR UPDATE lock.
     // Currency and limits therefore come from the same state as the insert.
     const ws = (await c.query(
-      'SELECT currency, min_link_amount, max_link_amount, link_ttl_minutes FROM workspaces WHERE id=$1 FOR SHARE',
+      'SELECT currency, min_link_amount, max_link_amount, link_ttl_minutes, reusable_links_enabled FROM workspaces WHERE id=$1 FOR SHARE',
       [wid(req)])).rows[0];
     if (cur !== ws.currency) {
       return { validation: `currency must match the workspace currency (${ws.currency})`, fields: ['currency'] };
+    }
+    if (type === 'reusable' && !ws.reusable_links_enabled) {
+      return { validation: 'reusable links are disabled for this workspace', fields: ['type'] };
     }
     if (ws.min_link_amount != null && amt < Number(ws.min_link_amount)) {
       return { validation: `amount is below the workspace minimum of ${Number(ws.min_link_amount)}`, fields: ['amount'] };
@@ -310,17 +322,6 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
     }
 
     const scope = await resolveDataScope(c, req);
-
-    if (scope.kind === 'agent') {
-      const recent = (await c.query(
-        `SELECT created_at FROM payment_links
-          WHERE workspace_id = $1 AND created_by_agent_id = $2 AND created_at > now() - ($3 || ' seconds')::interval
-          ORDER BY created_at DESC LIMIT 1`, [wid(req), scope.agentId, AGENT_RATE_WINDOW_SECONDS])).rows[0];
-      if (recent) {
-        const elapsed = Math.floor((Date.now() - new Date(recent.created_at).getTime()) / 1000);
-        return { rateLimited: Math.max(1, AGENT_RATE_WINDOW_SECONDS - elapsed) };
-      }
-    }
 
     // The account must be active, in this workspace and, for an agent, one
     // they are assigned. An unassigned account reports the same not-found as a
@@ -337,6 +338,12 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
     // was charged, and never part of the amount the agency is credited.
     const card = (await c.query('SELECT checkout_fee FROM effective_platform_fee($1, now())', [wid(req)])).rows[0];
     const checkoutFee = Number(card?.checkout_fee || 0);
+    if (config.mantapayFeeMode === 'additive' && checkoutFee >= amt) {
+      return {
+        validation: `checkout fee must be less than the link amount in additive mode`,
+        fields: ['amount'],
+      };
+    }
 
     const checkoutUrl = generateProviderLink(referenceId);
     const ttlMinutes = ws.link_ttl_minutes == null ? config.linkTtlMinutes : Number(ws.link_ttl_minutes);
@@ -358,10 +365,6 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
   });
 
   if (result.validation) return badRequest(res, result.validation, result.fields);
-  if (result.rateLimited) {
-    res.setHeader('Retry-After', String(result.rateLimited));
-    return res.status(429).json({ error: 'rate_limited', scope: 'agent', retryAfterSeconds: result.rateLimited });
-  }
   if (result.err) return res.status(404).json({ error: result.err });
 
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'link.create', entityType: 'payment_link', entityId: result.link.id, metadata: { type, amount: amt, currency: cur } });
@@ -416,7 +419,7 @@ router.patch('/:id/note', requirePermission('links.create'), asyncHandler(async 
   res.json(publicLink(row));
 }));
 
-router.post('/:id/archive', requirePermission('links.create'), asyncHandler(async (req, res) => {
+router.post('/:id/archive', requirePermission('archive.manage'), requireArchiveManager, asyncHandler(async (req, res) => {
   const row = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
     return (await c.query(
@@ -435,7 +438,7 @@ router.post('/:id/archive', requirePermission('links.create'), asyncHandler(asyn
   res.json(publicLink(row));
 }));
 
-router.post('/:id/reactivate', requirePermission('links.create'), asyncHandler(async (req, res) => {
+router.post('/:id/reactivate', requirePermission('archive.manage'), requireArchiveManager, asyncHandler(async (req, res) => {
   const row = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
     return (await c.query(
@@ -464,7 +467,7 @@ router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(asyn
       FROM payments p
       LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
       LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
-     WHERE p.workspace_id = $1 AND p.payment_link_id = $2`, [wid(req), req.params.id])).rows[0];
+     WHERE p.workspace_id = $1 AND p.payment_link_id = $2 AND p.archived_at IS NULL`, [wid(req), req.params.id])).rows[0];
   res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount) });
 }));
 

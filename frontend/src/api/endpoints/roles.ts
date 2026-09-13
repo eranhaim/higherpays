@@ -60,7 +60,7 @@ export const ROLE_PERMISSION_GROUPS: Array<{
       { key: 'settings.view', label: 'View settings' },
       { key: 'settings.edit', label: 'Edit settings' },
       { key: 'fees.view', label: 'View fees' },
-      { key: 'roles.manage', label: 'Manage roles' },
+      { key: 'archive.manage', label: 'Manage archive' },
     ],
   },
   {

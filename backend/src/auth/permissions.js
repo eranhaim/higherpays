@@ -7,6 +7,7 @@ const { status } = require('../schema/entities');
 const PERMISSIONS = [
   'payments.view', 'payments.complete', 'payments.export',
   'links.view', 'links.create',
+  'archive.manage',
   'analytics.view',
   'accounts.view', 'accounts.manage',
   'agents.view', 'agents.manage',

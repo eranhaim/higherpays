@@ -7,6 +7,7 @@ export interface UsePlatformDataResult {
   requiresTwoFactor: boolean;
   overview: PlatformOverview | null;
   workspaces: PlatformWorkspace[];
+  supportedCurrencies: string[];
   isLoading: boolean;
   isError: boolean;
   onboardAgency: (input: OnboardAgencyInput) => Promise<{ workspaceId: string; webhookEndpointId: string }>;
@@ -52,6 +53,7 @@ export function usePlatformData(): UsePlatformDataResult {
     requiresTwoFactor,
     overview: overview.data ?? null,
     workspaces: workspaces.data ?? [],
+    supportedCurrencies: overview.data?.supportedCurrencies ?? ['EUR', 'USD', 'GBP'],
     isLoading: workspaces.isLoading,
     isError: workspaces.isError,
     onboardAgency: (input) => onboard.mutateAsync(input),

@@ -19,6 +19,7 @@ import TeamPage from './pages/Team';
 import AnalyticsPage from './pages/Analytics';
 import SettingsPage from './pages/Settings';
 import PlatformPage from './pages/Platform';
+import ArchivePage from './pages/Archive';
 
 /**
  * Where "/" and any unknown path land: the first page the caller can open.
@@ -55,6 +56,7 @@ export default function App() {
                 <Route path="/team" element={<TeamPage />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/archive" element={<ArchivePage />} />
               </Route>
               <Route path="*" element={<HomeRedirect />} />
             </Route>

@@ -31,12 +31,13 @@ export {
 } from './links';
 export {
   paymentsApi, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, getPaymentExportColumns,
-  PROVIDER_FEE_SOURCE_LABELS, isReversed,
+  PROVIDER_FEE_SOURCE_LABELS, isReversed, paymentStatusLabel,
   type Payment, type PaymentFlow, type PaymentFlowParty, type PaymentFlowRate, type PaymentsSummary, type PaymentStatus, type ListPaymentsQuery, type CompletePaymentInput, type ReversalResult,
   type ExportColumn, type ExportOptions, type PaymentSort,
 } from './payments';
 export { payoutsApi, type PayoutBreakdown, type RunPayoutInput, type PayoutRecord, type PayoutHistoryFilters } from './payouts';
 export { meApi, type Earnings } from './me';
+export { archiveApi, ARCHIVE_TABS, type ArchiveType, type ArchivedItem, type ArchivedItems } from './archive';
 export { feesApi, type FeesSummary } from './fees';
 export { analyticsApi, type AnalyticsReport, type AnalyticsQuery } from './analytics';
 export {

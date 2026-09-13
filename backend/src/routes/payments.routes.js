@@ -3,7 +3,7 @@
 // reconciler, completed by the agent (customer + category), reversed here.
 const express = require('express');
 const { query, withTransaction } = require('../db');
-const { requirePermission, requirePlatformAdmin } = require('../middleware');
+const { requirePermission, requireArchiveManager, requirePlatformAdmin } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { isStr, isOptStr, badRequest, toCSV } = require('../util/validate');
@@ -22,6 +22,7 @@ const SELECT = `
   SELECT p.*, a.name AS account, cu.name AS customer, cu.telegram_name AS customer_telegram,
          ca.name AS category, u.full_name AS agent, pl.reference_id AS link_reference, pl.type AS link_type,
          t.provider_transaction_id, t.fee AS provider_fee, t.surcharge,
+         t.status AS provider_status,
          (SELECT platform_fee FROM revenue_entries re WHERE re.transaction_id = t.id AND re.entry_type = 'sale') AS platform_fee
     FROM payments p
     JOIN accounts a ON a.id = p.account_id
@@ -30,7 +31,7 @@ const SELECT = `
     LEFT JOIN agents ag ON ag.id = p.agent_id
     LEFT JOIN users u ON u.id = ag.user_id
     LEFT JOIN payment_links pl ON pl.id = p.payment_link_id
-    LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'`;
+         LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'`;
 
 // Whether the platform fee is shown depends on who asks: an agent or an owner
 // sees the payment, not what the agency was charged for it.
@@ -46,6 +47,7 @@ function publicPayment(p, { seesFees }) {
     linkId: p.payment_link_id, linkReference: p.link_reference, linkType: p.link_type,
     reviewRequired: p.review_reason != null,
     reviewReason: p.review_reason,
+    archivedAt: p.archived_at,
     needsDetails: p.status === 'paid' && p.review_reason == null && p.category_id == null,
     ...(seesFees ? { platformFee: p.platform_fee == null ? null : Number(p.platform_fee) } : {}),
   };
@@ -91,7 +93,8 @@ const PAYMENT_FILTERS = `
        OR lower(a.name) LIKE $9::text
        OR lower(COALESCE(u.full_name, '')) LIKE $9::text
        OR lower(COALESCE(pl.reference_id, '')) LIKE $9::text)
-  AND (NOT $10::boolean OR (p.status = 'paid' AND p.review_reason IS NULL AND p.category_id IS NULL))`;
+  AND (NOT $10::boolean OR (p.status = 'paid' AND p.review_reason IS NULL AND p.category_id IS NULL))
+  AND p.archived_at IS NULL`;
 
 // The list and the export answer the same question with the same filters;
 // only the page size differs. `cursor` null and `limit` null mean "all".
@@ -130,8 +133,8 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
        )
        SELECT COALESCE(SUM(amount) FILTER (WHERE status = 'paid' AND review_reason IS NULL), 0) AS gross_content,
               COALESCE(SUM(COALESCE(platform_fee, 0)) FILTER (WHERE status = 'paid' AND review_reason IS NULL), 0) AS platform_fees,
-              COUNT(*) FILTER (WHERE status = 'paid')::int AS approved_payments,
-              COUNT(*) FILTER (WHERE status IN ('pending', 'paid', 'failed'))::int AS attempts,
+              COUNT(*) FILTER (WHERE provider_status = 'approved')::int AS approved_payments,
+              COUNT(*) FILTER (WHERE provider_status IN ('pending', 'approved', 'declined'))::int AS attempts,
               COUNT(*) FILTER (WHERE status = 'paid' AND review_reason IS NULL AND category_id IS NULL)::int AS details_needed,
               COUNT(*) FILTER (WHERE status = 'refunded')::int AS refunded_count,
               COALESCE(SUM(amount) FILTER (WHERE status = 'refunded'), 0) AS refunded_amount,
@@ -212,19 +215,82 @@ router.get('/export', requirePermission('payments.export'), asyncHandler(async (
   res.send('\ufeff' + csv);
 }));
 
-async function loadScoped(c, req, id) {
+async function loadScoped(c, req, id, { includeArchived = false } = {}) {
   const scope = await resolveDataScope(c, req);
   return (await c.query(
     `${SELECT} WHERE p.workspace_id = $1 AND p.id = $2
+        ${includeArchived ? '' : 'AND p.archived_at IS NULL'}
         AND ($3::uuid IS NULL OR p.agent_id = $3::uuid)
         AND ($4::uuid IS NULL OR p.account_id = $4::uuid)`, [wid(req), id, ...scopeParams(scope)])).rows[0];
 }
 
 // GET /:id
 router.get('/:id', requirePermission('payments.view'), asyncHandler(async (req, res) => {
-  const row = await withTransaction((c) => loadScoped(c, req, req.params.id));
+  const row = await withTransaction((c) => loadScoped(c, req, req.params.id, { includeArchived: true }));
   if (!row) return res.status(404).json({ error: 'not_found' });
   res.json(publicPayment(row, { seesFees: hasPermission(req.access, 'data.view_all') }));
+}));
+
+router.post('/:id/archive', requirePermission('archive.manage'), requireArchiveManager, asyncHandler(async (req, res) => {
+  const row = await withTransaction(async (c) => {
+    const archived = (await c.query(
+      `UPDATE payments SET archived_at = now()
+         WHERE workspace_id = $1 AND id = $2 AND archived_at IS NULL
+         RETURNING id, customer_id, archived_at`,
+      [wid(req), req.params.id])).rows[0];
+    if (archived?.customer_id) {
+      await c.query(
+        `UPDATE customers SET
+            total_spend = (SELECT COALESCE(SUM(amount), 0)
+                             FROM payments
+                            WHERE customer_id = $1 AND status = 'paid'
+                              AND review_reason IS NULL AND archived_at IS NULL),
+            last_purchase_at = (SELECT MAX(occurred_at)
+                                  FROM payments
+                                 WHERE customer_id = $1 AND status = 'paid'
+                                   AND archived_at IS NULL)
+          WHERE id = $1`,
+        [archived.customer_id]);
+    }
+    return archived;
+  });
+  if (!row) return res.status(404).json({ error: 'not_found_or_archived' });
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'payment.archive',
+    entityType: 'payment', entityId: row.id,
+  });
+  res.json({ id: row.id, archivedAt: row.archived_at });
+}));
+
+router.post('/:id/reactivate', requirePermission('archive.manage'), requireArchiveManager, asyncHandler(async (req, res) => {
+  const row = await withTransaction(async (c) => {
+    const restored = (await c.query(
+      `UPDATE payments SET archived_at = NULL
+         WHERE workspace_id = $1 AND id = $2 AND archived_at IS NOT NULL
+         RETURNING id, customer_id`,
+      [wid(req), req.params.id])).rows[0];
+    if (restored?.customer_id) {
+      await c.query(
+        `UPDATE customers SET
+            total_spend = (SELECT COALESCE(SUM(amount), 0)
+                             FROM payments
+                            WHERE customer_id = $1 AND status = 'paid'
+                              AND review_reason IS NULL AND archived_at IS NULL),
+            last_purchase_at = (SELECT MAX(occurred_at)
+                                  FROM payments
+                                 WHERE customer_id = $1 AND status = 'paid'
+                                   AND archived_at IS NULL)
+          WHERE id = $1`,
+        [restored.customer_id]);
+    }
+    return restored;
+  });
+  if (!row) return res.status(404).json({ error: 'not_found_or_active' });
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'payment.reactivate',
+    entityType: 'payment', entityId: row.id,
+  });
+  res.json({ id: row.id, restored: true });
 }));
 
 // GET /:id/flow — the immutable sale waterfall for HigherPays operators.
@@ -321,13 +387,17 @@ router.get('/:id/flow', requirePermission('payments.view'), requirePlatformAdmin
   });
 }));
 
-// PATCH /:id/details  { categoryId, customerId? | customer?: { name, telegramName? } }
+// PATCH /:id/details  { categoryId, customerId? | customer?: { name, telegramName?, email? } }
 // The agent completes a paid payment: who paid, and what for. A new customer
 // is created inline so the name is typed once and reused on later payments.
 router.patch('/:id/details', requirePermission('payments.complete'), asyncHandler(async (req, res) => {
   const { categoryId, customerId, customer } = req.body || {};
   if (!isStr(categoryId)) return badRequest(res, 'categoryId is required', ['categoryId']);
-  if (customer != null && (!isStr(customer.name, 200) || !isOptStr(customer.telegramName, 100))) {
+  if (customer != null && (
+    !isStr(customer.name, 200)
+    || !isOptStr(customer.telegramName, 100)
+    || !isOptStr(customer.email, 200)
+  )) {
     return badRequest(res, 'customer.name is required', ['customer']);
   }
 
@@ -346,12 +416,13 @@ router.patch('/:id/details', requirePermission('payments.complete'), asyncHandle
       const scope = await resolveDataScope(c, req);
       const found = (await c.query(
         `SELECT id FROM customers c
-          WHERE c.id=$1 AND c.workspace_id=$2 AND c.deleted_at IS NULL
+          WHERE c.id=$1 AND c.workspace_id=$2 AND c.deleted_at IS NULL AND c.archived_at IS NULL
             AND (
               $3::text='workspace'
               OR ($3::text='agent' AND EXISTS (
                 SELECT 1 FROM payments scoped
                  WHERE scoped.customer_id=c.id AND scoped.workspace_id=c.workspace_id
+                   AND scoped.archived_at IS NULL
                    AND (scoped.agent_id=$4::uuid OR scoped.account_id IN (
                      SELECT account_id FROM account_agents WHERE agent_id=$4::uuid
                    ))
@@ -359,6 +430,7 @@ router.patch('/:id/details', requirePermission('payments.complete'), asyncHandle
               OR ($3::text='account' AND EXISTS (
                 SELECT 1 FROM payments scoped
                  WHERE scoped.customer_id=c.id AND scoped.workspace_id=c.workspace_id
+                   AND scoped.archived_at IS NULL
                    AND scoped.account_id=$5::uuid
               ))
             )`,
@@ -366,8 +438,8 @@ router.patch('/:id/details', requirePermission('payments.complete'), asyncHandle
       if (!found) return { err: 'customer_not_found', code: 404 };
     } else if (customer) {
       resolvedCustomerId = (await c.query(
-        'INSERT INTO customers (workspace_id, name, telegram_name) VALUES ($1,$2,$3) RETURNING id',
-        [wid(req), customer.name.trim(), customer.telegramName || null])).rows[0].id;
+        'INSERT INTO customers (workspace_id, name, telegram_name, email) VALUES ($1,$2,$3,$4) RETURNING id',
+        [wid(req), customer.name.trim(), customer.telegramName || null, customer.email || null])).rows[0].id;
     } else {
       resolvedCustomerId = payment.customer_id;
     }
@@ -376,7 +448,7 @@ router.patch('/:id/details', requirePermission('payments.complete'), asyncHandle
       'UPDATE payments SET category_id = $2, customer_id = $3 WHERE id = $1', [payment.id, category.id, resolvedCustomerId]);
     if (resolvedCustomerId) {
       await c.query(
-        `UPDATE customers SET total_spend = (SELECT COALESCE(SUM(amount),0) FROM payments WHERE customer_id = $1 AND status = 'paid' AND review_reason IS NULL),
+        `UPDATE customers SET total_spend = (SELECT COALESCE(SUM(amount),0) FROM payments WHERE customer_id = $1 AND status = 'paid' AND review_reason IS NULL AND archived_at IS NULL),
                               last_purchase_at = GREATEST(coalesce(last_purchase_at, $2), $2)
           WHERE id = $1`, [resolvedCustomerId, payment.occurred_at]);
     }
@@ -412,7 +484,7 @@ router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(asyn
       FROM payments p
       LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
       LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
-     WHERE p.workspace_id = $1 AND p.id = $2`, [wid(req), req.params.id])).rows[0];
+     WHERE p.workspace_id = $1 AND p.id = $2 AND p.archived_at IS NULL`, [wid(req), req.params.id])).rows[0];
   res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount) });
 }));
 
@@ -428,7 +500,7 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
 
   const out = await withTransaction(async (c) => {
     const payment = (await c.query(
-      'SELECT * FROM payments WHERE workspace_id = $1 AND id = $2', [wid(req), req.params.id])).rows[0];
+      'SELECT * FROM payments WHERE workspace_id = $1 AND id = $2 AND archived_at IS NULL', [wid(req), req.params.id])).rows[0];
     if (!payment) return { notFound: true };
     if (payment.review_reason) return { err: 'payment_requires_review', fields: [] };
     // A reversed sale cannot be moved: only its sale entry would be re-posted,

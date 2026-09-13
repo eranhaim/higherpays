@@ -18,7 +18,7 @@ router.get('/:reference', asyncHandler(async (req, res) => {
             w.merchant_id, w.provider_config_ref, w.webhook_endpoint_id
        FROM payment_links pl
        JOIN workspaces w ON w.id = pl.workspace_id
-      WHERE pl.reference_id = $1 AND w.status = 'active'`,
+      WHERE pl.reference_id = $1 AND pl.archived_at IS NULL AND w.status = 'active'`,
     [req.params.reference])).rows[0];
     if (!found) return null;
     await recordLinkEvent(c, {

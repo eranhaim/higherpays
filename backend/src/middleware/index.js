@@ -105,6 +105,32 @@ const requirePermission = (permission) => (req, _res, next) => {
   next();
 };
 
+const requireRoleManager = asyncHandler(async (req, _res, next) => {
+  if (!req.access) throw new HttpError(500, 'workspace_context_missing');
+  if (req.access.role === 'workspace_owner') {
+    req.canGrantAllRolePermissions = true;
+    return next();
+  }
+
+  const userIds = [req.user.id, req.user.actorId].filter(Boolean);
+  const row = (await query(
+    'SELECT 1 FROM users WHERE id = ANY($1::uuid[]) AND is_platform_admin',
+    [userIds])).rows[0];
+  if (!row) throw new ForbiddenError('role_manager_required');
+  req.canGrantAllRolePermissions = true;
+  next();
+});
+
+const requireArchiveManager = asyncHandler(async (req, _res, next) => {
+  if (!req.access) throw new HttpError(500, 'workspace_context_missing');
+  if (req.access.role === 'workspace_owner') return next();
+  if (req.user.actorId) throw new ForbiddenError('impersonation_archive_forbidden');
+  const row = (await query(
+    'SELECT is_platform_admin FROM users WHERE id = $1', [req.user.id])).rows[0];
+  if (!row?.is_platform_admin) throw new ForbiddenError('archive_manager_required');
+  next();
+});
+
 // 4) requirePlatformAdmin — HigherPays operator gate, above any single workspace.
 const requirePlatformAdmin = asyncHandler(async (req, _res, next) => {
   if (req.user.actorId) throw new ForbiddenError('impersonation_platform_forbidden');
@@ -144,4 +170,7 @@ function errorHandler(err, req, res, next) {
     : { error: code, message: err.message });
 }
 
-module.exports = { requireAuth, requireWorkspace, requirePermission, requirePlatformAdmin, errorHandler };
+module.exports = {
+  requireAuth, requireWorkspace, requirePermission, requireRoleManager, requireArchiveManager,
+  requirePlatformAdmin, errorHandler,
+};

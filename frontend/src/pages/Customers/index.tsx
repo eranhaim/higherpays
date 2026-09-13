@@ -11,7 +11,7 @@ import {
 } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import {
-  CUSTOMER_SEGMENTS, CUSTOMER_SEGMENT_LABELS, PAYMENT_STATUS_LABELS,
+  CUSTOMER_SEGMENTS, CUSTOMER_SEGMENT_LABELS, paymentStatusLabel,
   type Customer, type CustomerSegment, type CustomerSort, type CreateCustomerInput, type UpdateCustomerInput,
 } from '../../api/endpoints';
 import { useCustomersData, useCustomerDetail } from './useCustomersData';
@@ -203,7 +203,7 @@ export default function CustomersPage() {
                         <td>{p.account}</td>
                         <td>{p.agent ?? '—'}</td>
                         <td><Money amount={p.amount} currency={p.currency} direction={p.status === 'paid' ? 'in' : undefined} /></td>
-                        <td><Pill tone={p.status === 'paid' ? 'ok' : 'no'}>{PAYMENT_STATUS_LABELS[p.status]}</Pill></td>
+                        <td><Pill tone={p.needsDetails ? 'warn' : p.status === 'paid' ? 'ok' : 'no'}>{paymentStatusLabel(p)}</Pill></td>
                       </tr>
                     ))}
                   </tbody>

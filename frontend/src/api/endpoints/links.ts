@@ -14,7 +14,7 @@ export const LINK_TYPE_LABELS: Record<LinkType, string> = {
 };
 
 /**
- *   active     payable
+ *   active     waiting for payment
  *   pending    paid, waiting for the agent to complete the payment details
  *   done       paid and completed
  *   expired    a single-use link went unpaid past its deadline
@@ -25,9 +25,9 @@ export type LinkStatus = 'active' | 'pending' | 'done' | 'expired' | 'cancelled'
 export const LINK_STATUSES: LinkStatus[] = ['active', 'pending', 'done', 'expired', 'cancelled', 'refunded'];
 
 export const LINK_STATUS_LABELS: Record<LinkStatus, string> = {
-  active: 'Active',
-  pending: 'Paid — details needed',
-  done: 'Done',
+  active: 'Waiting for payment',
+  pending: 'Waiting to fill details',
+  done: 'Completed',
   expired: 'Expired',
   cancelled: 'Cancelled',
   refunded: 'Refunded',

@@ -11,6 +11,7 @@ const completedCustomer: Customer = {
   segment: 'regular',
   totalSpend: 75,
   lastPurchaseAt: '2026-09-09T10:00:00.000Z',
+  archivedAt: null,
   createdAt: '2026-09-01T10:00:00.000Z',
 };
 

@@ -17,7 +17,7 @@ import {
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import {
   LINK_TYPES, LINK_TYPE_LABELS, LINK_STATUSES, LINK_STATUS_LABELS,
-  PROVIDER_ATTEMPT_STATUSES, PROVIDER_ATTEMPT_STATUS_LABELS, isShareable,
+  PROVIDER_ATTEMPT_STATUS_LABELS, isShareable,
   type PaymentLink, type LinkEventType, type LinkStatus, type LinkType, type LinkSort, type ProviderAttemptStatus,
 } from '../../api/endpoints';
 import { useLinkDetail, useLinksData } from './useLinksData';
@@ -58,6 +58,7 @@ export default function LinksPage() {
   const { labels } = useCurrentSession();
   const { rateCard } = useRateCard();
   const canCreate = can('links.create');
+  const canArchive = can('archive.manage');
   const canComplete = can('payments.complete');
   const canReassign = can('revenue.manage');
   const [params] = useSearchParams();
@@ -86,11 +87,10 @@ export default function LinksPage() {
     to: filters.to || undefined,
     q: search.trim() || undefined,
     accountId: filters.accountId || undefined,
-    providerStatus: filters.providerStatus || undefined,
     showArchived: filters.showArchived || undefined,
     sort: sort.key as LinkSort,
     dir: sort.dir,
-  }), [filters.status, filters.type, min, max, filters.from, filters.to, filters.accountId, filters.providerStatus, filters.showArchived, search, sort]);
+  }), [filters.status, filters.type, min, max, filters.from, filters.to, filters.accountId, filters.showArchived, search, sort]);
 
   const {
     links, summary, accounts, linkLimits, isLoading, isError, isSummaryLoading, isSummaryError, hasMore, isLoadingMore, loadMore,
@@ -225,20 +225,6 @@ export default function LinksPage() {
       key: 'status', header: 'Status', sortKey: 'status',
       render: (l) => <Pill tone={STATUS_TONE[l.status]}>{LINK_STATUS_LABELS[l.status]}</Pill>,
     },
-    {
-      key: 'provider', header: 'Provider attempt',
-      render: (l) => l.latestProviderAttempt ? (
-        <div>
-          <Pill tone={PROVIDER_STATUS_TONE[l.latestProviderAttempt.status]}>
-            {PROVIDER_ATTEMPT_STATUS_LABELS[l.latestProviderAttempt.status]}
-          </Pill>
-          <div className="sub">
-            {[l.latestProviderAttempt.replyCode, l.latestProviderAttempt.replyDescription].filter(Boolean).join(' · ') || 'No reply details'}
-            {' · '}<DateCell ts={l.latestProviderAttempt.occurredAt} />
-          </div>
-        </div>
-      ) : '—',
-    },
     { key: 'created', header: 'Created', sortKey: 'created', render: (l) => <DateCell ts={l.createdAt} /> },
   ];
 
@@ -253,7 +239,7 @@ export default function LinksPage() {
           {isShareable(l.status) && l.checkoutUrl && <CopyButton value={l.checkoutUrl} label="Copy" small />}
           {isShareable(l.status) && canCreate && <button className="btn ghost small" onClick={() => setCancelling(l)}>Cancel</button>}
           {l.status === 'pending' && canComplete && (
-            <Link className="btn ghost small" to={`/payments?needs_details=1&q=${encodeURIComponent(l.referenceId)}`}>Complete</Link>
+            <Link className="btn ghost small" to={`/payments?needs_details=1&q=${encodeURIComponent(l.referenceId)}`}>Fill details</Link>
           )}
         </div>
       ),
@@ -307,11 +293,6 @@ export default function LinksPage() {
         <Select label="Status" hideLabel value={filters.status} onChange={(v) => setFilters((f) => ({ ...f, status: v as LinksFilters['status'] }))}>
           <option value="">All statuses</option>
           {LINK_STATUSES.map((status) => <option key={status} value={status}>{LINK_STATUS_LABELS[status]}</option>)}
-        </Select>
-        <Select label="Provider attempt" hideLabel value={filters.providerStatus}
-          onChange={(v) => setFilters((f) => ({ ...f, providerStatus: v as LinksFilters['providerStatus'] }))}>
-          <option value="">All provider attempts</option>
-          {PROVIDER_ATTEMPT_STATUSES.map((status) => <option key={status} value={status}>{PROVIDER_ATTEMPT_STATUS_LABELS[status]}</option>)}
         </Select>
         <Select label={labels.account} hideLabel value={filters.accountId} onChange={(v) => setFilters((f) => ({ ...f, accountId: v }))}>
           <option value="">All {labels.accounts.toLowerCase()}</option>
@@ -397,7 +378,7 @@ export default function LinksPage() {
             )}
             {detailData.latestProviderAttempt && (
               <>
-                <DetailRow label="Provider attempt">
+                <DetailRow label="MantaPay attempt (internal)">
                   <Pill tone={PROVIDER_STATUS_TONE[detailData.latestProviderAttempt.status]}>
                     {PROVIDER_ATTEMPT_STATUS_LABELS[detailData.latestProviderAttempt.status]}
                   </Pill>
@@ -444,12 +425,12 @@ export default function LinksPage() {
             )}
             <div className="modal-actions">
               {detailData.status === 'pending' && canComplete && (
-                <Link className="btn" to={`/payments?needs_details=1&q=${encodeURIComponent(detailData.referenceId)}`}>Complete on Payments</Link>
+                <Link className="btn" to={`/payments?needs_details=1&q=${encodeURIComponent(detailData.referenceId)}`}>Fill details</Link>
               )}
               {isShareable(detailData.status) && canCreate && (
                 <button className="btn danger" onClick={() => setCancelling(detailData)}>Cancel link</button>
               )}
-              {canCreate && (detailData.archivedAt
+              {canArchive && (detailData.archivedAt
                 ? <button className="btn ghost" onClick={() => changeArchived(detailData, false)}>Restore link</button>
                 : <button className="btn ghost" onClick={() => changeArchived(detailData, true)}>Archive link</button>)}
               <span className="spacer" />
@@ -468,7 +449,9 @@ export default function LinksPage() {
           hint={type === 'single_use'
             ? `Closes on the first payment, or after ${expiryHours} ${expiryHours === 1 ? 'hour' : 'hours'} if nobody pays.`
             : 'Stays open through any number of payments until you cancel it.'}>
-          {LINK_TYPES.map((t) => <option key={t} value={t}>{LINK_TYPE_LABELS[t]}</option>)}
+          {LINK_TYPES
+            .filter((t) => t !== 'reusable' || linkLimits?.reusableLinksEnabled !== false)
+            .map((t) => <option key={t} value={t}>{LINK_TYPE_LABELS[t]}</option>)}
         </Select>
         <div className="field">
           <label htmlFor="link-amount">Amount</label>

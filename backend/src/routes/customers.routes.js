@@ -3,7 +3,7 @@
 // assigned creator, agent, or account owner.
 const express = require('express');
 const { query, withTransaction } = require('../db');
-const { requirePermission } = require('../middleware');
+const { requirePermission, requireArchiveManager } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { isStr, isOptStr, badRequest, toCSV } = require('../util/validate');
@@ -16,7 +16,8 @@ const SEGMENTS = status.CUSTOMER_SEGMENT;
 
 const publicCustomer = (r) => ({
   id: r.id, name: r.name, telegramName: r.telegram_name, email: r.email, phone: r.phone, country: r.country,
-  segment: r.segment, totalSpend: Number(r.total_spend), lastPurchaseAt: r.last_purchase_at, createdAt: r.created_at,
+  segment: r.segment, totalSpend: Number(r.total_spend), lastPurchaseAt: r.last_purchase_at,
+  archivedAt: r.archived_at, createdAt: r.created_at,
 });
 
 // What a caller may sort by. Not free text: the key picks the column.
@@ -31,6 +32,7 @@ function customerScopePredicate(customerAlias, paymentAlias, positions) {
       SELECT 1 FROM payments ${paymentAlias}
        WHERE ${paymentAlias}.customer_id = ${customerAlias}.id
          AND ${paymentAlias}.workspace_id = ${customerAlias}.workspace_id
+         AND ${paymentAlias}.archived_at IS NULL
          AND (${paymentAlias}.agent_id = $${agent}::uuid
            OR ${paymentAlias}.account_id IN (
              SELECT account_id FROM account_agents WHERE agent_id = $${agent}::uuid
@@ -59,6 +61,7 @@ router.get('/', requirePermission('customers.view'), asyncHandler(async (req, re
     const where = [
       'c.workspace_id = $1',
       'c.deleted_at IS NULL',
+      'c.archived_at IS NULL',
       customerScopePredicate('c', 'scope_payment', { kind: 2, agent: 3, account: 4 }),
     ];
     const vals = [wid(req), ...scopeValues(scope)];
@@ -85,7 +88,7 @@ router.get('/export', requirePermission('customers.export'), asyncHandler(async 
     return (await c.query(
       `SELECT c.name, c.telegram_name, c.email, c.phone, c.segment, c.total_spend, c.last_purchase_at
          FROM customers c
-        WHERE c.workspace_id = $1 AND c.deleted_at IS NULL
+        WHERE c.workspace_id = $1 AND c.deleted_at IS NULL AND c.archived_at IS NULL
           AND ${customerScopePredicate('c', 'scope_payment', { kind: 2, agent: 3, account: 4 })}
         ORDER BY c.total_spend DESC`,
       [wid(req), ...scopeValues(scope)])).rows;
@@ -107,18 +110,20 @@ router.get('/:id', requirePermission('customers.view'), asyncHandler(async (req,
     const params = [wid(req), req.params.id, ...scopeValues(scope)];
     const row = (await c.query(
       `SELECT c.* FROM customers c
-        WHERE c.workspace_id = $1 AND c.id = $2 AND c.deleted_at IS NULL
+        WHERE c.workspace_id = $1 AND c.id = $2 AND c.deleted_at IS NULL AND c.archived_at IS NULL
           AND ${customerScopePredicate('c', 'scope_payment', { kind: 3, agent: 4, account: 5 })}`,
       params)).rows[0];
     if (!row) return null;
     const payments = (await c.query(
-      `SELECT p.id, p.amount, p.currency, p.status, p.occurred_at, a.name AS account, u.full_name AS agent,
+      `SELECT p.id, p.amount, p.currency, p.status,
+              (p.status = 'paid' AND p.review_reason IS NULL AND p.category_id IS NULL) AS needs_details,
+              p.occurred_at, a.name AS account, u.full_name AS agent,
               p.payment_link_id AS link_id, pl.reference_id AS link_reference
          FROM payments p
          JOIN accounts a ON a.id = p.account_id
          LEFT JOIN agents ag ON ag.id = p.agent_id LEFT JOIN users u ON u.id = ag.user_id
          LEFT JOIN payment_links pl ON pl.id = p.payment_link_id
-        WHERE p.workspace_id = $1 AND p.customer_id = $2
+        WHERE p.workspace_id = $1 AND p.customer_id = $2 AND p.archived_at IS NULL
           AND ($3::text = 'workspace'
             OR ($3::text = 'agent' AND (p.agent_id = $4::uuid OR p.account_id IN (
               SELECT account_id FROM account_agents WHERE agent_id = $4::uuid
@@ -132,7 +137,8 @@ router.get('/:id', requirePermission('customers.view'), asyncHandler(async (req,
   res.json({
     ...publicCustomer(row),
     payments: payments.map((p) => ({
-      id: p.id, amount: Number(p.amount), currency: p.currency, status: p.status, occurredAt: p.occurred_at,
+      id: p.id, amount: Number(p.amount), currency: p.currency, status: p.status, needsDetails: p.needs_details,
+      occurredAt: p.occurred_at,
       account: p.account, agent: p.agent, linkId: p.link_id, linkReference: p.link_reference,
     })),
   });
@@ -187,6 +193,34 @@ router.patch('/:id', requirePermission('customers.manage'), asyncHandler(async (
   if (!row) return res.status(404).json({ error: 'not_found' });
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'customer.update', entityType: 'customer', entityId: row.id });
   res.json(publicCustomer(row));
+}));
+
+router.post('/:id/archive', requirePermission('archive.manage'), requireArchiveManager, asyncHandler(async (req, res) => {
+  const row = (await query(
+    `UPDATE customers SET archived_at = now()
+       WHERE workspace_id = $1 AND id = $2 AND archived_at IS NULL AND deleted_at IS NULL
+       RETURNING id, archived_at`,
+    [wid(req), req.params.id])).rows[0];
+  if (!row) return res.status(404).json({ error: 'not_found_or_archived' });
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'customer.archive',
+    entityType: 'customer', entityId: row.id,
+  });
+  res.json({ id: row.id, archivedAt: row.archived_at });
+}));
+
+router.post('/:id/reactivate', requirePermission('archive.manage'), requireArchiveManager, asyncHandler(async (req, res) => {
+  const row = (await query(
+    `UPDATE customers SET archived_at = NULL
+       WHERE workspace_id = $1 AND id = $2 AND archived_at IS NOT NULL AND deleted_at IS NULL
+       RETURNING id`,
+    [wid(req), req.params.id])).rows[0];
+  if (!row) return res.status(404).json({ error: 'not_found_or_active' });
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'customer.reactivate',
+    entityType: 'customer', entityId: row.id,
+  });
+  res.json({ id: row.id, restored: true });
 }));
 
 // DELETE /:id — soft delete + anonymise (erasure request)

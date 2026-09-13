@@ -107,3 +107,37 @@ test('refresh rotation preserves the absolute limit and enforces inactivity expi
     .send({ refreshToken: rotated.refreshToken }).expect(401);
   assert.equal(expired.body.error, 'session_expired');
 });
+
+test('concurrent refresh rotation issues one successor and revokes the reused family', async () => {
+  const t = await createTenant(app);
+  const rotate = () => request(app).post('/auth/refresh').send({ refreshToken: t.refreshToken });
+  const responses = await Promise.all([rotate(), rotate()]);
+  assert.deepEqual(responses.map((response) => response.status).sort(), [200, 401]);
+  const success = responses.find((response) => response.status === 200);
+  const reused = responses.find((response) => response.status === 401);
+  assert.equal(reused.body.error, 'refresh_token_reused');
+
+  const revokedSuccessor = await request(app).post('/auth/refresh')
+    .send({ refreshToken: success.body.refreshToken }).expect(401);
+  assert.equal(revokedSuccessor.body.error, 'refresh_token_reused');
+  const active = (await pool.query(
+    `SELECT count(*)::int AS count
+       FROM refresh_tokens
+      WHERE family_id = (
+        SELECT family_id FROM refresh_tokens WHERE token_hash=$1
+      ) AND revoked_at IS NULL`,
+    [hashRefreshToken(t.refreshToken)])).rows[0].count;
+  assert.equal(active, 0);
+});
+
+test('a suspended user cannot refresh and their token family is revoked', async () => {
+  const t = await createTenant(app);
+  await pool.query("UPDATE users SET status='suspended' WHERE id=$1", [t.userId]);
+  const blocked = await request(app).post('/auth/refresh')
+    .send({ refreshToken: t.refreshToken }).expect(401);
+  assert.equal(blocked.body.error, 'user_not_active');
+  const token = (await pool.query(
+    'SELECT revoked_at FROM refresh_tokens WHERE token_hash=$1',
+    [hashRefreshToken(t.refreshToken)])).rows[0];
+  assert.ok(token.revoked_at);
+});

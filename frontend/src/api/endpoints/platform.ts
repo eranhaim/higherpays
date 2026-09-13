@@ -31,6 +31,7 @@ export interface PlatformWorkspace {
 export interface PlatformOverview {
   counts: { workspaces: number; workspaces_active: number; accounts: number; agents: number; users: number };
   money: { gross: number; psp_fees: number; platform_fees: number; higherpays_margin: number; sales: number };
+  supportedCurrencies: string[];
 }
 
 /** The whole onboarding of an agency in one request. */
@@ -104,9 +105,17 @@ export const platformApi = {
 
   // Postgres aggregates arrive as strings; the page does arithmetic on them.
   async overview(): Promise<PlatformOverview> {
-    const raw = await api.get<{ counts: Record<string, string | number>; money: Record<string, string | number> }>('/platform/overview', opts);
+    const raw = await api.get<{
+      counts: Record<string, string | number>;
+      money: Record<string, string | number>;
+      supportedCurrencies?: string[];
+    }>('/platform/overview', opts);
     const num = (o: Record<string, string | number>) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Number(v)]));
-    return { counts: num(raw.counts) as PlatformOverview['counts'], money: num(raw.money) as PlatformOverview['money'] };
+    return {
+      counts: num(raw.counts) as PlatformOverview['counts'],
+      money: num(raw.money) as PlatformOverview['money'],
+      supportedCurrencies: raw.supportedCurrencies ?? ['EUR', 'USD', 'GBP'],
+    };
   },
 
   async listWorkspaces(): Promise<PlatformWorkspace[]> {

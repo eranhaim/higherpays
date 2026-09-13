@@ -128,6 +128,7 @@ const Workspace = entity('workspaces', {
     minLinkAmount:     money(),
     maxLinkAmount:     money(),
     linkTtlMinutes:    int(),   // how long a single-use link lives; null = platform default
+    reusableLinksEnabled: bool().notNull().default('true'),
 
     // What this agency calls a creator and an agent. Both forms are stored
     // because pluralising in code breaks on words like "staff" or "talent".
@@ -195,6 +196,7 @@ const WorkspaceUser = entity('workspace_users', {
     userId:      uuid().references('users').notNull(),
     role:        text().notNull(),
     status:      enumOf(ACCESS_STATUS).notNull().default("'active'"),
+    platformGranted: bool().notNull().default('false'),
   },
   primaryKey: ['workspaceId', 'userId'],
   foreignKeys: [
@@ -332,9 +334,10 @@ const Customer = entity('customers', {
     segment:        enumOf(CUSTOMER_SEGMENT).notNull().default("'new'"),
     totalSpend:     money().notNull().default('0'),   // cached, recomputed on payment
     lastPurchaseAt: timestamp(),
+    archivedAt:     timestamp(),   // reversible operational archive
     deletedAt:      timestamp(),
   },
-  indexes: ['workspaceId', { columns: ['workspaceId', 'segment'] }],
+  indexes: ['workspaceId', { columns: ['workspaceId', 'segment'] }, { columns: ['workspaceId', 'archivedAt'] }],
   timestamps: 'both',
 });
 
@@ -414,12 +417,14 @@ const Payment = entity('payments', {
     paymentMethod:     text(),                  // when the provider reports it
     providerPaymentId: text(),
     reviewReason:      enumOf(['duplicate_single_use_charge']),
+    archivedAt:        timestamp(),   // hidden from default operations and metrics
     occurredAt:        timestamp().notNull().default('now()'),
   },
   unique: [['workspaceId', 'providerPaymentId']],
   indexes: [
     'workspaceId', 'accountId', 'paymentLinkId',
     { columns: ['workspaceId', 'occurredAt'] },
+    { columns: ['workspaceId', 'archivedAt'] },
   ],
   timestamps: 'both',
 });
