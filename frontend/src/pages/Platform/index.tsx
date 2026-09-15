@@ -245,7 +245,7 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
           {pctField('agency-psp', 'MDR rate', pspRate, setPspRate)}
           {pctField('agency-settlement', 'Settlement fee', settlementPct, setSettlementPct)}
           {pctField('agency-margin', 'HigherPays margin', margin, setMargin)}
-          {amountField('agency-fixed', 'Fixed fee per transaction', fixedFee, setFixedFee)}
+          {amountField('agency-fixed', 'Transaction fee', fixedFee, setFixedFee)}
           {amountField('agency-checkout', 'Checkout fee (paid by the customer)', checkoutFee, setCheckoutFee)}
         </div>
         <p className="sub">Blended rate the agency sees: {blended === null ? '—' : `${blended}%`}.</p>
@@ -374,7 +374,7 @@ function RatesForm({ workspace, currencies, currencyChangeAllowed, onClose, onSu
         </div>
         <div className="form-row">
           <div className="field">
-            <label htmlFor="rates-fixed">Fixed fee per transaction</label>
+            <label htmlFor="rates-fixed">Transaction fee</label>
             <input id="rates-fixed" type="number" min={0} step={0.01} value={fixedFee} onChange={(e) => setFixedFee(e.target.value)} />
           </div>
           <div className="field">
