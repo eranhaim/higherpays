@@ -59,7 +59,7 @@ if [ -n "$BUCKET" ]; then
   if [ -n "$ENDPOINT" ]; then
     docker run --rm \
       -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION \
-      -v "$BACKUP_DIR:/backup:ro" amazon/aws-cli:2 \
+      -v "$BACKUP_DIR:/backup:ro" amazon/aws-cli:latest \
       s3 --endpoint-url "$ENDPOINT" cp "/backup/$(basename "$FILE")" \
       "s3://$BUCKET/postgres/$(basename "$FILE")" --only-show-errors
   else
