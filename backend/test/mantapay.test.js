@@ -17,6 +17,7 @@ const sig = require('../src/providers/mantapay-signature');
 const checkout = require('../src/providers/mantapay-checkout');
 const status = require('../src/providers/mantapay-status');
 const search = require('../src/providers/mantapay-search');
+const auth = require('../src/providers/mantapay-auth');
 const apm = require('../src/providers/mantapay-apm');
 const provider = require('../src/providers/mantapay');
 
@@ -309,6 +310,37 @@ test('by-order signature follows CompanyNum + Order + key', () => {
 });
 
 // ── Search API ───────────────────────────────────────────────────────────────
+
+test('API-user login sends the supplied username', async () => {
+  const originalFetch = global.fetch;
+  let requestBody;
+  global.fetch = async (_url, options) => {
+    requestBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        d: {
+          IsSuccess: true,
+          CredentialsHeaderName: 'X-Credentials',
+          CredentialsToken: 'token',
+        },
+      }),
+    };
+  };
+  try {
+    await auth.login({
+      applicationToken: 'app-token',
+      email: 'api@example.com',
+      userName: 'api-user',
+      password: 'secret',
+    });
+  } finally {
+    global.fetch = originalFetch;
+  }
+  assert.equal(requestBody.userName, 'api-user');
+  assert.equal(requestBody.options.userRole, '50');
+});
 
 test('.NET dates parse in both seconds and milliseconds', () => {
   assert.equal(search.parseDotNetDate('/Date(1702554387000+0000)/'), '2023-12-14T11:46:27.000Z');

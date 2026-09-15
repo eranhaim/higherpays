@@ -32,16 +32,22 @@ const SESSION_TTL_MS = 20 * 60 * 1000;
 async function login(o = {}) {
   const appToken = o.applicationToken || config.mantapayAppToken;
   const email = o.email || config.mantapayApiEmail;
+  const userName = o.userName || config.mantapayApiUsername;
   const password = o.password || config.mantapayApiPassword;
   const userRole = o.userRole || USER_ROLE.apiUser;
 
   if (!appToken) throw Object.assign(new Error('mantapay_app_token_missing'), { status: 500, detail: 'Set MANTAPAY_APP_TOKEN (issued by support).' });
-  if (!email || !password) throw Object.assign(new Error('mantapay_api_credentials_missing'), { status: 500, detail: 'Set MANTAPAY_API_EMAIL and MANTAPAY_API_PASSWORD (API user role 50).' });
+  if (!email || !userName || !password) {
+    throw Object.assign(new Error('mantapay_api_credentials_missing'), {
+      status: 500,
+      detail: 'Set MANTAPAY_API_EMAIL, MANTAPAY_API_USERNAME and MANTAPAY_API_PASSWORD (API user role 50).',
+    });
+  }
 
   const body = JSON.stringify({
     email,
     // For the API-user role these carry the PublicKey / SecretKey instead.
-    userName: o.userName || undefined,
+    userName,
     password,
     options: {
       appName: o.appName || 'HigherPays',
@@ -81,7 +87,9 @@ async function login(o = {}) {
 
 /** Login with caching, so a burst of searches does not re-authenticate each time. */
 async function getSession(o = {}) {
-  const key = (o.email || config.mantapayApiEmail || '') + '|' + (o.userRole || USER_ROLE.apiUser);
+  const key = (o.email || config.mantapayApiEmail || '') + '|'
+    + (o.userName || config.mantapayApiUsername || '') + '|'
+    + (o.userRole || USER_ROLE.apiUser);
   const hit = sessions.get(key);
   if (hit && hit.expiresAt > Date.now()) return hit.session;
   const session = await login(o);
@@ -91,7 +99,9 @@ async function getSession(o = {}) {
 
 /** Drop a cached session — call this after a 401 so the next attempt re-logs in. */
 function invalidateSession(o = {}) {
-  sessions.delete((o.email || config.mantapayApiEmail || '') + '|' + (o.userRole || USER_ROLE.apiUser));
+  sessions.delete((o.email || config.mantapayApiEmail || '') + '|'
+    + (o.userName || config.mantapayApiUsername || '') + '|'
+    + (o.userRole || USER_ROLE.apiUser));
 }
 
 module.exports = { LOGIN_PATH, USER_ROLE, login, getSession, invalidateSession };
