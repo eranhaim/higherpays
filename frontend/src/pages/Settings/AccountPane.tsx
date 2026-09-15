@@ -4,7 +4,7 @@ import { TZ_LIST, detectedTZ, tzTimeLabel } from '../../business/timezone';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { usePreferencesStore } from '../../store/preferences';
 import Modal from '../../components/Modal';
-import EnableTwoFactorModal from '../../components/EnableTwoFactorModal';
+import EnableTwoFactorModal, { ReEnrollTwoFactorModal } from '../../components/EnableTwoFactorModal';
 import { CopyButton } from '../../components/ui';
 import { toast } from '../../lib/toast';
 import { useTwoFactor } from '../../hooks/useTwoFactor';
@@ -32,6 +32,7 @@ function codeErrorMessage(error: unknown): string {
 function SecurityCard() {
   const { user } = useCurrentSession();
   const [enableOpen, setEnableOpen] = useState(false);
+  const [reEnrollOpen, setReEnrollOpen] = useState(false);
   const [disableOpen, setDisableOpen] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const enabled = user?.twoFactorEnabled ?? false;
@@ -46,6 +47,7 @@ function SecurityCard() {
         </div>
         <div className="controls">
           {enabled && <button className="btn ghost" onClick={() => setRecoveryOpen(true)}>New recovery codes</button>}
+          {enabled && <button className="btn ghost" onClick={() => setReEnrollOpen(true)}>Replace authenticator</button>}
           <button className={enabled ? 'btn ghost' : 'btn'} onClick={() => (enabled ? setDisableOpen(true) : setEnableOpen(true))}>
             {enabled ? 'Disable 2FA' : 'Enable 2FA'}
           </button>
@@ -55,6 +57,7 @@ function SecurityCard() {
         <div className="warnbar" role="status">Two-factor authentication is required before you can use platform administration.</div>
       )}
       {enableOpen && <EnableTwoFactorModal onClose={() => setEnableOpen(false)} />}
+      {reEnrollOpen && <ReEnrollTwoFactorModal onClose={() => setReEnrollOpen(false)} />}
       {disableOpen && <DisableTwoFactorModal onClose={() => setDisableOpen(false)} />}
       {recoveryOpen && <RecoveryCodesModal onClose={() => setRecoveryOpen(false)} />}
     </div>

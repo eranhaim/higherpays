@@ -83,9 +83,14 @@ test('a recovery code signs in once and is then consumed', async () => {
   const recovered = await request(app).post('/auth/login')
     .send({ email: t.email, password: t.password, totp: recoveryCode }).expect(200);
   assert.ok(recovered.body.accessToken);
+  assert.equal(recovered.body.recoveryCodeUsed, true);
   const reused = await request(app).post('/auth/login')
     .send({ email: t.email, password: t.password, totp: recoveryCode }).expect(200);
   assert.equal(reused.body.twoFactorRequired, true);
+  const recoveredHeaders = { Authorization: `Bearer ${recovered.body.accessToken}` };
+  await request(app).post('/auth/2fa/reset').set(recoveredHeaders).send({}).expect(200);
+  const replacement = await request(app).post('/auth/2fa/setup').set(recoveredHeaders).send({}).expect(200);
+  assert.ok(replacement.body.otpauthUrl);
 });
 
 test('refresh rotation preserves the absolute limit and enforces inactivity expiry', async () => {

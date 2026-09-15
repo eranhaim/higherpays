@@ -55,6 +55,10 @@ export const authApi = {
     return api.post<{ enabled: false }>('/auth/2fa/disable', { code }, { skipWorkspace: true });
   },
 
+  resetTwoFactor() {
+    return api.post<{ enabled: false }>('/auth/2fa/reset', {}, { skipWorkspace: true });
+  },
+
   regenerateRecoveryCodes(code: string) {
     return api.post<RecoveryCodes>('/auth/2fa/recovery-codes', { code }, { skipWorkspace: true });
   },

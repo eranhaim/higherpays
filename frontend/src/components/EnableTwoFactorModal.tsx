@@ -103,6 +103,25 @@ export default function EnableTwoFactorModal({ onClose }: EnableTwoFactorModalPr
   );
 }
 
+export function ReEnrollTwoFactorModal({ onClose }: EnableTwoFactorModalProps) {
+  const { reset } = useTwoFactor();
+
+  if (reset.isSuccess) return <EnableTwoFactorModal onClose={onClose} />;
+
+  return (
+    <Modal open onClose={onClose} title="Replace your authenticator"
+      subtitle="Your recovery code verified this login. Reset the old authenticator and scan a new QR code now.">
+      {reset.isError && <div className="warnbar" role="alert">Could not reset two-factor authentication. Try again.</div>}
+      <div className="modal-actions">
+        <button className="btn ghost" onClick={onClose}>Later</button>
+        <button className="btn" disabled={reset.isPending} onClick={() => reset.mutate()}>
+          {reset.isPending ? 'Preparing…' : 'Show new QR code'}
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function RecoveryCodesView({ codes }: { codes: string[] }) {
   const text = codes.join('\n');
   return (

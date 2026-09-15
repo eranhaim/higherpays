@@ -42,6 +42,7 @@ export interface LoginSuccess {
   refreshToken: string;
   user: AuthUser;
   workspaces: AuthWorkspace[];
+  recoveryCodeUsed?: boolean;
 }
 
 export interface TwoFactorRequired {

@@ -22,9 +22,14 @@ export function useTwoFactor() {
     onSuccess: () => setTwoFactorEnabled(false),
   });
 
+  const reset = useMutation({
+    mutationFn: () => authApi.resetTwoFactor(),
+    onSuccess: () => setTwoFactorEnabled(false),
+  });
+
   const regenerateRecoveryCodes = useMutation({
     mutationFn: (code: string) => authApi.regenerateRecoveryCodes(code),
   });
 
-  return { enable, disable, regenerateRecoveryCodes };
+  return { enable, disable, reset, regenerateRecoveryCodes };
 }

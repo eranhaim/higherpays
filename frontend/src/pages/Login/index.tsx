@@ -6,7 +6,7 @@ import { HttpError } from '../../api/http';
 import { isTwoFactorRequired, type LoginSuccess } from '../../api/types';
 import { useAuthStore, useIsAuthenticated } from '../../store/auth';
 import { useSessionStore } from '../../store/session';
-import EnableTwoFactorModal from '../../components/EnableTwoFactorModal';
+import EnableTwoFactorModal, { ReEnrollTwoFactorModal } from '../../components/EnableTwoFactorModal';
 
 /**
  * Sign-in screen. Two stages: email + password, then a 6-digit code when the
@@ -29,6 +29,7 @@ export default function LoginPage() {
   const [totp, setTotp] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [setupTwoFactorOpen, setSetupTwoFactorOpen] = useState(false);
+  const [reEnrollTwoFactorOpen, setReEnrollTwoFactorOpen] = useState(false);
 
   // The stage swaps the form's fields in place, so focus has to follow it or
   // it is left on a button that no longer means what it did.
@@ -59,6 +60,10 @@ export default function LoginPage() {
       setSetupTwoFactorOpen(true);
       return;
     }
+    if (response.recoveryCodeUsed) {
+      setReEnrollTwoFactorOpen(true);
+      return;
+    }
     navigate(from, { replace: true });
   }
 
@@ -87,7 +92,7 @@ export default function LoginPage() {
     });
   }
 
-  if (isAuthenticated && !setupTwoFactorOpen) return <Navigate to={from} replace />;
+  if (isAuthenticated && !setupTwoFactorOpen && !reEnrollTwoFactorOpen) return <Navigate to={from} replace />;
 
   return (
     <div className="auth-shell">
@@ -173,6 +178,14 @@ export default function LoginPage() {
         <EnableTwoFactorModal
           onClose={() => {
             setSetupTwoFactorOpen(false);
+            navigate(from, { replace: true });
+          }}
+        />
+      )}
+      {reEnrollTwoFactorOpen && (
+        <ReEnrollTwoFactorModal
+          onClose={() => {
+            setReEnrollTwoFactorOpen(false);
             navigate(from, { replace: true });
           }}
         />

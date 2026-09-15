@@ -148,6 +148,8 @@ router.post('/login', limitByIp, asyncHandler(async (req, res) => {
     refreshToken: session.token,
     user: publicUser(user),
     workspaces: await workspacesFor(user.id),
+    recoveryCodeUsed: Boolean(user.two_factor_enabled && req.body?.totp
+      && !verifyTotp(user.two_factor_secret, req.body.totp)),
   });
 }));
 
@@ -201,6 +203,22 @@ router.post('/2fa/disable', limitByIp, requireAuth, rejectImpersonation, asyncHa
       WHERE id = $1`,
     [req.user.id]);
   await audit({ actorUserId: req.user.id, action: 'auth.2fa.disabled', ip: ipOf(req) });
+  res.json({ enabled: false });
+}));
+
+// A recovery-authenticated session proves the user passed a one-time recovery
+// code, so it may replace the lost authenticator without needing the deleted
+// app again. The next setup call then returns a fresh QR code.
+router.post('/2fa/reset', limitByIp, requireAuth, rejectImpersonation, asyncHandler(async (req, res) => {
+  if (!req.user.twoFactorAuthenticated) return res.status(403).json({ error: 'two_factor_authentication_required' });
+  const updated = (await query(
+    `UPDATE users
+        SET two_factor_enabled = false, two_factor_secret = NULL, two_factor_recovery_codes = '{}'
+      WHERE id = $1 AND two_factor_enabled = true
+      RETURNING id`,
+    [req.user.id])).rows[0];
+  if (!updated) return res.status(400).json({ error: 'two_factor_not_enabled' });
+  await audit({ actorUserId: req.user.id, action: 'auth.2fa.reset', ip: ipOf(req) });
   res.json({ enabled: false });
 }));
 
