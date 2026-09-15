@@ -78,8 +78,17 @@ fi
 
 # Unquoted on purpose: empty $SERVICE means every service in the compose file.
 # The backend entrypoint applies pending migrations before the API starts, so
-# a schema change ships with the code that needs it.
-COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.rds.yml)
+# a schema change ships with the code that needs it. Use the RDS override only
+# when both external database URLs are configured; otherwise deploy the local
+# Postgres service from the base compose file.
+COMPOSE=(docker compose -f docker-compose.yml)
+if awk -F= '
+  $1 == "DATABASE_URL" && length($2) > 0 { app = 1 }
+  $1 == "MIGRATIONS_DATABASE_URL" && length($2) > 0 { migrations = 1 }
+  END { exit !(app && migrations) }
+' .env; then
+  COMPOSE+=(-f docker-compose.rds.yml)
+fi
 "${COMPOSE[@]}" build $SERVICE
 "${COMPOSE[@]}" up -d $SERVICE
 "${COMPOSE[@]}" ps
