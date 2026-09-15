@@ -60,9 +60,12 @@ async function send(path: string, opts: HttpOptions): Promise<Response> {
     window.dispatchEvent(new Event('higherpays:impersonation-ended'));
     return res;
   }
-  if (res.status === 401 && !opts.skipRefresh && useAuthStore.getState().refreshToken) {
+  if (res.status === 401 && !opts.skipRefresh && useAuthStore.getState().accessToken) {
     const refreshed = await tryRefresh();
     if (refreshed) return send(path, { ...opts, skipRefresh: true });
+    useAuthStore.getState().clear();
+    useSessionStore.getState().clear();
+    window.location.assign('/login');
   }
   return res;
 }

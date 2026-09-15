@@ -24,7 +24,11 @@ export interface Session {
 
 export const authApi = {
   login(email: string, password: string, totp?: string) {
-    return api.post<LoginResponse>('/auth/login', { email, password, ...(totp ? { totp } : {}) }, { skipWorkspace: true });
+    return api.post<LoginResponse>(
+      '/auth/login',
+      { email, password, ...(totp ? { totp } : {}) },
+      { skipRefresh: true, skipWorkspace: true },
+    );
   },
 
   refresh(refreshToken?: string) {
