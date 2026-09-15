@@ -15,6 +15,10 @@ TARGET="${2:-higherpays}"
 CONTAINER="${PG_CONTAINER:-higherpays-pg}"
 
 [ -s "$DUMP" ] || { echo "[restore] $DUMP is missing or empty" >&2; exit 1; }
+[ "$TARGET" != "higherpays" ] || [ "${CONFIRM_RESTORE:-}" = "YES" ] || {
+  echo "[restore] refusing to replace live database without CONFIRM_RESTORE=YES" >&2
+  exit 1
+}
 
 docker exec -i "$CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS \"$TARGET\";" -c "CREATE DATABASE \"$TARGET\";"
 docker exec -i "$CONTAINER" pg_restore -U postgres -d "$TARGET" --no-owner --role=postgres < "$DUMP"

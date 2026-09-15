@@ -9,6 +9,7 @@ const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { parseInWorker } = require('../settlement/parse');
+const { reconcileWorkspaceFees } = require('../services/feeReconciliation');
 const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const config = require('../config');
 
@@ -21,6 +22,25 @@ const round2 = (v) => Math.round(v * 100) / 100;
 // a settlement report.
 const MAX_WORKBOOK_BYTES = 4 * 1024 * 1024;
 const XLSX_MAGIC = Buffer.from('PK');
+
+// POST /reconcile-fees { from, to }
+// Pulls actual per-transaction fees from MantaPay and replaces estimates.
+router.post('/reconcile-fees', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
+  const from = req.body?.from ? new Date(req.body.from) : new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const to = req.body?.to ? new Date(req.body.to) : new Date();
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from >= to) {
+    return res.status(400).json({ error: 'invalid_date_range' });
+  }
+  const result = await reconcileWorkspaceFees(wid(req), from, to);
+  if (result.error) return res.status(404).json({ error: result.error });
+  await audit({
+    workspaceId: wid(req),
+    actorUserId: uid(req),
+    action: 'settlement.fee_reconcile',
+    metadata: { from: from.toISOString(), to: to.toISOString(), updated: result.updated },
+  });
+  res.json(result);
+}));
 
 // POST /import  { filename, contentBase64 }
 router.post('/import', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {

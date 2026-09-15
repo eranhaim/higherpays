@@ -24,6 +24,7 @@ fi
 BACKUP_URL="$(printf '%s' "$BACKUP_URL" | sed 's/[&?]uselibpqcompat=true//')"
 
 mkdir -p "$BACKUP_DIR"
+chmod 700 "$BACKUP_DIR"
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 FILE="$BACKUP_DIR/higherpays-$STAMP.dump"
 
@@ -40,6 +41,7 @@ if [ "$SIZE" -lt 1024 ]; then
   rm -f "$FILE"
   exit 1
 fi
+chmod 600 "$FILE"
 echo "[backup] wrote $FILE ($SIZE bytes)"
 
 if [ -n "$BUCKET" ]; then
