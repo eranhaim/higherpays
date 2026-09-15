@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { QRCodeSVG } from 'qrcode.react';
 import { authApi } from '../api/endpoints';
 import { HttpError } from '../api/http';
 import Modal from './Modal';
@@ -19,6 +20,7 @@ function codeErrorMessage(error: unknown): string {
 export default function EnableTwoFactorModal({ onClose }: EnableTwoFactorModalProps) {
   const { enable } = useTwoFactor();
   const [code, setCode] = useState('');
+  const [showManualKey, setShowManualKey] = useState(false);
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
 
   const setup = useQuery({
@@ -57,25 +59,35 @@ export default function EnableTwoFactorModal({ onClose }: EnableTwoFactorModalPr
 
   return (
     <Modal open onClose={onClose} title="Enable two-factor authentication"
-      subtitle="Add a new account in your authenticator app, then enter the 6-digit code it shows.">
+      subtitle="Scan the QR code with your authenticator app, then enter the 6-digit code it shows.">
       {setup.isError ? <p className="sub">Could not start setup. Close this and try again.</p>
         : setup.isLoading ? <p className="sub">Generating your setup key…</p>
           : (
             <>
-              <div className="field">
-                <label htmlFor="tfa-secret">Setup key</label>
-                <div className="field-row">
-                  <input id="tfa-secret" type="text" readOnly value={setup.data?.secret ?? ''} onFocus={(e) => e.target.select()} />
-                  <CopyButton value={setup.data?.secret ?? ''} />
-                </div>
+              <div className="tfa-qr">
+                <QRCodeSVG
+                  value={setup.data?.otpauthUrl ?? ''}
+                  size={192}
+                  level="M"
+                  marginSize={2}
+                  bgColor="var(--text)"
+                  fgColor="var(--bg)"
+                  title="Scan to add HigherPays to your authenticator app"
+                />
+                <p className="sub">Scan this code with your authenticator app.</p>
+                <button className="btn ghost small" type="button" onClick={() => setShowManualKey((visible) => !visible)}>
+                  {showManualKey ? 'Hide setup key' : 'Use setup key instead'}
+                </button>
               </div>
-              <div className="field">
-                <label htmlFor="tfa-link">Setup link</label>
-                <div className="field-row">
-                  <input id="tfa-link" type="text" readOnly value={setup.data?.otpauthUrl ?? ''} onFocus={(e) => e.target.select()} />
-                  <CopyButton value={setup.data?.otpauthUrl ?? ''} />
+              {showManualKey && (
+                <div className="field">
+                  <label htmlFor="tfa-secret">Setup key</label>
+                  <div className="field-row">
+                    <input id="tfa-secret" type="text" readOnly value={setup.data?.secret ?? ''} onFocus={(e) => e.target.select()} />
+                    <CopyButton value={setup.data?.secret ?? ''} />
+                  </div>
                 </div>
-              </div>
+              )}
               <div className="field">
                 <label htmlFor="tfa-enable-code">6-digit code from your app</label>
                 <input id="tfa-enable-code" type="text" inputMode="numeric" autoComplete="one-time-code"
