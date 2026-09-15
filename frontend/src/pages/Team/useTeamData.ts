@@ -16,6 +16,7 @@ export interface UseTeamDataResult {
   setRole: (userId: string, role: string) => Promise<void>;
   transferOwner: (userId: string) => Promise<void>;
   removeMember: (userId: string) => Promise<void>;
+  createMember: (input: { email: string; password: string; fullName?: string; role: string }) => Promise<void>;
   createRole: (name: string, permissions: Permission[]) => Promise<void>;
   updateRole: (key: string, input: { name?: string; permissions?: Permission[] }) => Promise<void>;
   removeRole: (key: string) => Promise<void>;
@@ -47,6 +48,7 @@ export function useTeamData(): UseTeamDataResult {
     onSuccess: invalidateTeam,
   });
   const remove = useMutation({ mutationFn: (userId: string) => teamApi.remove(userId), onSuccess: invalidateTeam });
+  const createMember = useMutation({ mutationFn: teamApi.create, onSuccess: invalidateTeam });
   const role = useMutation({
     mutationFn: ({ userId, nextRole }: { userId: string; nextRole: string }) => teamApi.setRole(userId, nextRole),
     onSuccess: invalidateTeam,
@@ -75,6 +77,7 @@ export function useTeamData(): UseTeamDataResult {
     setRole: async (userId, nextRole) => { await role.mutateAsync({ userId, nextRole }); },
     transferOwner: async (userId) => { await owner.mutateAsync(userId); },
     removeMember: async (userId) => { await remove.mutateAsync(userId); },
+    createMember: async (input) => { await createMember.mutateAsync(input); },
     createRole: async (name, permissions) => { await createRole.mutateAsync({ name, permissions }); },
     updateRole: async (key, input) => { await updateRole.mutateAsync({ key, input }); },
     removeRole: async (key) => { await removeRole.mutateAsync(key); },

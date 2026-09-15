@@ -1,18 +1,61 @@
 'use strict';
 // Who may sign into this workspace. Agents and accounts are created on their
-// own routes (the profile and the login are one operation); admins and
-// analysts arrive through invites. This route lists everyone and controls
-// their access.
+// own routes (the profile and the login are one operation); plain members are
+// created directly here. This route lists everyone and controls their access.
 const express = require('express');
 const { query, withTransaction } = require('../db');
 const { requirePermission, requireRoleManager } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { revokeUserSessions } = require('../auth/sessions');
+const { hashPassword } = require('../auth/passwords');
 const { PROFILE_ROLES, ensureWorkspaceRoles } = require('../services/workspaceRoles');
+const { isStr, badRequest } = require('../util/validate');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
+
+// POST / — create a login and active workspace seat without email delivery.
+router.post('/', requireRoleManager, asyncHandler(async (req, res) => {
+  const { email, password, fullName, role } = req.body || {};
+  if (!isStr(email, 100) || !email.includes('@')) return badRequest(res, 'a valid email is required', ['email']);
+  if (!isStr(password, 200) || password.length < 8) return badRequest(res, 'password must be at least 8 characters', ['password']);
+  if (!isStr(role, 100) || PROFILE_ROLES.has(role) || role === 'workspace_owner') {
+    return badRequest(res, 'role is not available for direct member creation', ['role']);
+  }
+
+  const out = await withTransaction(async (client) => {
+    await ensureWorkspaceRoles(client, wid(req));
+    const roleRow = (await client.query(
+      'SELECT key, permissions FROM workspace_roles WHERE workspace_id=$1 AND key=$2',
+      [wid(req), role])).rows[0];
+    if (!roleRow) return { error: 'unknown_role', status: 400 };
+    if (roleRow.permissions.some((permission) => !req.canGrantAllRolePermissions && !req.access.permissions.has(permission))) {
+      return { error: 'role_not_assignable', status: 403 };
+    }
+
+    const existing = (await client.query('SELECT id FROM users WHERE email=$1', [email])).rows[0];
+    if (existing) return { error: 'user_exists', status: 409 };
+
+    const user = (await client.query(
+      `INSERT INTO users (email, full_name, password_hash)
+       VALUES ($1,$2,$3) RETURNING id`,
+      [email, isStr(fullName, 120) ? fullName.trim() : email, await hashPassword(password)]
+    )).rows[0];
+    await client.query(
+      'INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,$3)',
+      [wid(req), user.id, role]
+    );
+    return { userId: user.id, role };
+  });
+
+  if (out.error) return res.status(out.status).json({ error: out.error });
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'team.member.create',
+    entityType: 'user', entityId: out.userId, metadata: { email, role: out.role },
+  });
+  res.status(201).json(out);
+}));
 
 // GET / — everyone with access, and the profile behind the role when there is one.
 router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) => {

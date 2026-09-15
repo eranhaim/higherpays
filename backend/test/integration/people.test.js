@@ -7,6 +7,24 @@ const request = require('supertest');
 const { app, pool } = require('../helpers/setup');
 const { createTenant, createAccount, createAgent, addMember, assignAgent, PASSWORD, tag } = require('../helpers/tenant');
 
+test('a workspace owner can create a plain member with a password and no invitation', async () => {
+  const t = await createTenant(app);
+  const email = `direct+${tag()}@test.local`;
+  const password = 'DirectMember123!';
+
+  const created = await request(app).post(`/workspaces/${t.workspaceId}/team`)
+    .set(t.authHeaders)
+    .send({ email, fullName: 'Direct Member', password, role: 'analyst' })
+    .expect(201);
+
+  assert.equal(created.body.role, 'analyst');
+  assert.equal((await pool.query(
+    'SELECT count(*)::int AS count FROM invites WHERE workspace_id=$1 AND email=$2',
+    [t.workspaceId, email])).rows[0].count, 0);
+  const signedIn = await request(app).post('/auth/login').send({ email, password }).expect(200);
+  assert.equal(signedIn.body.workspaces.some((workspace) => workspace.id === t.workspaceId), true);
+});
+
 test('creating an agent creates the login, the access and the profile in one go', async () => {
   const t = await createTenant(app);
   const agent = await createAgent(app, t, { commissionPct: 12 });

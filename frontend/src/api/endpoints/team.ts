@@ -21,6 +21,9 @@ export interface Member {
 }
 
 export const teamApi = {
+  create: (input: { email: string; password: string; fullName?: string; role: string }) =>
+    api.post<{ userId: string; role: string }>(workspacePath('/team'), input),
+
   async list(): Promise<Member[]> {
     const raw = await api.get<{ members: Member[] }>(workspacePath('/team'));
     return raw.members;

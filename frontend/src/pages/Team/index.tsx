@@ -10,7 +10,7 @@ import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import { sortRows, type SortValues } from '../../lib/sortRows';
 import {
   ROLE_PERMISSION_GROUPS, toggleRolePermission,
-  type Member, type Invite, type InvitableRole, type RoleDefinition,
+  type Member, type Invite, type RoleDefinition,
 } from '../../api/endpoints';
 import type { Permission } from '../../rbac/permissions';
 import { useTeamData } from './useTeamData';
@@ -36,15 +36,17 @@ export default function TeamPage() {
   const {
     members, roles, pendingInvites, isLoading, isError,
     setStatus, setRole: assignRole, transferOwner, removeMember,
-    createRole, updateRole, removeRole, invite, cancelInvite,
+    createMember, createRole, updateRole, removeRole, cancelInvite,
   } = useTeamData();
   const canManage = can('team.manage');
   const canManageRoles = currentRole === 'workspace_owner' || Boolean(user?.isPlatformAdmin);
 
-  const [inviteOpen, setInviteOpen] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<InvitableRole>('analyst');
-  const [isInviting, setIsInviting] = useState(false);
+  const [memberOpen, setMemberOpen] = useState(false);
+  const [memberEmail, setMemberEmail] = useState('');
+  const [memberFullName, setMemberFullName] = useState('');
+  const [memberPassword, setMemberPassword] = useState('');
+  const [memberRole, setMemberRole] = useState('analyst');
+  const [isCreatingMember, setIsCreatingMember] = useState(false);
   const [removing, setRemoving] = useState<Member | null>(null);
   const [suspending, setSuspending] = useState<Member | null>(null);
   const [isBusy, setIsBusy] = useState(false);
@@ -127,20 +129,32 @@ export default function TeamPage() {
     }
   };
 
-  const closeInvite = () => { setInviteOpen(false); setInviteEmail(''); setInviteRole('analyst'); };
+  const closeMember = () => {
+    setMemberOpen(false);
+    setMemberEmail('');
+    setMemberFullName('');
+    setMemberPassword('');
+    setMemberRole('analyst');
+  };
 
-  const submitInvite = async () => {
-    const email = inviteEmail.trim();
+  const submitMember = async () => {
+    const email = memberEmail.trim();
     if (!email) { toast('Email is required.'); return; }
-    setIsInviting(true);
+    if (memberPassword.length < 8) { toast('Password must be at least 8 characters.'); return; }
+    setIsCreatingMember(true);
     try {
-      await invite({ email, role: inviteRole });
-      closeInvite();
-      toast(`Invite sent to ${email}.`);
+      await createMember({
+        email,
+        password: memberPassword,
+        fullName: memberFullName.trim() || undefined,
+        role: memberRole,
+      });
+      closeMember();
+      toast(`Created ${email}.`);
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not send the invite.');
+      toast(err instanceof Error ? err.message : 'Could not create the member.');
     } finally {
-      setIsInviting(false);
+      setIsCreatingMember(false);
     }
   };
 
@@ -292,7 +306,7 @@ export default function TeamPage() {
     <div className="team-page">
       <PageHeader
         title="Team"
-        actions={canManage ? <button className="btn" onClick={() => setInviteOpen(true)}>Invite team member</button> : null}
+        actions={canManageRoles ? <button className="btn" onClick={() => setMemberOpen(true)}>Create team member</button> : null}
       />
 
       <div className="tabbar" role="tablist" aria-label="Team views">
@@ -372,22 +386,30 @@ export default function TeamPage() {
         )}
       </div>
 
-      <Modal open={inviteOpen} onClose={closeInvite} title="Invite a team member" subtitle="They receive an email with a link to set their password.">
+      <Modal open={memberOpen} onClose={closeMember} title="Create team member" subtitle="The account is ready to use immediately. No invitation email is sent.">
         <div className="field">
-          <label htmlFor="invite-email">Email</label>
-          <input id="invite-email" type="email" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
+          <label htmlFor="member-email">Email</label>
+          <input id="member-email" type="email" autoComplete="username" value={memberEmail} onChange={(e) => setMemberEmail(e.target.value)} />
         </div>
         <div className="field">
-          <label htmlFor="invite-role">Role</label>
-          <select id="invite-role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as InvitableRole)}>
+          <label htmlFor="member-name">Full name</label>
+          <input id="member-name" type="text" autoComplete="name" value={memberFullName} onChange={(e) => setMemberFullName(e.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="member-password">Password</label>
+          <input id="member-password" type="password" autoComplete="new-password" value={memberPassword} onChange={(e) => setMemberPassword(e.target.value)} />
+        </div>
+        <div className="field">
+          <label htmlFor="member-role">Role</label>
+          <select id="member-role" value={memberRole} onChange={(e) => setMemberRole(e.target.value)}>
             {roles.filter((item) => !['workspace_owner', 'agent', 'account_owner'].includes(item.key))
               .filter(canAssignRole)
               .map((item) => <option key={item.key} value={item.key}>{roleLabel(item.key)}</option>)}
           </select>
         </div>
         <div className="modal-actions">
-          <button className="btn ghost" onClick={closeInvite}>Cancel</button>
-          <button className="btn" onClick={submitInvite} disabled={isInviting}>{isInviting ? 'Sending…' : 'Send invite'}</button>
+          <button className="btn ghost" onClick={closeMember}>Cancel</button>
+          <button className="btn" onClick={submitMember} disabled={isCreatingMember}>{isCreatingMember ? 'Creating…' : 'Create member'}</button>
         </div>
       </Modal>
 
