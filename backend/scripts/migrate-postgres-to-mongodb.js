@@ -34,6 +34,17 @@ async function readTable(client, table) {
       ORDER BY ordinal_position`,
     [table],
   )).rows;
+  const primaryKeys = (await client.query(
+    `SELECT kcu.column_name
+       FROM information_schema.table_constraints tc
+       JOIN information_schema.key_column_usage kcu
+         ON kcu.constraint_name = tc.constraint_name
+        AND kcu.table_schema = tc.table_schema
+      WHERE tc.table_schema='public' AND tc.table_name=$1
+        AND tc.constraint_type='PRIMARY KEY'
+      ORDER BY kcu.ordinal_position`,
+    [table],
+  )).rows.map((row) => row.column_name);
   const rows = (await client.query(`SELECT * FROM "${table}"`)).rows;
   return {
     rows: rows.map((row) => Object.fromEntries(columns.map((column) => [
@@ -41,7 +52,13 @@ async function readTable(client, table) {
       convertValue(row[column.column_name], column.data_type),
     ]))),
     columns,
+    primaryKeys,
   };
+}
+
+function documentId(row, primaryKeys) {
+  if (primaryKeys.length === 1) return String(row[primaryKeys[0]]);
+  return primaryKeys.map((key) => `${key}=${String(row[key])}`).join('|');
 }
 
 async function run() {
@@ -65,11 +82,10 @@ async function run() {
       const collection = db.collection(table);
       if (confirm && data.rows.length) {
         const operations = data.rows
-          .filter((row) => row.id != null)
           .map((row) => ({
             replaceOne: {
-              filter: { _id: String(row.id) },
-              replacement: { _id: String(row.id), ...row },
+              filter: { _id: documentId(row, data.primaryKeys) },
+              replacement: { _id: documentId(row, data.primaryKeys), ...row },
               upsert: true,
             },
           }));
