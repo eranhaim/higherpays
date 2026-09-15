@@ -101,7 +101,7 @@ if (config.env === 'production' && String(config.jwtSecret || '').length < MIN_J
 config.integrations = [
   { name: 'MantaPay checkout', enabled: Boolean(config.mantapayMerchantId && config.mantapayHashKey), needs: 'MANTAPAY_MERCHANT_ID, MANTAPAY_HASH_KEY', feeMode: config.mantapayFeeMode },
   { name: 'MantaPay webhook URL', enabled: Boolean(config.webhookPublicBase), needs: 'WEBHOOK_PUBLIC_BASE' },
-  { name: 'MantaPay fee reconciliation', enabled: Boolean(config.mantapayApiEmail && config.mantapayApiUsername && config.mantapayApiPassword && config.mantapayAppToken && config.mantapaySearchSalt), needs: 'MANTAPAY_API_EMAIL, MANTAPAY_API_USERNAME, MANTAPAY_API_PASSWORD, MANTAPAY_APP_TOKEN, MANTAPAY_SEARCH_SALT' },
+  { name: 'MantaPay Search API credentials', enabled: Boolean(config.mantapayApiEmail && config.mantapayApiUsername && config.mantapayApiPassword && config.mantapayAppToken && config.mantapaySearchSalt), needs: 'MANTAPAY_API_EMAIL, MANTAPAY_API_USERNAME, MANTAPAY_API_PASSWORD, MANTAPAY_APP_TOKEN, MANTAPAY_SEARCH_SALT' },
   { name: 'MantaPay refunds', enabled: config.mantapayRefundEnabled, needs: 'MANTAPAY_REFUND_ENABLED=true' },
   { name: 'Telegram notifications', enabled: Boolean(config.telegramBotToken), needs: 'TELEGRAM_BOT_TOKEN' },
 ];

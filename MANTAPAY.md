@@ -27,6 +27,7 @@ MANTAPAY_MERCHANT_ID      merchant number
 MANTAPAY_HASH_KEY         signing key for checkout + status + notifications
 MANTAPAY_APP_TOKEN        issued by support, sent on every webservices call
 MANTAPAY_API_EMAIL        API user (role 50)
+MANTAPAY_API_USERNAME
 MANTAPAY_API_PASSWORD
 MANTAPAY_SEARCH_SALT      salt for the search body signature
 MANTAPAY_FEE_MODE         additive (default) or included
@@ -279,14 +280,7 @@ against the live provider contract — see §3 and §11.
 
 ### Money-affecting
 
-**1. Attribution rests on an unconfirmed field mapping.**
-The public APM request sends our reference as `Order`. We read it back as
-`trans_order`, and `payments.service.js` looks the link up by
-`reference_id = trans_order`. MantaPay has not confirmed that `Order` is echoed
-there. If it is not, every payment arrives unattributed. The signature can
-still verify because an empty `trans_order` contributes nothing to the hash.
-
-**2. `resolveApiKey` falls back silently.**
+**1. `resolveApiKey` falls back silently.**
 `mantapay.js:33` — if a workspace has `provider_config_ref` set but that env
 var is missing, it drops to the platform-wide `MANTAPAY_HASH_KEY` instead of
 failing. A misconfigured tenant signs with the wrong merchant's key and gets
@@ -294,16 +288,17 @@ reply 500.
 
 ### Incomplete
 
-**3. Actual-fee reconciliation is blocked.**
+**2. Actual-fee reconciliation is blocked.**
 `mantapay-search.js` is written and unit-tested, but nothing calls
 `searchTransactions`. Per-transaction fees are the one thing MantaPay gives us
-that the webhook does not. It is deliberately not scheduled because the body
-signature salt contract is still unconfirmed and no reliable live response has
-been validated. Transactions therefore remain labelled as calculated estimates.
-Do not update `fee_is_estimate` until MantaPay confirms the salt and captured
-transactions have been checked to contain complete, stable `TransactionFees`.
+that the webhook does not. MantaPay supplied the API-user fields and signature
+salt, but the MantaPay web-services host currently returns 502 and its Coriunder
+backend rejects the supplied credentials. No reliable live response has been
+validated. Transactions therefore remain labelled as calculated estimates.
+Do not update `fee_is_estimate` until captured transactions have been checked
+to contain complete, stable `TransactionFees`.
 
-**4. Two unused order constants.**
+**3. Two unused order constants.**
 `HOSTED_FIELD_ORDER_REQUEST` / `HOSTED_FIELD_ORDER_JS` in
 `mantapay-signature.js` use lowercase `client_billaddress1`, while
 `mantapay-checkout.js` uses `client_billAddress1`. Checkout always passes its
@@ -316,20 +311,15 @@ anything did use them.
 
 Unconfirmed points, flagged inline in the code. Worth sending back to them.
 
-1. **Does direct APM `Order` populate `trans_order` in the notification?**
-   See open issue 1 — this mapping is load-bearing.
-2. **In direct APM included mode, does `trans_amount` return content or customer
+1. **In direct APM included mode, does `trans_amount` return content or customer
    total?** Both are accepted during cutover, but MantaPay must confirm which is
    contractual.
-3. **Is the `Signature` field in the login response the salt the Search API
-   signs bodies with?** `mantapay-search.js` assumes so, falling back to
-   `MANTAPAY_SEARCH_SALT`.
-4. **Test amount `55.3`: is it reply 533 or 553?** Their Controlling Replies
+2. **Test amount `55.3`: is it reply 533 or 553?** Their Controlling Replies
    page says 533; their Reply Codes page documents 553 as the 3DS/APM redirect
    (533 is "cannot refund more than the original amount", which makes no sense
    here). Treated as a typo for 553. If it really is 533 we classify a 3DS
    redirect as a decline.
-5. **The refund flow** — `PP-Refund-Request` / `Process` / `Status`. Not read,
+3. **The refund flow** — `PP-Refund-Request` / `Process` / `Status`. Not read,
    not implemented.
 
 ---

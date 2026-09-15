@@ -121,7 +121,7 @@ async function searchTransactions(o = {}) {
   const headers = {
     'Content-Type': 'application/json',
     applicationToken: o.applicationToken || config.mantapayAppToken || '',
-    Signature: bodySignature(raw, o.salt || session.signature || config.mantapaySearchSalt),
+    Signature: bodySignature(raw, o.salt || config.mantapaySearchSalt || session.signature),
   };
   headers[session.headerName] = session.token;
 
@@ -131,7 +131,7 @@ async function searchTransactions(o = {}) {
     auth.invalidateSession(o);
     const fresh = await auth.getSession(o);
     headers[fresh.headerName] = fresh.token;
-    headers.Signature = bodySignature(raw, o.salt || fresh.signature || config.mantapaySearchSalt);
+    headers.Signature = bodySignature(raw, o.salt || config.mantapaySearchSalt || fresh.signature);
     r = await fetch(`${config.mantapaySearchBase}${SEARCH_PATH}`, { method: 'POST', headers, body: raw });
   }
   const text = await r.text();
