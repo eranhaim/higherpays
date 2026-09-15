@@ -27,9 +27,9 @@ export const authApi = {
     return api.post<LoginResponse>('/auth/login', { email, password, ...(totp ? { totp } : {}) }, { skipWorkspace: true });
   },
 
-  refresh(refreshToken: string) {
+  refresh(refreshToken?: string) {
     return api.post<{ accessToken: string; refreshToken: string }>(
-      '/auth/refresh', { refreshToken }, { skipRefresh: true, skipWorkspace: true });
+      '/auth/refresh', refreshToken ? { refreshToken } : {}, { skipRefresh: true, skipWorkspace: true });
   },
 
   logout(refreshToken: string | null) {
@@ -73,7 +73,8 @@ export const authApi = {
   },
 
   /** Signs out every other device; the caller proves which one to keep with its refresh token. */
-  revokeOtherSessions(refreshToken: string) {
-    return api.post<{ revoked: number }>('/auth/sessions/revoke-others', { refreshToken }, { skipWorkspace: true });
+  revokeOtherSessions(refreshToken?: string) {
+    return api.post<{ revoked: number }>(
+      '/auth/sessions/revoke-others', refreshToken ? { refreshToken } : {}, { skipWorkspace: true });
   },
 };

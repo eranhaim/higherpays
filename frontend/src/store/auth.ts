@@ -2,8 +2,9 @@
  * Authentication state.
  *
  * Owns the JWT + refresh token pair, the current user record, and the list of
- * workspaces this user has memberships in. Persisted to localStorage so a page
- * refresh doesn't log the user out.
+ * workspaces this user has memberships in. Only the short-lived access token
+ * and display state are persisted; the refresh token lives in an HttpOnly
+ * cookie.
  *
  * Deliberately does NOT own:
  * - The active workspace id -> `sessionStore`
@@ -118,10 +119,11 @@ export const useAuthStore = create<AuthState>()(
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({
         accessToken: s.accessToken,
-        refreshToken: s.refreshToken,
         user: s.user,
         workspaces: s.workspaces,
-        originalSession: s.originalSession,
+        // Refresh tokens stay in the HttpOnly cookie; do not persist them or
+        // an impersonation session that contains one in browser storage.
+        originalSession: null,
         impersonationExpiresAt: s.impersonationExpiresAt,
         originalWorkspaceId: s.originalWorkspaceId,
       }),

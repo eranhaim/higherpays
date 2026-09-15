@@ -110,7 +110,6 @@ let refreshInFlight: Promise<boolean> | null = null;
 async function tryRefresh(): Promise<boolean> {
   if (refreshInFlight) return refreshInFlight;
   const refreshToken = useAuthStore.getState().refreshToken;
-  if (!refreshToken) return false;
 
   refreshInFlight = (async () => {
     try {
@@ -118,7 +117,7 @@ async function tryRefresh(): Promise<boolean> {
         '/auth/refresh',
         {
           method: 'POST',
-          body: { refreshToken },
+          body: refreshToken ? { refreshToken } : {},
           skipRefresh: true,
           skipWorkspace: true,
         },

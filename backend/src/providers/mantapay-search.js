@@ -19,6 +19,7 @@
 const config = require('../config');
 const crypto = require('crypto');
 const auth = require('./mantapay-auth');
+const { fetchWithTimeout } = require('./http');
 
 const SEARCH_PATH = '/v2/transactions.svc/Search';
 
@@ -125,14 +126,14 @@ async function searchTransactions(o = {}) {
   };
   headers[session.headerName] = session.token;
 
-  let r = await fetch(`${config.mantapaySearchBase}${SEARCH_PATH}`, { method: 'POST', headers, body: raw });
+  let r = await fetchWithTimeout(`${config.mantapaySearchBase}${SEARCH_PATH}`, { method: 'POST', headers, body: raw });
   // A stale cached token looks like an auth failure — retry once with a fresh login.
   if (r.status === 401 && !o.session) {
     auth.invalidateSession(o);
     const fresh = await auth.getSession(o);
     headers[fresh.headerName] = fresh.token;
     headers.Signature = bodySignature(raw, o.salt || config.mantapaySearchSalt || fresh.signature);
-    r = await fetch(`${config.mantapaySearchBase}${SEARCH_PATH}`, { method: 'POST', headers, body: raw });
+    r = await fetchWithTimeout(`${config.mantapaySearchBase}${SEARCH_PATH}`, { method: 'POST', headers, body: raw });
   }
   const text = await r.text();
   let data = null; try { data = JSON.parse(text); } catch { /* non-JSON */ }

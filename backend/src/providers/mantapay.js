@@ -32,7 +32,10 @@ const SIGNATURE_HEADER = 'signature';
  */
 function resolveApiKey(ws) {
   const ref = ws && ws.provider_config_ref;
-  if (ref && process.env[ref]) return process.env[ref];
+  if (ref) {
+    if (process.env[ref]) return process.env[ref];
+    throw Object.assign(new Error('mantapay_workspace_key_missing'), { status: 500 });
+  }
   return config.mantapayHashKey;
 }
 

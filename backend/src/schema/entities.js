@@ -676,7 +676,7 @@ const WebhookEvent = entity('webhook_events', {
     receivedAt:      timestamp().notNull().default('now()'),
     processedAt:     timestamp(),
   },
-  unique: [['provider', 'providerEventId', 'eventType']],
+  unique: [['workspaceId', 'provider', 'providerEventId', 'eventType']],
   indexes: [{ columns: ['processed'], where: 'processed = false' }],
 });
 

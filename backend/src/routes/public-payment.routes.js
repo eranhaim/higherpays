@@ -8,10 +8,12 @@ const config = require('../config');
 const provider = require('../providers/mantapay');
 const { asyncHandler } = require('../lib/http');
 const { recordLinkEvent } = require('../services/linkEvents');
+const { createLimiter } = require('../lib/rateLimit');
 
 const router = express.Router();
+const checkoutLimiter = createLimiter({ windowMs: 60_000, max: 10 });
 
-router.get('/:reference', asyncHandler(async (req, res) => {
+router.get('/:reference', checkoutLimiter.middleware((req) => `${req.ip || 'unknown'}:${req.params.reference}`), asyncHandler(async (req, res) => {
   const link = await withTransaction(async (c) => {
     const found = (await c.query(
     `SELECT pl.id, pl.workspace_id, pl.amount, pl.checkout_fee, pl.currency, pl.status, pl.expires_at,

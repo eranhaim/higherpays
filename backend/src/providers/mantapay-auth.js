@@ -15,6 +15,7 @@
 // otherwise a human changing their portal password silently breaks the
 // integration. Credentials expire every 3 months either way.
 const config = require('../config');
+const { fetchWithTimeout } = require('./http');
 
 const LOGIN_PATH = '/v2/account.svc/login';
 
@@ -57,7 +58,7 @@ async function login(o = {}) {
     },
   });
 
-  const r = await fetch(`${config.mantapaySearchBase}${LOGIN_PATH}`, {
+  const r = await fetchWithTimeout(`${config.mantapaySearchBase}${LOGIN_PATH}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', applicationToken: appToken },
     body,

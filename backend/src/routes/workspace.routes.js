@@ -42,6 +42,8 @@ router.patch('/', requirePermission('settings.edit'), asyncHandler(async (req, r
   }
   // Empty clears it, which falls the server back to MANTAPAY_MERCHANT_ID.
   if ('merchantId' in body) {
+    const operator = (await query('SELECT is_platform_admin FROM users WHERE id=$1', [uid(req)])).rows[0];
+    if (!operator?.is_platform_admin) return res.status(403).json({ error: 'platform_admin_required' });
     const mid = body.merchantId == null ? '' : String(body.merchantId).trim();
     if (mid.length > 64) return badRequest(res, 'merchantId is at most 64 characters', ['merchantId']);
     vals.push(mid || null); sets.push(`merchant_id = $${vals.length}`);

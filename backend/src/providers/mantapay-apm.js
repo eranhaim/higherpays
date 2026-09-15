@@ -4,6 +4,7 @@
 // D3Redirect. The browser is then sent to the provider's CentroBill page.
 const config = require('../config');
 const sig = require('./mantapay-signature');
+const { fetchWithTimeout } = require('./http');
 
 const APM_PATH = '/member/remote_charge.asp';
 const CURRENCY_IDS = { USD: '1', EUR: '2', GBP: '3' };
@@ -104,7 +105,7 @@ function parseResponse(text) {
 
 async function startApm(o = {}) {
   const url = buildApmUrl(o);
-  const response = await fetch(url, { redirect: 'manual' });
+  const response = await fetchWithTimeout(url, { redirect: 'manual' });
   const location = response.headers.get('location');
   if (location && response.status >= 300 && response.status < 400) {
     return { reply: '553', redirect: location, fields: {} };

@@ -44,13 +44,16 @@ test('replaying a rotated refresh token revokes the whole session', async () => 
 
 test('a user can list and revoke their own sessions', async () => {
   const t = await createTenant(app);
-  await request(app).post('/auth/login').send({ email: t.email, password: t.password }).expect(200);
+  const second = (await request(app).post('/auth/login').send({ email: t.email, password: t.password }).expect(200)).body;
   const sessions = (await request(app).get('/auth/sessions').set(t.authHeaders).expect(200)).body.sessions;
   assert.ok(sessions.length >= 2);
-  const other = sessions.find((s) => !s.isCurrent);
+  const other = sessions.find((s) => s.isCurrent === false && s.id !== t.refreshToken);
   await request(app).delete(`/auth/sessions/${other.id}`).set(t.authHeaders).expect(204);
   const after = (await request(app).get('/auth/sessions').set(t.authHeaders).expect(200)).body.sessions;
   assert.equal(after.length, sessions.length - 1);
+  await request(app).get('/auth/me')
+    .set('Authorization', `Bearer ${second.accessToken}`)
+    .expect(401);
 });
 
 test('repeated failed sign-ins lock the account for a while', async () => {

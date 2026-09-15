@@ -27,7 +27,7 @@ const webhooksRoutes = require('./routes/webhooks.routes');
 const publicPaymentRoutes = require('./routes/public-payment.routes');
 const { wsRouter: invitesWsRoutes, publicRouter: invitesPublicRoutes } = require('./routes/invites.routes');
 const { startReconcileLoop } = require('./services/links.service');
-const { requireAuth, requireWorkspace, errorHandler } = require('./middleware');
+const { requireAuth, requireWorkspace, requirePlatformMfa, errorHandler } = require('./middleware');
 const { auditRequestContext } = require('./util/audit');
 const { asyncHandler } = require('./lib/http');
 
@@ -99,7 +99,7 @@ app.use('/platform', requireAuth, platformRoutes);
 
 // Every workspace router runs behind auth + access resolution. Routes inside
 // then gate on specific permissions.
-const ws = [requireAuth, requireWorkspace];
+const ws = [requireAuth, requireWorkspace, requirePlatformMfa];
 app.use('/workspaces/:workspaceId/accounts', ws, accountsRoutes);
 app.use('/workspaces/:workspaceId/agents', ws, agentsRoutes);
 app.use('/workspaces/:workspaceId/categories', ws, categoriesRoutes);
@@ -116,7 +116,7 @@ app.use('/workspaces/:workspaceId/settlements', ws, settlementsRoutes);
 app.use('/workspaces/:workspaceId/fees', ws, feesRoutes);
 app.use('/workspaces/:workspaceId/me', ws, meRoutes);
 app.use('/workspaces/:workspaceId/archive', ws, archiveRoutes.router);
-app.use('/workspaces/:workspaceId/invites', invitesWsRoutes);
+app.use('/workspaces/:workspaceId/invites', ws, invitesWsRoutes);
 app.use('/invites', invitesPublicRoutes);
 
 // Effective permissions for the current user in a workspace (used by the UI).

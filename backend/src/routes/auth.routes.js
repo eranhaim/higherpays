@@ -26,6 +26,25 @@ const ipLimiter = createLimiter({ windowMs: FIFTEEN_MINUTES, max: 100 });
 const accountFailures = createLimiter({ windowMs: FIFTEEN_MINUTES, max: 10 });
 const limitByIp = ipLimiter.middleware((req) => ipOf(req) || 'unknown');
 const accountKey = (email) => String(email || '').trim().toLowerCase();
+const REFRESH_COOKIE = 'higherpays_refresh';
+
+function cookieValue(req, name) {
+  const cookies = String(req.headers.cookie || '').split(';');
+  const entry = cookies.find((part) => part.trim().startsWith(`${name}=`));
+  return entry ? decodeURIComponent(entry.trim().slice(name.length + 1)) : null;
+}
+
+function setRefreshCookie(res, token) {
+  const secure = config.env === 'production' ? '; Secure' : '';
+  const maxAge = config.sessionAbsoluteDays * 86400;
+  res.setHeader('Set-Cookie',
+    `${REFRESH_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/api; Max-Age=${maxAge}${secure}`);
+}
+
+function clearRefreshCookie(res) {
+  res.setHeader('Set-Cookie',
+    `${REFRESH_COOKIE}=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0${config.env === 'production' ? '; Secure' : ''}`);
+}
 
 // A new sign-in starts a token family; rotation continues the same one.
 // Rotation passes its transaction client so every family change is atomic.
@@ -143,6 +162,7 @@ router.post('/login', limitByIp, asyncHandler(async (req, res) => {
   const session = await issueRefreshToken(null, user.id, req, {
     twoFactorAuthenticated,
   });
+  setRefreshCookie(res, session.token);
   res.json({
     accessToken: signAccessToken({ ...user, two_factor_authenticated: twoFactorAuthenticated }, session.familyId),
     refreshToken: session.token,
@@ -238,7 +258,7 @@ router.post('/2fa/recovery-codes', limitByIp, requireAuth, rejectImpersonation, 
 
 // POST /auth/refresh — rotate the refresh token, issue a new access token
 router.post('/refresh', limitByIp, asyncHandler(async (req, res) => {
-  const { refreshToken } = req.body || {};
+  const refreshToken = req.body?.refreshToken || cookieValue(req, REFRESH_COOKIE);
   if (!refreshToken) return res.status(400).json({ error: 'missing_token' });
   const hash = hashRefreshToken(refreshToken);
 
@@ -301,16 +321,18 @@ router.post('/refresh', limitByIp, asyncHandler(async (req, res) => {
     full_name: rec.full_name,
     two_factor_authenticated: rec.two_factor_authenticated,
   }, next.familyId);
+  setRefreshCookie(res, next.token);
   res.json({ accessToken, refreshToken: next.token });
 }));
 
 // POST /auth/logout — revoke a refresh token
 router.post('/logout', asyncHandler(async (req, res) => {
-  const { refreshToken } = req.body || {};
+  const refreshToken = req.body?.refreshToken || cookieValue(req, REFRESH_COOKIE);
   if (refreshToken) {
     await query('UPDATE refresh_tokens SET revoked_at = now() WHERE token_hash = $1 AND revoked_at IS NULL',
       [hashRefreshToken(refreshToken)]);
   }
+  clearRefreshCookie(res);
   res.status(204).end();
 }));
 
@@ -341,7 +363,7 @@ router.delete('/sessions/:id', requireAuth, rejectImpersonation, asyncHandler(as
 }));
 
 router.post('/sessions/revoke-others', requireAuth, rejectImpersonation, asyncHandler(async (req, res) => {
-  const { refreshToken } = req.body || {};
+  const refreshToken = req.body?.refreshToken || cookieValue(req, REFRESH_COOKIE);
   if (!refreshToken) return res.status(400).json({ error: 'missing_token' });
   const mine = (await query(
     'SELECT family_id FROM refresh_tokens WHERE user_id = $1 AND token_hash = $2 AND revoked_at IS NULL',

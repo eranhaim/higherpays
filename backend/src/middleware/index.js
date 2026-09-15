@@ -31,6 +31,15 @@ const requireAuth = asyncHandler(async (req, _res, next) => {
       [payload.jti, payload.actor, payload.sub, payload.workspace])).rows[0];
     if (!active) return next(new UnauthorizedError('invalid_token'));
   }
+  if (payload.sid && payload.impersonation !== true) {
+    const activeSession = (await query(
+      `SELECT 1 FROM refresh_tokens
+        WHERE family_id=$1 AND user_id=$2
+          AND revoked_at IS NULL AND expires_at > now() AND absolute_expires_at > now()
+        LIMIT 1`,
+      [payload.sid, payload.sub])).rows[0];
+    if (!activeSession) return next(new UnauthorizedError('session_revoked'));
+  }
 
   req.user = {
     id: payload.sub,
@@ -105,6 +114,19 @@ const requirePermission = (permission) => (req, _res, next) => {
   next();
 };
 
+// Platform administrators also receive workspace-admin seats. Their operator
+// MFA must still protect those workspace routes.
+const requirePlatformMfa = asyncHandler(async (req, _res, next) => {
+  const userIds = [req.user.id, req.user.actorId].filter(Boolean);
+  const row = (await query(
+    'SELECT 1 FROM users WHERE id = ANY($1::uuid[]) AND is_platform_admin',
+    [userIds])).rows[0];
+  if (row && !req.user.twoFactorAuthenticated) {
+    throw new ForbiddenError('platform_two_factor_required');
+  }
+  next();
+});
+
 const requireRoleManager = asyncHandler(async (req, _res, next) => {
   if (!req.access) throw new HttpError(500, 'workspace_context_missing');
   if (req.access.role === 'workspace_owner') {
@@ -171,6 +193,6 @@ function errorHandler(err, req, res, next) {
 }
 
 module.exports = {
-  requireAuth, requireWorkspace, requirePermission, requireRoleManager, requireArchiveManager,
+  requireAuth, requireWorkspace, requirePlatformMfa, requirePermission, requireRoleManager, requireArchiveManager,
   requirePlatformAdmin, errorHandler,
 };

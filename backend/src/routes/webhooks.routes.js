@@ -64,7 +64,7 @@ router.post('/payment/:endpoint', asyncHandler(async (req, res) => {
   const event = (await query(
     `INSERT INTO webhook_events (workspace_id, provider, event_type, provider_event_id, signature_valid, payload)
      VALUES ($1,$2,$3,$4,$5,$6)
-     ON CONFLICT (provider, provider_event_id, event_type) DO UPDATE SET provider = EXCLUDED.provider
+     ON CONFLICT (workspace_id, provider, provider_event_id, event_type) DO UPDATE SET provider = EXCLUDED.provider
      RETURNING id, processed`,
     [ws.id, PROVIDER, ev.status, ev.providerEventId, signatureValid, ev.fields])).rows[0];
   if (event.processed) return res.status(200).json({ ok: true, duplicate: true });

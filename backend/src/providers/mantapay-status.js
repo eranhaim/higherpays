@@ -14,6 +14,7 @@
 //                reference back to the real outcome.
 const config = require('../config');
 const sig = require('./mantapay-signature');
+const { fetchWithTimeout } = require('./http');
 
 const STATUS_PATH = '/member/getStatus.asp';
 
@@ -24,7 +25,7 @@ function orderSignature(companyNum, order, hashKey) {
 }
 
 async function httpGet(url) {
-  const r = await fetch(url, { method: 'GET' });
+  const r = await fetchWithTimeout(url, { method: 'GET' });
   const text = await r.text();
   return { ok: r.ok, status: r.status, text };
 }

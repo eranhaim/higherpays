@@ -47,6 +47,7 @@ const config = {
   // Status check / server-to-server; different host from the hosted page.
   mantapaySearchBase: process.env.MANTAPAY_SEARCH_BASE || 'https://webservices.mantapay.biz',
   mantapayProcessBase: process.env.MANTAPAY_PROCESS_BASE || 'https://process.mantapay.biz',
+  mantapayHttpTimeoutMs: parseInt(process.env.MANTAPAY_HTTP_TIMEOUT_MS || '10000', 10),
   mantapayCpm: process.env.MANTAPAY_CPM || '743',
   // `additive` is the proven live contract. `included` must remain opt-in until
   // MantaPay confirms its bank-side fix and exact fee-field contract are live.

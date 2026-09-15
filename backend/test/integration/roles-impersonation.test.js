@@ -198,3 +198,11 @@ test('platform admin promotion preserves existing roles and demotion removes onl
     'SELECT count(*)::int AS count FROM workspace_users WHERE user_id=$1',
     [platformOnly.id])).rows[0].count, 0);
 });
+
+test('an agency owner cannot change the PSP merchant identity', async () => {
+  const tenant = await createTenant(app);
+  await request(app).patch(`/workspaces/${tenant.workspaceId}`)
+    .set(tenant.authHeaders)
+    .send({ merchantId: 'attacker-merchant' })
+    .expect(403);
+});

@@ -46,3 +46,6 @@ docker-compose.override.yml
 # Local skill installs — machine-local, not part of the app
 .agents/
 skills-lock.json
+
+# Local provider support exports may contain credentials and PII
+telegram chat mantapay support/
