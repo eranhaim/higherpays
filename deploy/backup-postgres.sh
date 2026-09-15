@@ -12,10 +12,18 @@
 # is a hypothesis — restore-test it after setting this up and every quarter.
 set -eu
 
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+fi
+
 CONTAINER="${PG_CONTAINER:-higherpays-pg}"
 BACKUP_DIR="${BACKUP_DIR:-${HOME}/backups/higherpays}"
 KEEP_LOCAL="${KEEP_LOCAL:-30}"
 BUCKET="${BACKUP_S3_BUCKET:-$(grep -E '^BACKUP_S3_BUCKET=' .env 2>/dev/null | cut -d= -f2- || true)}"
+ENDPOINT="${BACKUP_S3_ENDPOINT:-}"
 BACKUP_URL="${BACKUP_DATABASE_URL:-}"
 if [ -z "$BACKUP_URL" ]; then
   BACKUP_URL="$(grep -E '^MIGRATIONS_DATABASE_URL=' .env 2>/dev/null | cut -d= -f2- | tr -d '\r' | sed 's/^"//; s/"$//' || true)"
@@ -45,7 +53,18 @@ chmod 600 "$FILE"
 echo "[backup] wrote $FILE ($SIZE bytes)"
 
 if [ -n "$BUCKET" ]; then
-  aws s3 cp "$FILE" "s3://$BUCKET/postgres/$(basename "$FILE")" --only-show-errors
+  export AWS_ACCESS_KEY_ID="${BACKUP_S3_ACCESS_KEY_ID:-${AWS_ACCESS_KEY_ID:-}}"
+  export AWS_SECRET_ACCESS_KEY="${BACKUP_S3_SECRET_ACCESS_KEY:-${AWS_SECRET_ACCESS_KEY:-}}"
+  export AWS_DEFAULT_REGION="${BACKUP_S3_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
+  if [ -n "$ENDPOINT" ]; then
+    docker run --rm \
+      -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION \
+      -v "$BACKUP_DIR:/backup:ro" amazon/aws-cli:2 \
+      s3 --endpoint-url "$ENDPOINT" cp "/backup/$(basename "$FILE")" \
+      "s3://$BUCKET/postgres/$(basename "$FILE")" --only-show-errors
+  else
+    aws s3 cp "$FILE" "s3://$BUCKET/postgres/$(basename "$FILE")" --only-show-errors
+  fi
   echo "[backup] uploaded to s3://$BUCKET/postgres/"
 else
   echo "[backup] BACKUP_S3_BUCKET not set — local copy only"
