@@ -25,9 +25,12 @@ const meRoutes = require('./routes/me.routes');
 const archiveRoutes = require('./routes/archive.routes');
 const webhooksRoutes = require('./routes/webhooks.routes');
 const publicPaymentRoutes = require('./routes/public-payment.routes');
+const { router: marketplaceRoutes, startMarketplaceOutboxLoop } = require('./routes/marketplace.routes');
+const eventsRoutes = require('./routes/events.routes');
 const { wsRouter: invitesWsRoutes, publicRouter: invitesPublicRoutes } = require('./routes/invites.routes');
 const { startReconcileLoop } = require('./services/links.service');
 const { requireAuth, requireWorkspace, requirePlatformMfa, errorHandler } = require('./middleware');
+const { publishWorkspaceUpdateAfterResponse, publishPlatformUpdatesAfterResponse } = require('./middleware/workspaceUpdates');
 const { auditRequestContext } = require('./util/audit');
 const { asyncHandler } = require('./lib/http');
 
@@ -93,13 +96,15 @@ app.get('/health', asyncHandler(async (req, res) => {
 }));
 
 app.use('/auth', authRoutes);
+app.use('/integrations/marketplace', marketplaceRoutes);
+app.use('/events', requireAuth, requirePlatformMfa, eventsRoutes);
 
 // The operator console, above any single workspace.
-app.use('/platform', requireAuth, platformRoutes);
+app.use('/platform', requireAuth, publishPlatformUpdatesAfterResponse, platformRoutes);
 
 // Every workspace router runs behind auth + access resolution. Routes inside
 // then gate on specific permissions.
-const ws = [requireAuth, requireWorkspace, requirePlatformMfa];
+const ws = [requireAuth, requireWorkspace, requirePlatformMfa, publishWorkspaceUpdateAfterResponse];
 app.use('/workspaces/:workspaceId/accounts', ws, accountsRoutes);
 app.use('/workspaces/:workspaceId/agents', ws, agentsRoutes);
 app.use('/workspaces/:workspaceId/categories', ws, categoriesRoutes);
@@ -146,6 +151,7 @@ if (require.main === module) {
   // A payment whose webhook never arrived is invisible until someone asks the
   // provider. Nobody should have to press a button for that.
   startReconcileLoop();
+  startMarketplaceOutboxLoop();
 }
 
 module.exports = app;

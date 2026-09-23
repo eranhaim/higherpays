@@ -14,6 +14,7 @@ const { resolveAttribution, repostSales } = require('../services/attribution');
 const paymentsService = require('../services/payments.service');
 const { recordLinkEvent } = require('../services/linkEvents');
 const config = require('../config');
+const { queueLifecycleEventForReference } = require('./marketplace.routes');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -567,6 +568,15 @@ async function reverse(req, res, kind) {
   if (result.already) return res.status(409).json({ error: 'already_reversed', as: result.already });
 
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: `payment.${kind}`, entityType: 'payment', entityId: req.params.id });
+  const link = (await query(
+    'SELECT reference_id FROM payment_links WHERE id=(SELECT payment_link_id FROM payments WHERE id=$1)',
+    [req.params.id],
+  )).rows[0];
+  if (link?.reference_id) void queueLifecycleEventForReference(
+    link.reference_id,
+    kind === 'refund' ? 'payment.refunded' : 'payment.chargeback',
+    `${kind}:${req.params.id}`,
+  );
   const e = result.entry;
   res.json({
     ok: true, reversed: result.amount, currency: result.currency,

@@ -5,6 +5,8 @@ const { query, withTransaction } = require('../db');
 const { asyncHandler } = require('../lib/http');
 const provider = require('../providers/mantapay');
 const paymentsService = require('../services/payments.service');
+const { publishWorkspaceUpdate } = require('../events/workspaceEvents');
+const { queueLifecycleEventForReference } = require('./marketplace.routes');
 
 const router = express.Router();
 const PROVIDER = 'mantapay';
@@ -115,6 +117,13 @@ router.post('/payment/:endpoint', asyncHandler(async (req, res) => {
     throw error;
   }
 
+  if (!result.duplicate && !result.already) publishWorkspaceUpdate(ws.id);
+  if (!result.duplicate && !result.already) {
+    const lifecycleType = ev.kind === 'chargeback'
+      ? 'payment.chargeback'
+      : ev.status === 'approved' ? 'payment.approved' : null;
+    if (lifecycleType) void queueLifecycleEventForReference(ev.referenceId, lifecycleType, ev.transactionId);
+  }
   res.status(200).json({
     ok: true,
     status: ev.status,
