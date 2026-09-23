@@ -32,9 +32,10 @@ CREATE TABLE marketplace_event_outbox (
   next_attempt_at       timestamptz NOT NULL DEFAULT now(),
   delivered_at          timestamptz,
   last_error            text,
-  created_at            timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (marketplace_order_id, event_type, payload->>'providerTransactionId')
+  created_at            timestamptz NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX uq_marketplace_event_outbox_lifecycle
+  ON marketplace_event_outbox(marketplace_order_id, event_type, (payload->>'providerTransactionId'));
 CREATE INDEX idx_marketplace_event_outbox_pending
   ON marketplace_event_outbox(next_attempt_at)
   WHERE delivered_at IS NULL;

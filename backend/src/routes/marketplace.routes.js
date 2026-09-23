@@ -111,7 +111,7 @@ async function queueLifecycleEventForReference(referenceId, type, providerTransa
       `INSERT INTO marketplace_event_outbox
          (marketplace_order_id, event_type, payload)
        VALUES ($1,$2,$3)
-       ON CONFLICT (marketplace_order_id, event_type, (payload->>'providerTransactionId')) DO NOTHING`,
+       ON CONFLICT DO NOTHING`,
       [row.marketplace_order_id, type, payload],
     );
   });
