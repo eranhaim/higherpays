@@ -23,7 +23,8 @@ const SELECT = `
          ca.name AS category, u.full_name AS agent, pl.reference_id AS link_reference, pl.type AS link_type,
          t.provider_transaction_id, t.fee AS provider_fee, t.surcharge,
          t.status AS provider_status,
-         (SELECT platform_fee FROM revenue_entries re WHERE re.transaction_id = t.id AND re.entry_type = 'sale') AS platform_fee
+         (SELECT platform_fee FROM revenue_entries re WHERE re.transaction_id = t.id AND re.entry_type = 'sale') AS platform_fee,
+         (SELECT distributable FROM revenue_entries re WHERE re.transaction_id = t.id AND re.entry_type = 'sale') AS distributable
     FROM payments p
     JOIN accounts a ON a.id = p.account_id
     LEFT JOIN customers cu ON cu.id = p.customer_id
@@ -49,6 +50,10 @@ function publicPayment(p, { seesFees }) {
     reviewReason: p.review_reason,
     archivedAt: p.archived_at,
     needsDetails: p.status === 'paid' && p.review_reason == null && p.category_id == null,
+    // Agents need to see the actual amount the agency received, not the
+    // customer-facing content price. We expose the final ledger result, never
+    // recalculate fees in the HTTP layer.
+    ...(!seesFees ? { amountAfterFees: p.distributable == null ? null : Number(p.distributable) } : {}),
     ...(seesFees ? { platformFee: p.platform_fee == null ? null : Number(p.platform_fee) } : {}),
   };
 }
@@ -133,6 +138,7 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
        )
        SELECT COALESCE(SUM(amount) FILTER (WHERE status = 'paid' AND review_reason IS NULL), 0) AS gross_content,
               COALESCE(SUM(COALESCE(platform_fee, 0)) FILTER (WHERE status = 'paid' AND review_reason IS NULL), 0) AS platform_fees,
+              COALESCE(SUM(COALESCE(distributable, 0)) FILTER (WHERE status = 'paid' AND review_reason IS NULL), 0) AS after_fees,
               COUNT(*) FILTER (WHERE provider_status = 'approved')::int AS approved_payments,
               COUNT(*) FILTER (WHERE provider_status IN ('pending', 'approved', 'declined'))::int AS attempts,
               COUNT(*) FILTER (WHERE status = 'paid' AND review_reason IS NULL AND category_id IS NULL)::int AS details_needed,
@@ -151,10 +157,12 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
 
   const grossContent = Number(out.row.gross_content);
   const platformFees = Number(out.row.platform_fees);
+  const afterFees = Number(out.row.after_fees);
   const seesFees = hasPermission(req.access, 'data.view_all');
   res.json({
     grossContent,
     ...(seesFees ? { platformFees, netProfit: grossContent - platformFees } : {}),
+    ...(!seesFees ? { afterFees } : {}),
     approvedPayments: out.row.approved_payments,
     attempts: out.row.attempts,
     approvalRate: out.row.attempts ? Math.round((out.row.approved_payments / out.row.attempts) * 100) : 0,

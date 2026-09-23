@@ -116,7 +116,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                   } : undefined}
                 >
                   {columns.map((c) => (
-                    <td key={c.key} style={{ textAlign: c.align }}>{c.render(row)}</td>
+                    <td key={c.key} data-label={c.header} style={{ textAlign: c.align }}>{c.render(row)}</td>
                   ))}
                 </tr>
               ))

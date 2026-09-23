@@ -786,19 +786,32 @@ label.setrow { cursor: pointer; }
   .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; min-height: 100vh; }
   /* The sidebar becomes a sticky top bar with a horizontal-scroll nav strip. */
   .side {
-    gap: 12px; border-right: none; border-bottom: 1px solid var(--rule);
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 12px;
+    border-right: none; border-bottom: 1px solid var(--rule);
     padding: 12px 12px 10px; position: sticky; top: 0; z-index: var(--z-sticky);
     /* Same reason as main: without this the nav strip sizes the whole page. */
     min-width: 0;
   }
-  nav { flex-direction: row; flex-wrap: nowrap; overflow-x: auto; gap: 6px; scrollbar-width: none; padding-bottom: 2px; }
-  nav::-webkit-scrollbar { display: none; }
+  .brand { min-width: 0; }
+  .side nav {
+    grid-column: 1 / -1; grid-row: 2;
+    display: flex; flex-direction: row; flex-wrap: nowrap;
+    overflow-x: auto; overflow-y: hidden; gap: 6px;
+    scrollbar-width: none; padding-bottom: 2px;
+  }
+  .side nav::-webkit-scrollbar { display: none; }
   /* The groups are a sidebar idea. In a strip they would each be a column of
      their own, so they stop being boxes and their items join the row. */
-  nav > div { display: contents; }
+  .side nav > div { display: contents; }
   .nav-lbl { display: none; }
   .navitem { width: auto; white-space: nowrap; flex-shrink: 0; padding: 9px 13px; min-height: 40px; }
-  .side-foot { margin: 0; border: none; padding: 0; gap: 8px; }
+  .side-foot {
+    grid-column: 2; grid-row: 1; margin: 0; border: none; padding: 0;
+    flex-direction: row; align-items: center; gap: 8px;
+  }
+  .side-foot .user-block { padding: 0; text-align: right; }
+  .side-foot .user-email { display: none; }
+  .side-foot .btn { min-height: 36px; padding: 7px 10px; white-space: nowrap; }
   .ws-picker { display: flex; align-items: center; gap: 8px; }
   .ws-picker label { margin: 0; }
   main, .page { padding: 16px 14px; }
@@ -822,6 +835,45 @@ label.setrow { cursor: pointer; }
 @media (max-width: 760px) {
   .grid2 { grid-template-columns: 1fr; }
   .flow-branches { grid-template-columns: 1fr; }
+  /*
+   * Dense desktop tables become readable cards on a phone. The shared
+   * DataTable supplies each cell's data-label, so individual pages cannot
+   * drift back to an unreadable side-scrolling table.
+   */
+  .tableblock > .tablewrap, .mobile-cards { max-height: none; overflow: visible; background: transparent; border: 0; }
+  .tableblock > .tablewrap > table, .mobile-cards > table,
+  .tableblock > .tablewrap > table > tbody, .mobile-cards > table > tbody,
+  .tableblock > .tablewrap > table > tbody > tr, .mobile-cards > table > tbody > tr,
+  .tableblock > .tablewrap > table > tbody > tr > td, .mobile-cards > table > tbody > tr > td,
+  .mobile-cards > table > tbody > tr > th {
+    display: block; width: 100%;
+  }
+  .tableblock > .tablewrap > table > thead, .mobile-cards > table > thead { display: none; }
+  .tableblock > .tablewrap > table > tbody, .mobile-cards > table > tbody {
+    display: grid; gap: 8px;
+  }
+  .tableblock > .tablewrap > table > tbody > tr, .mobile-cards > table > tbody > tr {
+    padding: 2px 14px; background: var(--surface-2);
+    border: 1px solid var(--rule); border-radius: var(--radius);
+  }
+  .tableblock > .tablewrap > table > tbody > tr > td,
+  .mobile-cards > table > tbody > tr > td,
+  .mobile-cards > table > tbody > tr > th {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 10px 0; text-align: right !important;
+  }
+  .tableblock > .tablewrap > table > tbody > tr > td::before,
+  .mobile-cards > table > tbody > tr > td::before,
+  .mobile-cards > table > tbody > tr > th::before {
+    content: attr(data-label); flex: 1; text-align: left;
+    font-size: var(--text-micro); text-transform: uppercase;
+    letter-spacing: var(--tracking-label); font-weight: 600; color: var(--muted);
+  }
+  .tableblock td[colspan], .mobile-cards td[colspan] { display: block !important; text-align: left !important; }
+  .tableblock td[colspan]::before, .mobile-cards td[colspan]::before { display: none; }
+  .tableblock > .tablewrap > table > tbody > tr > td > *,
+  .mobile-cards > table > tbody > tr > td > *,
+  .mobile-cards > table > tbody > tr > th > * { max-width: 58%; }
 }
 @media (max-width: 430px) {
   .stats { grid-template-columns: 1fr; }
@@ -833,4 +885,8 @@ label.setrow { cursor: pointer; }
   .pagehead-actions { justify-content: stretch; }
   .pagehead .btn { width: 100%; }
   main, .page { padding: 14px 12px; }
+  .brand h1 { display: none; }
+  .brand-sep { display: none; }
+  .side-foot .user-name { font-size: 0; }
+  .side-foot .rolebadge { font-size: var(--text-xs); }
 }

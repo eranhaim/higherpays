@@ -112,7 +112,9 @@ export default function PaymentsPage() {
   const statCards = [
     {
       key: 'gross', label: 'Gross',
-      card: <StatCard isUnknown={statsUnknown} label="Gross content" value={<Money amount={summary?.grossContent ?? 0} currency={summary?.currency} direction="in" />} sub="Gross revenue, before fees" />,
+      card: canScope
+        ? <StatCard isUnknown={statsUnknown} label="Gross content" value={<Money amount={summary?.grossContent ?? 0} currency={summary?.currency} direction="in" />} sub="Gross revenue, before fees" />
+        : <StatCard isUnknown={statsUnknown} label="After fees" value={<Money amount={summary?.afterFees ?? 0} currency={summary?.currency} direction="in" />} sub="What reached the agency after all fees" />,
     },
     ...(canScope ? [{
       key: 'fees', label: 'Platform fees',
@@ -196,8 +198,8 @@ export default function PaymentsPage() {
     },
     { key: 'category', header: 'Category', render: (p) => p.category ?? '—' },
     {
-      key: 'amount', header: 'Amount', sortKey: 'amount',
-      render: (p) => <Money amount={p.amount} currency={p.currency}
+      key: 'amount', header: canScope ? 'Amount' : 'After fees', sortKey: 'amount',
+      render: (p) => <Money amount={canScope ? p.amount : (p.amountAfterFees ?? p.amount)} currency={p.currency}
         direction={isReversed(p.status) ? 'out' : p.status === 'paid' && !p.reviewRequired ? 'in' : undefined} />,
     },
     ...(canScope ? [{
@@ -339,7 +341,7 @@ export default function PaymentsPage() {
                 <DetailRow label={labels.agent}>{detail.agent ?? '—'}</DetailRow>
               </>
             )}
-            <DetailRow label="Amount"><Money amount={detail.amount} currency={detail.currency}
+            <DetailRow label={detail.amountAfterFees != null ? 'After fees' : 'Amount'}><Money amount={detail.amountAfterFees ?? detail.amount} currency={detail.currency}
               direction={detail.reviewRequired ? undefined : 'in'} /></DetailRow>
             {detail.platformFee != null && (
               <>

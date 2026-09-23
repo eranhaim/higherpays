@@ -51,6 +51,11 @@ export interface Payment {
   archivedAt: string | null;
   /** Paid, but the agent has not yet said who paid and what for. */
   needsDetails: boolean;
+  /**
+   * The final ledger amount after all provider and platform fees. This is sent
+   * to limited-scope users instead of a fee breakdown.
+   */
+  amountAfterFees?: number | null;
   /** Only sent to callers who see the whole workspace. */
   platformFee?: number | null;
 }
@@ -101,6 +106,8 @@ export interface PaymentFlow {
 
 export interface PaymentsSummary {
   grossContent: number;
+  /** Sent to limited-scope users: the agency's actual receipt after all fees. */
+  afterFees?: number;
   /** Only sent to callers with workspace-wide data access. */
   platformFees?: number;
   /** Only sent to callers with workspace-wide data access. */
