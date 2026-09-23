@@ -82,6 +82,14 @@ const config = {
   // A single-use payment link dies this long after creation if nobody pays.
   // MantaPay honours ExpiredOn on the hosted page; the reconciler mirrors it.
   linkTtlMinutes: parseInt(process.env.LINK_TTL_MINUTES || String(24 * 60), 10),
+  // Marketplace integration secrets are dedicated service credentials. The
+  // raw API key and event signing secret never enter the database.
+  marketplaceIntegrationApiKeyHash: process.env.MARKETPLACE_INTEGRATION_API_KEY_HASH || null,
+  marketplaceWorkspaceId: process.env.MARKETPLACE_WORKSPACE_ID || null,
+  marketplaceAccountId: process.env.MARKETPLACE_ACCOUNT_ID || null,
+  marketplaceAgentId: process.env.MARKETPLACE_AGENT_ID || null,
+  marketplaceWebhookUrl: process.env.MARKETPLACE_WEBHOOK_URL || null,
+  marketplaceWebhookSigningSecret: process.env.MARKETPLACE_WEBHOOK_SIGNING_SECRET || null,
 
   // Browser origins allowed to call the API directly. In production the
   // frontend is served from the same origin (nginx proxies /api), so this
@@ -105,6 +113,14 @@ config.integrations = [
   { name: 'MantaPay Search API credentials', enabled: Boolean(config.mantapayApiEmail && config.mantapayApiUsername && config.mantapayApiPassword && config.mantapayAppToken && config.mantapaySearchSalt), needs: 'MANTAPAY_API_EMAIL, MANTAPAY_API_USERNAME, MANTAPAY_API_PASSWORD, MANTAPAY_APP_TOKEN, MANTAPAY_SEARCH_SALT' },
   { name: 'MantaPay refunds', enabled: config.mantapayRefundEnabled, needs: 'MANTAPAY_REFUND_ENABLED=true' },
   { name: 'Telegram notifications', enabled: Boolean(config.telegramBotToken), needs: 'TELEGRAM_BOT_TOKEN' },
+  { name: 'Marketplace checkout', enabled: Boolean(
+    config.marketplaceIntegrationApiKeyHash
+    && config.marketplaceWorkspaceId
+    && config.marketplaceAccountId
+    && config.marketplaceAgentId
+    && config.marketplaceWebhookUrl
+    && config.marketplaceWebhookSigningSecret,
+  ), needs: 'MARKETPLACE_INTEGRATION_API_KEY_HASH, MARKETPLACE_WORKSPACE_ID, MARKETPLACE_ACCOUNT_ID, MARKETPLACE_AGENT_ID, MARKETPLACE_WEBHOOK_URL, MARKETPLACE_WEBHOOK_SIGNING_SECRET' },
 ];
 
 module.exports = config;
