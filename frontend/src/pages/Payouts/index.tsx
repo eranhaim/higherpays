@@ -60,16 +60,15 @@ function MyEarnings() {
     <div>
       {header}
       <StatGrid>
-        <StatCard label="Earned this period" value={<Money amount={period.earned} direction="in" emphasis />} sub={`${period.sales} paid sales`} />
+        <StatCard label="Sales after fees" value={<Money amount={period.afterFees} direction="in" emphasis />} sub={`${period.sales} paid sales · what reached the agency`} />
+        <StatCard label="Your commission" value={<Money amount={period.earned} direction="in" />} sub={`${period.yourRatePct}% of after-fee sales`} />
         <StatCard label="Still owed to you" value={<Money amount={balance.owed} direction="in" />} sub="Across all periods, not yet paid out" />
         <StatCard label="Paid to date" value={<Money amount={balance.paidToDate} />} sub="Everything already paid out" />
         <StatCard label="Your rate" value={`${period.yourRatePct}%`} sub="Of the amount left after fees" />
       </StatGrid>
       <div className="card">
         <div className="sechead">How this period adds up</div>
-        <DetailRow label="Gross sales"><Money amount={period.gross} direction="in" /></DetailRow>
-        <DetailRow label="Fees deducted"><Money amount={period.deductions} direction="out" /></DetailRow>
-        <DetailRow label="After fees"><Money amount={period.afterFees} /></DetailRow>
+        <DetailRow label="Agency received after fees"><Money amount={period.afterFees} direction="in" /></DetailRow>
         <DetailRow label={`Your ${period.yourRatePct}%`}><Money amount={period.earned} direction="in" emphasis /></DetailRow>
       </div>
     </div>
@@ -191,7 +190,7 @@ function AgencyPayouts() {
             </button>
           )}
         </div>
-        <div className="tablewrap flush">
+        <div className="tablewrap flush mobile-cards">
           <table>
             <thead>
               <tr>
@@ -206,10 +205,10 @@ function AgencyPayouts() {
                 <tr><td colSpan={4}><EmptyState title={`No ${labels.accounts.toLowerCase()} yet.`} /></td></tr>
               ) : data.perAccount.map((c) => (
                 <tr key={c.id}>
-                  <th scope="row">{c.name}{c.payModel === 'salary' ? <span className="sub inline"> · salary</span> : null}</th>
-                  <td><Money amount={c.revenue} direction="in" /></td>
-                  <td><Money amount={c.owed} direction="out" emphasis /></td>
-                  <td>{c.owed > 0 ? <><Pill tone="ok">Accruing</Pill> {payButton('account', c.id, c.name, c.owed)}</> : <Pill>Settled</Pill>}</td>
+                  <th scope="row" data-label={labels.account}>{c.name}{c.payModel === 'salary' ? <span className="sub inline"> · salary</span> : null}</th>
+                  <td data-label="Revenue"><Money amount={c.revenue} direction="in" /></td>
+                  <td data-label="Owed"><Money amount={c.owed} direction="out" emphasis /></td>
+                  <td data-label="Status">{c.owed > 0 ? <><Pill tone="ok">Accruing</Pill> {payButton('account', c.id, c.name, c.owed)}</> : <Pill>Settled</Pill>}</td>
                 </tr>
               ))}
             </tbody>
@@ -226,7 +225,7 @@ function AgencyPayouts() {
             </button>
           )}
         </div>
-        <div className="tablewrap flush">
+        <div className="tablewrap flush mobile-cards">
           <table>
             <thead>
               <tr>
@@ -241,10 +240,10 @@ function AgencyPayouts() {
                 <tr><td colSpan={4}><EmptyState title={`No ${labels.agents.toLowerCase()} yet.`} /></td></tr>
               ) : data.perAgent.map((c) => (
                 <tr key={c.id}>
-                  <th scope="row">{c.name}</th>
-                  <td>{c.sales}</td>
-                  <td><Money amount={c.owed} direction="out" emphasis /></td>
-                  <td>{c.owed > 0 ? <><Pill tone="ok">Accruing</Pill> {payButton('agent', c.id, c.name, c.owed)}</> : <Pill>Settled</Pill>}</td>
+                  <th scope="row" data-label={labels.agent}>{c.name}</th>
+                  <td data-label="Sales">{c.sales}</td>
+                  <td data-label="Commission owed"><Money amount={c.owed} direction="out" emphasis /></td>
+                  <td data-label="Status">{c.owed > 0 ? <><Pill tone="ok">Accruing</Pill> {payButton('agent', c.id, c.name, c.owed)}</> : <Pill>Settled</Pill>}</td>
                 </tr>
               ))}
             </tbody>

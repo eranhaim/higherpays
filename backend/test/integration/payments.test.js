@@ -93,6 +93,31 @@ test('an account owner sees their own payments and none of the fees', async () =
   assert.ok(admin[0].platformFee > 0);
 });
 
+test('an agent sees the after-fee receipt, not the customer-facing price', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const agent = await createAgent(app, t);
+  await assignAgent(app, t, account.id, agent.id);
+  const { paymentId } = await paySale(app, t, account, 40, { headers: agent.headers });
+
+  const entry = (await pool.query(
+    `SELECT re.distributable
+       FROM revenue_entries re
+       JOIN transactions tx ON tx.id = re.transaction_id
+      WHERE tx.payment_id = $1 AND re.entry_type = 'sale'`,
+    [paymentId],
+  )).rows[0];
+
+  const list = (await request(app).get(`/workspaces/${t.workspaceId}/payments`)
+    .set(agent.headers).expect(200)).body.items;
+  const summary = (await request(app).get(`/workspaces/${t.workspaceId}/payments/summary`)
+    .set(agent.headers).expect(200)).body;
+  assert.equal(list[0].amount, 40, 'the API retains the immutable sale amount');
+  assert.equal(list[0].amountAfterFees, Number(entry.distributable));
+  assert.equal(summary.afterFees, Number(entry.distributable));
+  assert.equal(list[0].platformFee, undefined, 'the fee breakdown remains private');
+});
+
 test('payment summaries use all filtered rows and keep checkout-fee revenue platform-only', async () => {
   const t = await createTenant(app, { checkoutFee: 2 });
   const account = await createAccount(app, t);
