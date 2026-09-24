@@ -175,6 +175,8 @@ export const linksApi = {
 
   cancel: (id: string) => api.post<PaymentLink>(workspacePath(`/links/${id}/cancel`), {}),
 
+  remove: (id: string) => api.del<void>(workspacePath(`/links/${id}`)),
+
   updateNote: (id: string, description: string) =>
     api.patch<PaymentLink>(workspacePath(`/links/${id}/note`), { description }),
 

@@ -23,8 +23,10 @@ import {
 import { useLinkDetail, useLinksData } from './useLinksData';
 import { DEFAULT_FILTERS, hasActiveFilters, rangeIsInverted, type LinksFilters } from './filters';
 
-const STATUS_TONE: Record<LinkStatus, 'ok' | 'no' | 'warn' | 'muted'> = {
-  active: 'ok',
+const STATUS_TONE: Record<LinkStatus, 'ok' | 'no' | 'warn' | 'info' | 'muted'> = {
+  // An open link is informational, not successful. Green is reserved for a
+  // completed payment so the two states cannot be confused at a glance.
+  active: 'info',
   pending: 'warn',
   done: 'ok',
   expired: 'muted',
@@ -94,7 +96,7 @@ export default function LinksPage() {
 
   const {
     links, summary, accounts, linkLimits, isLoading, isError, isSummaryLoading, isSummaryError, hasMore, isLoadingMore, loadMore,
-    createLink, cancelLink, updateNote, setArchived, reassignLink,
+    createLink, cancelLink, deleteCancelledLink, updateNote, setArchived, reassignLink,
   } = useLinksData(query);
   const [createOpen, setCreateOpen] = useState(false);
   const [accountId, setAccountId] = useState('');
@@ -110,6 +112,8 @@ export default function LinksPage() {
   const [isSavingNote, setIsSavingNote] = useState(false);
   const [cancelling, setCancelling] = useState<PaymentLink | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
+  const [deleting, setDeleting] = useState<PaymentLink | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const conversion = summary?.totalLinks ? Math.round((summary.paidLinks / summary.totalLinks) * 100) : 0;
   const statsUnknown = isSummaryLoading || isSummaryError || !summary;
@@ -202,6 +206,20 @@ export default function LinksPage() {
       toast(err instanceof Error ? err.message : 'Could not cancel the link.');
     } finally {
       setIsCancelling(false);
+    }
+  };
+
+  const confirmDelete = async (l: PaymentLink) => {
+    setIsDeleting(true);
+    try {
+      await deleteCancelledLink(l.id);
+      setDeleting(null);
+      setDetail(null);
+      toast('Cancelled link deleted.');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Could not delete the link.');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -430,6 +448,9 @@ export default function LinksPage() {
               {isShareable(detailData.status) && canCreate && (
                 <button className="btn danger" onClick={() => setCancelling(detailData)}>Cancel link</button>
               )}
+              {detailData.status === 'cancelled' && canCreate && (
+                <button className="btn danger" onClick={() => setDeleting(detailData)}>Delete link</button>
+              )}
               {canArchive && (detailData.archivedAt
                 ? <button className="btn ghost" onClick={() => changeArchived(detailData, false)}>Restore link</button>
                 : <button className="btn ghost" onClick={() => changeArchived(detailData, true)}>Archive link</button>)}
@@ -534,6 +555,19 @@ export default function LinksPage() {
             <button className="btn ghost" onClick={() => setCancelling(null)}>Keep it</button>
             <button className="btn danger" disabled={isCancelling} onClick={() => confirmCancel(cancelling)}>
               {isCancelling ? 'Cancelling…' : 'Cancel link'}
+            </button>
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={deleting !== null} onClose={() => setDeleting(null)}
+        title={deleting ? `Delete ${deleting.referenceId}?` : ''}
+        subtitle="This permanently removes this cancelled link and its activity. It cannot be undone. Paid links can never be deleted.">
+        {deleting && (
+          <div className="modal-actions">
+            <button className="btn ghost" onClick={() => setDeleting(null)}>Keep link</button>
+            <button className="btn danger" disabled={isDeleting} onClick={() => confirmDelete(deleting)}>
+              {isDeleting ? 'Deleting…' : 'Delete permanently'}
             </button>
           </div>
         )}

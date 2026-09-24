@@ -395,6 +395,39 @@ router.post('/:id/cancel', requirePermission('links.create'), asyncHandler(async
   res.json(publicLink(out));
 }));
 
+// DELETE /:id — permanently remove a cancelled link that has never received
+// a payment attempt. Paid links stay immutable financial history; cancelled
+// drafts have no accounting value and should not clutter the operator's list.
+router.delete('/:id', requirePermission('links.create'), asyncHandler(async (req, res) => {
+  const out = await withTransaction(async (c) => {
+    const scope = await resolveDataScope(c, req);
+    const link = (await c.query(
+      `SELECT id
+         FROM payment_links
+        WHERE workspace_id = $1 AND id = $2 AND status = 'cancelled'
+          AND ($3::uuid IS NULL OR created_by_agent_id = $3::uuid)
+          AND ($4::uuid IS NULL OR account_id = $4::uuid)
+        FOR UPDATE`,
+      [wid(req), req.params.id, ...scopeParams(scope)],
+    )).rows[0];
+    if (!link) return null;
+
+    const hasPayments = (await c.query(
+      'SELECT 1 FROM payments WHERE workspace_id=$1 AND payment_link_id=$2 LIMIT 1',
+      [wid(req), link.id],
+    )).rows[0];
+    if (hasPayments) return { hasPayments: true };
+
+    await c.query('DELETE FROM payment_link_events WHERE workspace_id=$1 AND payment_link_id=$2', [wid(req), link.id]);
+    await c.query('DELETE FROM payment_links WHERE workspace_id=$1 AND id=$2', [wid(req), link.id]);
+    return { id: link.id };
+  });
+  if (!out) return res.status(404).json({ error: 'not_found_or_not_cancelled' });
+  if (out.hasPayments) return res.status(409).json({ error: 'payment_history_exists' });
+  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'link.delete', entityType: 'payment_link', entityId: out.id });
+  res.status(204).end();
+}));
+
 router.patch('/:id/note', requirePermission('links.create'), asyncHandler(async (req, res) => {
   const description = req.body?.description;
   if (description != null && typeof description !== 'string') {

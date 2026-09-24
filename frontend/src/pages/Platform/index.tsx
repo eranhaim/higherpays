@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import {
   PageHeader, Pill, DataTable, Money, DateCell, EmptyState, LoadingCard, ErrorCard, StatCard, StatGrid,
   Select, type Column,
 } from '../../components/ui';
-import { platformApi, type PlatformWorkspace, type OnboardAgencyInput, type PlatformFeeRate } from '../../api/endpoints';
+import { platformApi, type PlatformWorkspace, type OnboardAgencyInput, type PlatformFeeRate, type PlatformUser } from '../../api/endpoints';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import { usePlatformData } from './usePlatformData';
@@ -36,6 +36,12 @@ export default function PlatformPage() {
   const [editingFee, setEditingFee] = useState<PlatformWorkspace | null>(null);
   const [suspending, setSuspending] = useState<PlatformWorkspace | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  const queryClient = useQueryClient();
+  const users = useQuery({ queryKey: ['platform-users'], queryFn: () => platformApi.listUsers(), enabled: isPlatformAdmin && !requiresTwoFactor });
+  const platformAdmin = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => platformApi.setPlatformAdmin(id, enabled),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['platform-users'] }); },
+  });
 
   const changeStatus = async (w: PlatformWorkspace, status: 'active' | 'suspended') => {
     setIsBusy(true);
@@ -70,6 +76,19 @@ export default function PlatformPage() {
             : <button className="btn ghost small" disabled={isBusy} onClick={() => changeStatus(w, 'active')}>Reactivate</button>}
         </div>
       ),
+    },
+  ];
+  const userColumns: Column<PlatformUser>[] = [
+    { key: 'person', header: 'User', render: (u) => <div><span className="cname">{u.fullName}</span><span className="cemail">{u.email}</span></div> },
+    { key: 'access', header: 'Access', render: (u) => <>{u.isPlatformAdmin && <Pill tone="info">Platform admin</Pill>} {!u.isPlatformAdmin && <Pill>Agency user</Pill>}</> },
+    { key: 'workspaces', header: 'Agencies', render: (u) => <span className="sub">{u.memberships.map((m) => `${m.workspaceName} · ${m.role}`).join(' · ') || 'No agency access'}</span> },
+    { key: 'login', header: 'Last sign-in', render: (u) => u.lastLoginAt ? <DateCell ts={u.lastLoginAt} /> : <span className="sub">Never</span> },
+    {
+      key: 'actions', header: 'Actions', hideHeader: true, align: 'right',
+      render: (u) => <button className="btn ghost small" disabled={platformAdmin.isPending}
+        onClick={() => platformAdmin.mutate({ id: u.id, enabled: !u.isPlatformAdmin })}>
+        {u.isPlatformAdmin ? 'Remove platform admin' : 'Make platform admin'}
+      </button>,
     },
   ];
 
@@ -118,6 +137,13 @@ export default function PlatformPage() {
       {isLoading ? <LoadingCard label="Loading agencies…" />
         : isError ? <ErrorCard message="Couldn't load the agency list." />
           : <DataTable columns={columns} rows={workspaces} rowKey={(w) => w.id} emptyTitle="No agencies yet." emptyHint="Add the first one from the header." />}
+
+      <div className="section">
+        <div className="sechead">All users</div>
+        <p className="sub">Platform-wide access. For agency-specific roles and invitations, open that agency’s People & access page.</p>
+        <DataTable columns={userColumns} rows={users.data ?? []} rowKey={(u) => u.id}
+          isLoading={users.isLoading} emptyTitle="No users yet." />
+      </div>
 
       {onboardOpen && (
         <OnboardAgencyModal

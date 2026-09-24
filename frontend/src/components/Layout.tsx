@@ -214,6 +214,7 @@ export default function Layout() {
               <div className="user-name">
                 {user.fullName}
                 {roleName && <span className="rolebadge">{roleName}</span>}
+                {user.isPlatformAdmin && <span className="rolebadge owner">Platform admin</span>}
               </div>
               <div className="user-email">{user.email}</div>
             </div>

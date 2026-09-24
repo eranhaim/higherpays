@@ -4,7 +4,7 @@ export {
   platformApi,
   type PlatformWorkspace, type PlatformOverview, type OnboardAgencyInput,
   type PlatformFeeRate, type SettlementFee, type PlatformWorkspaceDetail,
-  type ImpersonationTarget, type ImpersonationSession,
+  type ImpersonationTarget, type ImpersonationSession, type PlatformUser,
 } from './platform';
 export { revenueApi, type RevenueRule } from './revenue';
 export {
