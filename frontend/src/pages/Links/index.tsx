@@ -337,6 +337,26 @@ export default function LinksPage() {
         rows={links}
         rowKey={(l) => l.id}
         onRowClick={openDetail}
+        mobileSummary={(l, { expanded, toggle }) => (
+          <div className="mobile-data-card-summary">
+            <div className="mobile-data-card-amount">
+              {l.amount == null ? '—' : <Money amount={l.amount} currency={l.currency} />}
+            </div>
+            <div className="mobile-data-card-status">
+              <Pill tone={STATUS_TONE[l.status]}>{LINK_STATUS_LABELS[l.status]}</Pill>
+            </div>
+            <div className="mobile-data-card-creator">{labels.account}: {l.account}</div>
+            <button
+              type="button"
+              className="mobile-card-toggle"
+              aria-label={expanded ? `Collapse ${l.referenceId}` : `Expand ${l.referenceId}`}
+              aria-expanded={expanded}
+              onClick={toggle}
+            >
+              <span className={`mobile-card-chevron${expanded ? ' open' : ''}`} aria-hidden="true" />
+            </button>
+          </div>
+        )}
         sort={sort}
         onSort={toggleSort}
         isLoading={isLoading}
