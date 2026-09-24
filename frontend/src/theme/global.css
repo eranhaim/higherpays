@@ -888,6 +888,14 @@ label.setrow { cursor: pointer; }
     position: fixed; top: 74px; right: 12px; left: auto;
     width: min(320px, calc(100vw - 24px)); max-height: calc(100dvh - 90px);
   }
+  /* The desktop control editor is a button popover. On a phone it needs to
+     be a self-contained dialog instead of overflowing from its trigger. */
+  .viewpop, .viewpop.right {
+    position: fixed; top: 50%; right: 12px; left: 12px;
+    width: auto; max-width: 360px; max-height: calc(100dvh - 48px);
+    margin: 0 auto; overflow: auto; transform: translateY(-50%);
+    z-index: calc(var(--z-overlay) + 2);
+  }
   .grid2 { grid-template-columns: 1fr; }
   .flow-branches { grid-template-columns: 1fr; }
   /*

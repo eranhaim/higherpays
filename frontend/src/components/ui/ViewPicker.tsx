@@ -46,7 +46,7 @@ export function ViewPicker({ label, view }: ViewPickerProps) {
         {label}
       </button>
       {open ? (
-        <div className="viewpop right">
+        <div className="viewpop right" role="dialog" aria-modal="true" aria-label={label}>
           {view.order.map((key, index) => {
             const item = view.items.find((i) => i.key === key);
             if (!item) return null;
