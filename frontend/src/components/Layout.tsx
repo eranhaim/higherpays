@@ -167,7 +167,7 @@ export default function Layout() {
           <button className="btn small" onClick={exitImpersonation}>Exit impersonation</button>
         </div>
       )}
-      <aside className="side">
+      <aside className={`side${mobileNavOpen ? ' mobile-nav-open' : ''}`}>
         <div className="brand">
           <img className="brand-logo" src="/logo-mark.png" alt="" />
           <span className="brand-sep" aria-hidden="true" />
