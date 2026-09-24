@@ -241,6 +241,7 @@ input.amount-input { width: 110px; }
 .agency-tab.active span { color: var(--accent); }
 .agency-panel { min-width: 0; }
 .page-inline-actions { display: flex; justify-content: flex-end; margin: 0 0 16px; }
+.agency-mobile-section { display: none; }
 
 /* ── Page header ────────────────────────────────────────────────────────── */
 .pagehead {
@@ -858,8 +859,20 @@ label.setrow { cursor: pointer; }
     border-radius: 16px; padding: 22px 20px 20px;
   }
   .modal::before { display: none; }
-  .agency-tabs { display: flex; overflow-x: auto; margin-inline: -4px; padding: 0 4px 4px; scroll-snap-type: x proximity; }
-  .agency-tab { flex: 0 0 min(76vw, 280px); scroll-snap-align: start; }
+  /* Agency is a directory on phones, not a shrunken desktop dashboard. */
+  .agency-page .pagehead { margin-bottom: 12px; }
+  .agency-page .pagehead p { display: none; }
+  .agency-tabs {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
+    overflow: visible; margin: 0 0 10px; padding: 0; gap: 6px;
+  }
+  .agency-tab {
+    min-height: 48px; padding: 9px 6px; align-items: center; justify-content: center;
+    text-align: center; border-radius: 10px;
+  }
+  .agency-tab small { display: none; }
+  .agency-tab span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agency-mobile-section { display: block; margin: 0 2px 14px; color: var(--muted); font-size: var(--text-sm); }
   .page-inline-actions { justify-content: stretch; }
   .page-inline-actions .btn { width: 100%; }
   .setrow > :first-child { flex: 1 1 100%; min-width: 0; }
@@ -922,6 +935,7 @@ label.setrow { cursor: pointer; }
     align-items: center; padding: 12px 14px;
   }
   .mobile-data-card-amount { font-size: 18px; font-weight: 750; }
+  .mobile-data-card-title { min-width: 0; font-size: 16px; font-weight: 750; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-data-card-creator { color: var(--muted); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-data-card-status { justify-self: end; }
   .mobile-card-toggle {

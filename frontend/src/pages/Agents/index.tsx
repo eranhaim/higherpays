@@ -135,6 +135,20 @@ export default function AgentsPage({ embedded = false }: { embedded?: boolean })
         columns={shownColumns}
         rows={visible}
         rowKey={(a) => a.id}
+        mobileSummary={(a, { expanded, toggle }) => (
+          <div className="mobile-data-card-summary">
+            <div className="mobile-data-card-title">{a.name}</div>
+            <div className="mobile-data-card-status"><Pill tone={a.status === 'active' ? 'ok' : 'muted'}>{a.status === 'active' ? 'Active' : 'Archived'}</Pill></div>
+            <div className="mobile-data-card-creator">
+              {a.accountsAssigned} {labels.accounts.toLowerCase()}{canViewCommission ? ` · ${a.commissionPct}% commission` : ''}
+            </div>
+            <button type="button" className="mobile-card-toggle"
+              aria-label={expanded ? `Collapse ${a.name}` : `Expand ${a.name}`}
+              aria-expanded={expanded} onClick={toggle}>
+              {expanded ? '⌃' : '⌄'}
+            </button>
+          </div>
+        )}
         isLoading={isLoading}
         sort={sort}
         onSort={toggleSort}

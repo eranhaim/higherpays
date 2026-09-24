@@ -21,8 +21,10 @@ export default function AgencyPage() {
   const active = tabs.some((tab) => tab.id === asked) ? asked! : tabs[0]?.id ?? 'creators';
   const select = (tab: AgencyTab) => setParams({ tab });
 
+  const activeTab = tabs.find((tab) => tab.id === active);
+
   return (
-    <div>
+    <div className="agency-page">
       <PageHeader
         title="Agency"
         subtitle="Run your people from one place: creators, chatters, assignments, roles, and access."
@@ -42,6 +44,7 @@ export default function AgencyPage() {
           </button>
         ))}
       </div>
+      {activeTab && <div className="agency-mobile-section" aria-live="polite">{activeTab.hint}</div>}
       <div className="agency-panel">
         {active === 'creators' && <AccountsPage embedded />}
         {active === 'agents' && <AgentsPage embedded />}
