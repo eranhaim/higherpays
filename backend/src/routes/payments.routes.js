@@ -94,11 +94,19 @@ const PAYMENT_FILTERS = `
   AND ($6::uuid IS NULL OR p.agent_id = $6::uuid)
   AND ($7::timestamptz IS NULL OR p.occurred_at >= $7::timestamptz)
   AND ($8::timestamptz IS NULL OR p.occurred_at <= $8::timestamptz)
-  AND ($9::text IS NULL OR lower(COALESCE(t.provider_transaction_id, '')) LIKE $9::text
+  AND ($9::text IS NULL OR lower(COALESCE(pl.reference_id, '')) LIKE $9::text
+       OR lower(COALESCE(t.provider_transaction_id, '')) LIKE $9::text
+       OR lower(COALESCE(p.provider_payment_id, '')) LIKE $9::text
        OR lower(COALESCE(cu.name, '')) LIKE $9::text
+       OR lower(COALESCE(cu.telegram_name, '')) LIKE $9::text
        OR lower(a.name) LIKE $9::text
        OR lower(COALESCE(u.full_name, '')) LIKE $9::text
-       OR lower(COALESCE(pl.reference_id, '')) LIKE $9::text)
+       OR lower(COALESCE(ca.name, '')) LIKE $9::text
+       OR lower(p.status) LIKE $9::text
+       OR lower(COALESCE(p.payment_method, '')) LIKE $9::text
+       OR lower(p.amount::text) LIKE $9::text
+       OR lower(p.currency) LIKE $9::text
+       OR lower(COALESCE(t.fee::text, '')) LIKE $9::text)
   AND (NOT $10::boolean OR (p.status = 'paid' AND p.review_reason IS NULL AND p.category_id IS NULL))
   AND p.archived_at IS NULL`;
 

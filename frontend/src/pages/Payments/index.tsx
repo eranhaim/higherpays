@@ -277,7 +277,7 @@ export default function PaymentsPage() {
           type="search"
           className="search-input"
           aria-label="Search payments"
-          placeholder={`Search HigherPays Order, MantaPay ID, customer, ${labels.account.toLowerCase()}, ${labels.agent.toLowerCase()}`}
+          placeholder="Search any visible payment field"
           value={filters.search}
           onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
         />
