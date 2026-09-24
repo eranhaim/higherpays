@@ -846,6 +846,9 @@ label.setrow { cursor: pointer; }
   .modal::before { content: ''; display: block; width: 40px; height: 4px; border-radius: 2px; background: #33415F; margin: 0 auto 16px; }
 }
 @media (max-width: 760px) {
+  /* The sticky header creates a stacking context. Raise it above the
+     outside-click target while its drawer is open so its links receive taps. */
+  .side.mobile-nav-open { z-index: calc(var(--z-overlay) + 1); }
   .agency-tabs { display: flex; overflow-x: auto; margin-inline: -4px; padding: 0 4px 4px; scroll-snap-type: x proximity; }
   .agency-tab { flex: 0 0 min(76vw, 280px); scroll-snap-align: start; }
   .page-inline-actions { justify-content: stretch; }
