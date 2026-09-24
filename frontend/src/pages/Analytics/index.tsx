@@ -31,7 +31,7 @@ interface Delta {
 
 function deltaText(current: number, previous: number | undefined): Delta | null {
   if (previous === undefined) return null;
-  if (previous === 0) return { text: 'no previous data' };
+  if (previous === 0) return null;
   const change = ((current - previous) / previous) * 100;
   const arrow = change >= 0 ? '▲' : '▼';
   return {
