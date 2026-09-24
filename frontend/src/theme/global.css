@@ -881,6 +881,10 @@ label.setrow { cursor: pointer; }
     display: block; position: fixed; inset: 0; z-index: var(--z-overlay);
     border: 0; background: transparent; cursor: pointer;
   }
+  .bell-panel {
+    position: fixed; top: 74px; right: 12px; left: auto;
+    width: min(320px, calc(100vw - 24px)); max-height: calc(100dvh - 90px);
+  }
   .grid2 { grid-template-columns: 1fr; }
   .flow-branches { grid-template-columns: 1fr; }
   /*
