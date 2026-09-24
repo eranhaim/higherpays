@@ -30,7 +30,7 @@ function isExpired(i: Invite): boolean {
   return Number.isFinite(ts) && ts < Date.now();
 }
 
-export default function TeamPage() {
+export default function TeamPage({ embedded = false }: { embedded?: boolean }) {
   const can = useCan();
   const { labels, role: currentRole, user } = useCurrentSession();
   const {
@@ -304,11 +304,14 @@ export default function TeamPage() {
 
   return (
     <div className="team-page">
-      <PageHeader
-        title="People & access"
-        subtitle="One place to add people, set their role, control access, and manage invitations."
-        actions={canManageRoles ? <button className="btn" onClick={() => setMemberOpen(true)}>Add user</button> : null}
-      />
+      {!embedded && (
+        <PageHeader
+          title="People & access"
+          subtitle="One place to add people, set their role, control access, and manage invitations."
+          actions={canManageRoles ? <button className="btn" onClick={() => setMemberOpen(true)}>Add user</button> : null}
+        />
+      )}
+      {embedded && canManageRoles && <div className="page-inline-actions"><button className="btn" onClick={() => setMemberOpen(true)}>Add user</button></div>}
 
       <div className="tabbar" role="tablist" aria-label="Team views">
         {views.map((item, index) => (

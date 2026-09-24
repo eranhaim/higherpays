@@ -26,7 +26,7 @@ function parsePct(text: string): number {
   return Number.isFinite(n) && n >= 0 && n <= 100 ? n : Number.NaN;
 }
 
-export default function AgentsPage() {
+export default function AgentsPage({ embedded = false }: { embedded?: boolean }) {
   const can = useCan();
   const { labels } = useCurrentSession();
   const canManage = can('agents.manage');
@@ -109,10 +109,13 @@ export default function AgentsPage() {
 
   return (
     <div>
-      <PageHeader
-        title={labels.agents}
-        actions={canManage ? <button className="btn" onClick={() => setCreateOpen(true)}>Add {labels.agent.toLowerCase()}</button> : null}
-      />
+      {!embedded && (
+        <PageHeader
+          title={labels.agents}
+          actions={canManage ? <button className="btn" onClick={() => setCreateOpen(true)}>Add {labels.agent.toLowerCase()}</button> : null}
+        />
+      )}
+      {embedded && canManage && <div className="page-inline-actions"><button className="btn" onClick={() => setCreateOpen(true)}>Add {labels.agent.toLowerCase()}</button></div>}
 
       {agents.length > 0 && (
         <FilterBar>

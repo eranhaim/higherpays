@@ -86,7 +86,7 @@ function parsePct(text: string): number {
   return Number.isFinite(n) && n >= 0 && n <= 100 ? n : Number.NaN;
 }
 
-export default function AccountsPage() {
+export default function AccountsPage({ embedded = false }: { embedded?: boolean }) {
   const can = useCan();
   const { labels } = useCurrentSession();
   const canManage = can('accounts.manage');
@@ -190,10 +190,13 @@ export default function AccountsPage() {
 
   return (
     <div>
-      <PageHeader
-        title={labels.accounts}
-        actions={canManage ? <button className="btn" onClick={() => setCreateOpen(true)}>Add {labels.account.toLowerCase()}</button> : null}
-      />
+      {!embedded && (
+        <PageHeader
+          title={labels.accounts}
+          actions={canManage ? <button className="btn" onClick={() => setCreateOpen(true)}>Add {labels.account.toLowerCase()}</button> : null}
+        />
+      )}
+      {embedded && canManage && <div className="page-inline-actions"><button className="btn" onClick={() => setCreateOpen(true)}>Add {labels.account.toLowerCase()}</button></div>}
 
       {accounts.length > 0 && (
         <FilterBar>

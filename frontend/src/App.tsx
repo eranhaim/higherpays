@@ -12,10 +12,8 @@ import PaymentCompletePage from './pages/PaymentComplete';
 import PaymentsPage from './pages/Payments';
 import LinksPage from './pages/Links';
 import PayoutsPage from './pages/Payouts';
-import AccountsPage from './pages/Accounts';
-import AgentsPage from './pages/Agents';
+import AgencyPage from './pages/Agency';
 import CustomersPage from './pages/Customers';
-import TeamPage from './pages/Team';
 import AnalyticsPage from './pages/Analytics';
 import SettingsPage from './pages/Settings';
 import PlatformPage from './pages/Platform';
@@ -50,10 +48,11 @@ export default function App() {
                 <Route path="/payments" element={<PaymentsPage />} />
                 <Route path="/links" element={<LinksPage />} />
                 <Route path="/payouts" element={<PayoutsPage />} />
-                <Route path="/accounts" element={<AccountsPage />} />
-                <Route path="/agents" element={<AgentsPage />} />
+                <Route path="/agency" element={<AgencyPage />} />
+                <Route path="/accounts" element={<Navigate to="/agency?tab=creators" replace />} />
+                <Route path="/agents" element={<Navigate to="/agency?tab=agents" replace />} />
                 <Route path="/customers" element={<CustomersPage />} />
-                <Route path="/team" element={<TeamPage />} />
+                <Route path="/team" element={<Navigate to="/agency?tab=people" replace />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/archive" element={<ArchivePage />} />
