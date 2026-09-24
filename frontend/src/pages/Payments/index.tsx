@@ -290,6 +290,25 @@ export default function PaymentsPage() {
         rows={payments}
         rowKey={(p) => p.id}
         onRowClick={setDetail}
+        mobileSummary={(p, { expanded, toggle }) => (
+          <div className="mobile-data-card-summary">
+            <div className="mobile-data-card-amount">
+              <Money amount={canScope ? p.amount : (p.amountAfterFees ?? p.amount)} currency={p.currency}
+                direction={isReversed(p.status) ? 'out' : p.status === 'paid' && !p.reviewRequired ? 'in' : undefined} />
+            </div>
+            <div className="mobile-data-card-status"><StatusPill payment={p} /></div>
+            <div className="mobile-data-card-creator">{labels.account}: {p.account}</div>
+            <button
+              type="button"
+              className="mobile-card-toggle"
+              aria-label={expanded ? 'Collapse payment details' : 'Expand payment details'}
+              aria-expanded={expanded}
+              onClick={toggle}
+            >
+              {expanded ? '⌃' : '⌄'}
+            </button>
+          </div>
+        )}
         sort={sort}
         onSort={toggleSort}
         isLoading={isLoading}

@@ -37,6 +37,11 @@ interface DataTableProps<T> {
   sort?: SortState;
   /** Given a column's `sortKey`. The page decides the new direction. */
   onSort?: (sortKey: string) => void;
+  /**
+   * Optional compact phone layout. Its summary is always shown; the shared
+   * table fields are revealed only after the caller's expand control is used.
+   */
+  mobileSummary?: (row: T, state: { expanded: boolean; toggle: () => void }) => ReactNode;
 }
 
 /**
@@ -48,11 +53,21 @@ interface DataTableProps<T> {
 export function DataTable<T>(props: DataTableProps<T>) {
   const {
     columns, rows, rowKey, onRowClick, isLoading,
-    emptyTitle = 'Nothing here yet.', emptyHint, emptyAction, footer, sort, onSort,
+    emptyTitle = 'Nothing here yet.', emptyHint, emptyAction, footer, sort, onSort, mobileSummary,
   } = props;
+  const [expandedMobileRows, setExpandedMobileRows] = useState<Set<string>>(() => new Set());
+  const keyFor = (row: T, index: number) => rowKey(row, index);
+  const toggleMobileRow = (key: string) => {
+    setExpandedMobileRows((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   return (
-    <div className="tableblock">
+    <div className={`tableblock${mobileSummary ? ' has-mobile-cards' : ''}`}>
       {/* The footer sits outside the scroll container so it stays put while
           the rows scroll under the sticky header. */}
       <div className="tablewrap flush">
@@ -96,7 +111,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
             ) : (
               rows.map((row, index) => (
                 <tr
-                  key={rowKey(row, index)}
+                  key={keyFor(row, index)}
                   className={onRowClick ? 'clickable' : undefined}
                   // A row is only reachable by keyboard if it says it is one.
                   // Without this the detail modals behind onRowClick are
@@ -124,6 +139,33 @@ export function DataTable<T>(props: DataTableProps<T>) {
           </tbody>
         </table>
       </div>
+      {mobileSummary && (
+        <div className="mobile-card-list">
+          {isLoading ? (
+            <div className="mobile-card-note">Loading…</div>
+          ) : rows.length === 0 ? (
+            <EmptyState title={emptyTitle} hint={emptyHint} action={emptyAction} />
+          ) : rows.map((row, index) => {
+            const key = keyFor(row, index);
+            const expanded = expandedMobileRows.has(key);
+            return (
+              <div className="mobile-data-card" key={key}>
+                {mobileSummary(row, { expanded, toggle: () => toggleMobileRow(key) })}
+                {expanded && (
+                  <div className="mobile-data-card-details">
+                    {columns.map((column) => (
+                      <div className="mobile-data-field" key={column.key}>
+                        <span>{column.header}</span>
+                        <div>{column.render(row)}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
       {footer ? <div className="table-foot">{footer}</div> : null}
     </div>
   );
