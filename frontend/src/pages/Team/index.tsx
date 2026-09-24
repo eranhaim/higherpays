@@ -383,7 +383,7 @@ export default function TeamPage({ embedded = false }: { embedded?: boolean }) {
                 <button type="button" className="mobile-card-toggle"
                   aria-label={expanded ? `Collapse invite for ${i.email}` : `Expand invite for ${i.email}`}
                   aria-expanded={expanded} onClick={toggle}>
-                  {expanded ? '⌃' : '⌄'}
+                  <span className={`mobile-card-chevron${expanded ? ' open' : ''}`} aria-hidden="true" />
                 </button>
               </div>
             )}
@@ -407,7 +407,7 @@ export default function TeamPage({ embedded = false }: { embedded?: boolean }) {
                 <button type="button" className="mobile-card-toggle"
                   aria-label={expanded ? `Collapse ${m.name}` : `Expand ${m.name}`}
                   aria-expanded={expanded} onClick={toggle}>
-                  {expanded ? '⌃' : '⌄'}
+                  <span className={`mobile-card-chevron${expanded ? ' open' : ''}`} aria-hidden="true" />
                 </button>
               </div>
             )}
