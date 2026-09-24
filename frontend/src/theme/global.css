@@ -485,6 +485,7 @@ tbody tr.clickable:focus-visible {
   background: var(--info-soft); color: var(--brand); border: 1px solid var(--info-edge);
 }
 .rolebadge.owner { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-edge); }
+.platform-role-short { display: none; }
 
 /* Pills — status markers. */
 .pill {
@@ -851,6 +852,9 @@ label.setrow { cursor: pointer; }
   /* The sticky header creates a stacking context. Raise it above the
      outside-click target while its drawer is open so its links receive taps. */
   .side.mobile-nav-open { z-index: calc(var(--z-overlay) + 1); }
+  .side-foot .platform-rolebadge { padding: 4px 9px; white-space: nowrap; }
+  .platform-role-long { display: none; }
+  .platform-role-short { display: inline; }
   /* Phone dialogs are centered and self-contained, never hanging from the
      control that opened them. */
   .overlay { place-items: center; padding: 16px; }
