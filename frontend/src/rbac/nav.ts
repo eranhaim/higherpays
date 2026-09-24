@@ -3,8 +3,8 @@
  * filters from it and the route guard gates from it, so a page can never be
  * hidden from the nav yet reachable by typing its URL.
  *
- * Account and agent pages take their label from the workspace, which names
- * them its own way ("Creators", "Chatters"); `labelKey` says which.
+ * Agency management lives under one destination; its internal sections use
+ * the workspace labels ("Creators", "Chatters") where appropriate.
  */
 
 import type { Permission } from './permissions';
@@ -41,15 +41,13 @@ export const NAV: NavGroup[] = [
   {
     label: 'Manage',
     items: [
-      { path: '/accounts', label: 'Accounts', labelKey: 'accounts', perm: 'accounts.view', icon: 'accounts' },
-      { path: '/agents', label: 'Sales team', labelKey: 'agents', perm: 'agents.view', icon: 'agents' },
+      { path: '/agency', label: 'Agency', perm: 'accounts.view', icon: 'accounts' },
       { path: '/customers', label: 'Customers', perm: 'customers.view', icon: 'customers' },
     ],
   },
   {
     label: 'Administer',
     items: [
-      { path: '/team', label: 'Team', perm: 'team.view', icon: 'team' },
       { path: '/archive', label: 'Archive', perm: 'archive.manage', icon: 'archive' },
       // Everyone has personal settings (2FA, sessions, notifications); the
       // workspace tabs inside gate themselves on settings.view.
@@ -61,7 +59,13 @@ export const NAV: NavGroup[] = [
 export const NAV_ITEMS: NavItem[] = NAV.flatMap((g) => g.items);
 
 export const ROUTE_PERMISSION: Record<string, Permission> =
-  Object.fromEntries(NAV_ITEMS.map((i) => [i.path, i.perm]));
+  {
+    ...Object.fromEntries(NAV_ITEMS.map((i) => [i.path, i.perm])),
+    // Keep existing bookmarks guarded while App redirects them to Agency.
+    '/accounts': 'accounts.view',
+    '/agents': 'agents.view',
+    '/team': 'team.view',
+  };
 
 export function navLabel(item: NavItem, labels: WorkspaceLabels, seesWholeWorkspace: boolean): string {
   if (item.labelKey) return labels[item.labelKey];

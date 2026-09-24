@@ -229,6 +229,18 @@ input.amount-input { width: 110px; }
 .tgl { font-size: var(--text-sm); }
 .tgl.active { background: var(--brand-fill); color: var(--text); border-color: rgba(21, 195, 175, 0.35); }
 .tabbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+.agency-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 0 18px; }
+.agency-tab {
+  appearance: none; display: flex; min-width: 0; flex-direction: column; gap: 4px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--surface);
+  text-align: left; cursor: pointer;
+}
+.agency-tab span { font-weight: 700; }
+.agency-tab small { color: var(--text-secondary); font-size: 12px; line-height: 1.35; }
+.agency-tab:hover, .agency-tab.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.agency-tab.active span { color: var(--accent); }
+.agency-panel { min-width: 0; }
+.page-inline-actions { display: flex; justify-content: flex-end; margin: 0 0 16px; }
 
 /* ── Page header ────────────────────────────────────────────────────────── */
 .pagehead {
@@ -834,6 +846,11 @@ label.setrow { cursor: pointer; }
   .modal::before { content: ''; display: block; width: 40px; height: 4px; border-radius: 2px; background: #33415F; margin: 0 auto 16px; }
 }
 @media (max-width: 760px) {
+  .agency-tabs { display: flex; overflow-x: auto; margin-inline: -4px; padding: 0 4px 4px; scroll-snap-type: x proximity; }
+  .agency-tab { flex: 0 0 min(76vw, 280px); scroll-snap-align: start; }
+  .page-inline-actions { justify-content: stretch; }
+  .page-inline-actions .btn { width: 100%; }
+
   /* A horizontal strip hides most destinations on a phone. Navigation is a
      real drawer here, leaving the page width for the work itself. */
   .side { display: flex; padding: 10px 12px; }
