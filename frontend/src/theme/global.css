@@ -879,7 +879,7 @@ label.setrow { cursor: pointer; }
   }
   .mobile-nav-scrim {
     display: block; position: fixed; inset: 0; z-index: var(--z-overlay);
-    border: 0; background: rgba(4, 8, 16, 0.62); cursor: pointer;
+    border: 0; background: transparent; cursor: pointer;
   }
   .grid2 { grid-template-columns: 1fr; }
   .flow-branches { grid-template-columns: 1fr; }
