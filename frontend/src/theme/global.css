@@ -392,6 +392,7 @@ input.amount-input { width: 110px; }
   background: var(--surface-2); border: 1px solid var(--rule);
   border-radius: var(--radius-lg); overflow: hidden;
 }
+.mobile-card-list { display: none; }
 table { width: 100%; border-collapse: collapse; font-size: var(--text-base); }
 thead th {
   text-align: left; padding: 12px 20px;
@@ -913,6 +914,33 @@ label.setrow { cursor: pointer; }
    * DataTable supplies each cell's data-label, so individual pages cannot
    * drift back to an unreadable side-scrolling table.
    */
+  .tableblock.has-mobile-cards > .tablewrap { display: none; }
+  .mobile-card-list { display: grid; gap: 8px; padding: 8px; }
+  .mobile-data-card { background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius); }
+  .mobile-data-card-summary {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px 12px;
+    align-items: center; padding: 12px 14px;
+  }
+  .mobile-data-card-amount { font-size: 18px; font-weight: 750; }
+  .mobile-data-card-creator { color: var(--muted); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-data-card-status { justify-self: end; }
+  .mobile-card-toggle {
+    grid-column: 3; grid-row: 1 / span 2; width: 36px; height: 36px; padding: 0;
+    border: 1px solid var(--rule); border-radius: 9px; background: transparent; color: var(--text);
+    font-size: 19px; cursor: pointer;
+  }
+  .mobile-data-card-details { padding: 0 14px 10px; border-top: 1px solid var(--rule); }
+  .mobile-data-field {
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    padding: 10px 0; border-bottom: 1px solid var(--rule-soft); text-align: right;
+  }
+  .mobile-data-field:last-child { border-bottom: 0; }
+  .mobile-data-field > span {
+    flex: 1; text-align: left; color: var(--muted); font-size: var(--text-micro);
+    text-transform: uppercase; letter-spacing: var(--tracking-label); font-weight: 600;
+  }
+  .mobile-data-field > div { max-width: 62%; overflow-wrap: anywhere; }
+  .mobile-card-note { padding: 16px; color: var(--muted); }
   .tableblock > .tablewrap, .mobile-cards { max-height: none; overflow: visible; background: transparent; border: 0; }
   .tableblock > .tablewrap > table, .mobile-cards > table,
   .tableblock > .tablewrap > table > tbody, .mobile-cards > table > tbody,
