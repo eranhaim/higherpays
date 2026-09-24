@@ -63,6 +63,7 @@ export default function Layout() {
   const { pathname } = useLocation();
   const mainRef = useRef<HTMLElement>(null);
   const [pendingPath, setPendingPath] = useState<string | null>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [impersonationOpen, setImpersonationOpen] = useState(false);
   const [impersonationTarget, setImpersonationTarget] = useState('');
 
@@ -173,6 +174,15 @@ export default function Layout() {
           <h1>HigherPays</h1>
           <span className="brand-spacer" />
           <NotificationBell />
+          <button
+            type="button"
+            className="mobile-nav-toggle"
+            aria-label="Open navigation"
+            aria-expanded={mobileNavOpen}
+            onClick={() => setMobileNavOpen(true)}
+          >
+            ☰
+          </button>
         </div>
 
         {workspaces.length > 1 && (
@@ -194,7 +204,10 @@ export default function Layout() {
           </div>
         )}
 
-        <nav>
+        <nav className={mobileNavOpen ? 'mobile-open' : undefined} onClick={(event) => {
+          if ((event.target as HTMLElement).closest('a')) setMobileNavOpen(false);
+        }}>
+          <button type="button" className="mobile-nav-close" onClick={() => setMobileNavOpen(false)}>Close menu</button>
           {NAV.map((g) => <NavSection key={g.label} group={g} onNavigate={guardNavigation} />)}
           {user?.isPlatformAdmin && (
             <div>
@@ -228,6 +241,7 @@ export default function Layout() {
           </button>
         </div>
       </aside>
+      {mobileNavOpen && <button type="button" className="mobile-nav-scrim" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)} />}
 
       <main ref={mainRef}>
         <Outlet />
