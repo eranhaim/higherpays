@@ -120,8 +120,9 @@ export function useCategories() {
     mutationFn: ({ id, input }: { id: string; input: { name?: string; active?: boolean } }) => categoriesApi.update(id, input),
     onSuccess: invalidate,
   });
+  const remove = useMutation({ mutationFn: (id: string) => categoriesApi.remove(id), onSuccess: invalidate });
 
-  return { categories, create, update };
+  return { categories, create, update, remove };
 }
 
 export function useNotificationSettings() {

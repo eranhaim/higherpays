@@ -4,18 +4,18 @@ import type { Category } from '../../api/endpoints';
 import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { toast } from '../../lib/toast';
-import { EmptyState, ErrorCard, LoadingCard, Pill } from '../../components/ui';
+import { EmptyState, ErrorCard, LoadingCard } from '../../components/ui';
 import { useCategories } from './useSettingsData';
 
 /**
  * The sale categories an agent picks from when completing a paid payment.
- * Retiring one hides it from the picker; payments that used it keep it.
+ * Categories are deliberately hard-deleted rather than archived.
  */
 export function CategoriesPane() {
   const can = useCan();
   const { labels } = useCurrentSession();
   const editable = can('settings.edit');
-  const { categories, create, update } = useCategories();
+  const { categories, create, update, remove } = useCategories();
   const [name, setName] = useState('');
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
 
@@ -33,12 +33,12 @@ export function CategoriesPane() {
     }
   };
 
-  const toggle = async (c: Category) => {
+  const deleteCategory = async (c: Category) => {
     try {
-      await update.mutateAsync({ id: c.id, input: { active: !c.active } });
-      toast(c.active ? `${c.name} retired.` : `${c.name} active again.`);
+      await remove.mutateAsync(c.id);
+      toast(`${c.name} deleted.`);
     } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not update the category.');
+      toast(err instanceof Error ? err.message : 'Could not delete the category.');
     }
   };
 
@@ -59,7 +59,7 @@ export function CategoriesPane() {
       <div className="sechead">Sale categories</div>
       <p className="sub">
         After a customer pays, the {labels.agent.toLowerCase()} picks one of these to say what the sale was for.
-        Retired categories stay on past payments but leave the picker.
+        Deleting a category removes it from the picker; past payment amounts stay unchanged.
       </p>
 
       {categories.data.length === 0 ? <EmptyState title="No categories yet." hint={`${labels.agents} cannot complete a payment until there is at least one.`} /> : (
@@ -68,7 +68,6 @@ export function CategoriesPane() {
             <thead>
               <tr>
                 <th scope="col">Category</th>
-                <th scope="col">Status</th>
                 {editable && <th scope="col"><span className="sr-only">Actions</span></th>}
               </tr>
             </thead>
@@ -84,11 +83,10 @@ export function CategoriesPane() {
                       </div>
                     ) : c.name}
                   </th>
-                  <td>{c.active ? <Pill tone="ok">Active</Pill> : <Pill tone="muted">Retired</Pill>}</td>
                   {editable && (
                     <td className="cell-actions">
                       <button className="btn ghost small" onClick={() => setRenaming({ id: c.id, name: c.name })}>Rename</button>
-                      <button className="btn ghost small" onClick={() => toggle(c)} disabled={update.isPending}>{c.active ? 'Retire' : 'Reactivate'}</button>
+                      <button className="btn ghost small" onClick={() => deleteCategory(c)} disabled={remove.isPending}>Delete</button>
                     </td>
                   )}
                 </tr>

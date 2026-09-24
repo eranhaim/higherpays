@@ -10,7 +10,7 @@ export interface Category {
 }
 
 export const categoriesApi = {
-  /** Active categories only, unless `all` — the settings page shows retired ones too. */
+  /** Active categories only; `all` is retained for older workspaces. */
   async list(all = false): Promise<Category[]> {
     const raw = await api.get<{ categories: Category[] }>(workspacePath(all ? '/categories?all=true' : '/categories'));
     return raw.categories;
@@ -20,4 +20,5 @@ export const categoriesApi = {
 
   update: (id: string, input: { name?: string; active?: boolean }) =>
     api.patch<Category>(workspacePath(`/categories/${id}`), input),
+  remove: (id: string) => api.del(workspacePath(`/categories/${id}`)),
 };

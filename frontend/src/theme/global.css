@@ -861,6 +861,8 @@ label.setrow { cursor: pointer; }
   .agency-tab { flex: 0 0 min(76vw, 280px); scroll-snap-align: start; }
   .page-inline-actions { justify-content: stretch; }
   .page-inline-actions .btn { width: 100%; }
+  .setrow > :first-child { flex: 1 1 100%; min-width: 0; }
+  .setrow .controls { width: 100%; justify-content: flex-start; }
 
   /* A horizontal strip hides most destinations on a phone. Navigation is a
      real drawer here, leaving the page width for the work itself. */
