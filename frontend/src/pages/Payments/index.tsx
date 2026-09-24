@@ -305,7 +305,7 @@ export default function PaymentsPage() {
               aria-expanded={expanded}
               onClick={toggle}
             >
-              {expanded ? '⌃' : '⌄'}
+              <span className={`mobile-card-chevron${expanded ? ' open' : ''}`} aria-hidden="true" />
             </button>
           </div>
         )}

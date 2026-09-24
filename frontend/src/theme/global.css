@@ -940,8 +940,19 @@ label.setrow { cursor: pointer; }
   .mobile-data-card-status { justify-self: end; }
   .mobile-card-toggle {
     grid-column: 3; grid-row: 1 / span 2; width: 36px; height: 36px; padding: 0;
-    border: 1px solid var(--rule); border-radius: 9px; background: transparent; color: var(--text);
-    font-size: 19px; cursor: pointer;
+    border: 1px solid var(--brand-edge); border-radius: 50%; background: var(--brand-wash); color: var(--brand);
+    display: grid; place-items: center; cursor: pointer;
+  }
+  .mobile-card-toggle:hover { background: var(--brand-fill); }
+  .mobile-card-chevron {
+    width: 8px; height: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor;
+    transform: rotate(45deg) translate(-1px, -1px); transition: transform 0.18s ease;
+  }
+  .mobile-card-chevron.open { transform: rotate(225deg) translate(-1px, -1px); }
+  .mobile-card-toggle:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+  .mobile-card-toggle:active { transform: scale(0.94); }
+  .mobile-card-toggle[aria-expanded="true"] {
+    background: var(--brand-fill); color: var(--brand);
   }
   .mobile-data-card-details { padding: 0 14px 10px; border-top: 1px solid var(--rule); }
   .mobile-data-field {

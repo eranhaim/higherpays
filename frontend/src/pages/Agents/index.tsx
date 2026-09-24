@@ -145,7 +145,7 @@ export default function AgentsPage({ embedded = false }: { embedded?: boolean })
             <button type="button" className="mobile-card-toggle"
               aria-label={expanded ? `Collapse ${a.name}` : `Expand ${a.name}`}
               aria-expanded={expanded} onClick={toggle}>
-              {expanded ? '⌃' : '⌄'}
+              <span className={`mobile-card-chevron${expanded ? ' open' : ''}`} aria-hidden="true" />
             </button>
           </div>
         )}
