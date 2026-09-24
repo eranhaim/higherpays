@@ -305,8 +305,9 @@ export default function TeamPage() {
   return (
     <div className="team-page">
       <PageHeader
-        title="Team"
-        actions={canManageRoles ? <button className="btn" onClick={() => setMemberOpen(true)}>Create team member</button> : null}
+        title="People & access"
+        subtitle="One place to add people, set their role, control access, and manage invitations."
+        actions={canManageRoles ? <button className="btn" onClick={() => setMemberOpen(true)}>Add user</button> : null}
       />
 
       <div className="tabbar" role="tablist" aria-label="Team views">

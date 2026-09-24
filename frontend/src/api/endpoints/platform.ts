@@ -97,6 +97,16 @@ export interface ImpersonationSession {
   workspace: AuthWorkspace;
 }
 
+export interface PlatformUser {
+  id: string;
+  fullName: string;
+  email: string;
+  isPlatformAdmin: boolean;
+  twoFactorEnabled: boolean;
+  lastLoginAt: string | null;
+  memberships: Array<{ workspaceId: string; workspaceName: string; role: string; status: string }>;
+}
+
 const opts = { skipWorkspace: true };
 
 export const platformApi = {
@@ -122,6 +132,14 @@ export const platformApi = {
     const raw = await api.get<{ workspaces: PlatformWorkspace[] }>('/platform/workspaces', opts);
     return raw.workspaces;
   },
+
+  async listUsers(): Promise<PlatformUser[]> {
+    const raw = await api.get<{ users: PlatformUser[] }>('/platform/users', opts);
+    return raw.users;
+  },
+
+  setPlatformAdmin: (id: string, isPlatformAdmin: boolean) =>
+    api.patch<{ id: string; email: string; isPlatformAdmin: boolean }>(`/platform/users/${id}/platform-admin`, { isPlatformAdmin }, opts),
 
   onboardAgency: (input: OnboardAgencyInput) =>
     api.post<{ workspaceId: string; name: string; webhookEndpointId: string; blendedRatePct: number }>('/platform/agencies', input, opts),

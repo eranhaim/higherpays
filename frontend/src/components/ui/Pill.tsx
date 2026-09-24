@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-type Tone = 'ok' | 'no' | 'warn' | 'muted';
+type Tone = 'ok' | 'no' | 'warn' | 'info' | 'muted';
 
 interface PillProps {
   tone?: Tone;

@@ -490,6 +490,25 @@ router.post('/agencies', asyncHandler(async (req, res) => {
 }));
 
 // PATCH /platform/users/:id/platform-admin  { isPlatformAdmin }
+// One cross-agency people directory for HigherPays operators. Agency admins
+// manage the people in their own workspace from People & access.
+router.get('/users', asyncHandler(async (_req, res) => {
+  const rows = (await query(
+    `SELECT u.id, u.full_name, u.email, u.is_platform_admin, u.two_factor_enabled, u.last_login_at,
+            COALESCE(json_agg(json_build_object(
+              'workspaceId', w.id, 'workspaceName', w.name, 'role', wu.role, 'status', wu.status
+            ) ORDER BY w.name) FILTER (WHERE wu.workspace_id IS NOT NULL), '[]'::json) AS memberships
+       FROM users u
+       LEFT JOIN workspace_users wu ON wu.user_id=u.id
+       LEFT JOIN workspaces w ON w.id=wu.workspace_id
+      GROUP BY u.id
+      ORDER BY u.full_name, u.email`)).rows;
+  res.json({ users: rows.map((r) => ({
+    id: r.id, fullName: r.full_name, email: r.email, isPlatformAdmin: r.is_platform_admin,
+    twoFactorEnabled: r.two_factor_enabled, lastLoginAt: r.last_login_at, memberships: r.memberships,
+  })) });
+}));
+
 router.patch('/users/:id/platform-admin', asyncHandler(async (req, res) => {
   const on = !!(req.body || {}).isPlatformAdmin;
   if (req.params.id === uid(req) && !on) return res.status(403).json({ error: 'cannot_demote_self' });

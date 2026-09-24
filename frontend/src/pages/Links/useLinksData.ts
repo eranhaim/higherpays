@@ -26,6 +26,7 @@ export interface UseLinksDataResult {
   loadMore: () => void;
   createLink: (input: CreateLinkFormInput) => Promise<PaymentLink>;
   cancelLink: (id: string) => Promise<void>;
+  deleteCancelledLink: (id: string) => Promise<void>;
   updateNote: (id: string, description: string) => Promise<void>;
   setArchived: (id: string, archived: boolean) => Promise<void>;
   /** Moves the link and every payment on it to another creator or agent. */
@@ -79,6 +80,7 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     onSuccess: invalidateLinks,
   });
   const cancel = useMutation({ mutationFn: (id: string) => linksApi.cancel(id), onSuccess: invalidateLinks });
+  const remove = useMutation({ mutationFn: (id: string) => linksApi.remove(id), onSuccess: invalidateLinks });
   const note = useMutation({
     mutationFn: ({ id, description }: { id: string; description: string }) => linksApi.updateNote(id, description),
     onSuccess: invalidateLinks,
@@ -107,6 +109,7 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     loadMore: () => { void links.fetchNextPage(); },
     createLink: (input) => create.mutateAsync(input),
     cancelLink: async (id) => { await cancel.mutateAsync(id); },
+    deleteCancelledLink: async (id) => { await remove.mutateAsync(id); },
     updateNote: async (id, description) => { await note.mutateAsync({ id, description }); },
     setArchived: async (id, archived) => { await archive.mutateAsync({ id, archived }); },
     reassignLink: async (id, input) => { await reassign.mutateAsync({ id, input }); },
