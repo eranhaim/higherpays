@@ -67,7 +67,7 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
         {label}
       </button>
       {open ? (
-        <div className={`rangepop open${alignRight ? ' right' : ''}`}>
+        <div className={`rangepop open${alignRight ? ' right' : ''}`} role="dialog" aria-modal="true" aria-label="Date range">
           <Calendar value={value} onChange={onChange} />
           <div className="rp-actions">
             <button type="button" className="btn ghost small" onClick={() => onChange({ from: '', to: '' })}>Clear</button>

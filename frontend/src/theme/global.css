@@ -849,6 +849,14 @@ label.setrow { cursor: pointer; }
   /* The sticky header creates a stacking context. Raise it above the
      outside-click target while its drawer is open so its links receive taps. */
   .side.mobile-nav-open { z-index: calc(var(--z-overlay) + 1); }
+  /* Phone dialogs are centered and self-contained, never hanging from the
+     control that opened them. */
+  .overlay { place-items: center; padding: 16px; }
+  .modal {
+    max-width: 440px; max-height: calc(100dvh - 32px);
+    border-radius: 16px; padding: 22px 20px 20px;
+  }
+  .modal::before { display: none; }
   .agency-tabs { display: flex; overflow-x: auto; margin-inline: -4px; padding: 0 4px 4px; scroll-snap-type: x proximity; }
   .agency-tab { flex: 0 0 min(76vw, 280px); scroll-snap-align: start; }
   .page-inline-actions { justify-content: stretch; }
@@ -890,9 +898,9 @@ label.setrow { cursor: pointer; }
   }
   /* The desktop control editor is a button popover. On a phone it needs to
      be a self-contained dialog instead of overflowing from its trigger. */
-  .viewpop, .viewpop.right {
-    position: fixed; top: 50%; right: 12px; left: 12px;
-    width: auto; max-width: 360px; max-height: calc(100dvh - 48px);
+  .rangepop, .rangepop.right, .viewpop, .viewpop.right {
+    position: fixed !important; top: 50% !important; right: 12px !important; left: 12px !important;
+    width: auto !important; max-width: 360px; max-height: calc(100dvh - 48px);
     margin: 0 auto; overflow: auto; transform: translateY(-50%);
     z-index: calc(var(--z-overlay) + 2);
   }
