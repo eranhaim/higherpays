@@ -181,7 +181,7 @@ function HeaderFilter({ label, isActive, children }: { label: string; isActive?:
         ▾
       </button>
       {at && createPortal(
-        <div ref={popRef} className="viewpop th-filter-pop" style={{ position: 'fixed', top: at.top, left: at.left }}>
+        <div ref={popRef} className="viewpop th-filter-pop" style={{ position: 'fixed', top: at.top, left: at.left }} role="dialog" aria-modal="true" aria-label={`Filter by ${label}`}>
           {children}
           <div className="viewpop-actions">
             <span className="sub">{label}</span>
