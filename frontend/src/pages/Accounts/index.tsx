@@ -212,6 +212,20 @@ export default function AccountsPage({ embedded = false }: { embedded?: boolean 
         columns={shownColumns}
         rows={visible}
         rowKey={(a) => a.id}
+        mobileSummary={(a, { expanded, toggle }) => (
+          <div className="mobile-data-card-summary">
+            <div className="mobile-data-card-title">{a.name}</div>
+            <div className="mobile-data-card-status"><Pill tone={STATUS_TONE[a.status]}>{ACCOUNT_STATUS_LABELS[a.status]}</Pill></div>
+            <div className="mobile-data-card-creator">
+              {a.handle ? `@${a.handle} · ` : ''}{a.agentsAssigned ?? 0} {labels.agents.toLowerCase()}
+            </div>
+            <button type="button" className="mobile-card-toggle"
+              aria-label={expanded ? `Collapse ${a.name}` : `Expand ${a.name}`}
+              aria-expanded={expanded} onClick={toggle}>
+              {expanded ? '⌃' : '⌄'}
+            </button>
+          </div>
+        )}
         isLoading={isLoading}
         sort={sort}
         onSort={toggleSort}

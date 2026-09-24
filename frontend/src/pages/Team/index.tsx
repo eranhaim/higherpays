@@ -375,6 +375,18 @@ export default function TeamPage({ embedded = false }: { embedded?: boolean }) {
       <div id={`team-panel-${view}`} role="tabpanel" aria-labelledby={`team-tab-${view}`}>
         {view === 'invites' ? (
           <DataTable columns={inviteColumns} rows={pendingInvites} rowKey={(i) => i.id}
+            mobileSummary={(i, { expanded, toggle }) => (
+              <div className="mobile-data-card-summary">
+                <div className="mobile-data-card-title">{i.email}</div>
+                <div className="mobile-data-card-status"><span className="rolebadge">{roleLabel(i.role)}</span></div>
+                <div className="mobile-data-card-creator">{isExpired(i) ? 'Expired invite' : 'Pending invite'}</div>
+                <button type="button" className="mobile-card-toggle"
+                  aria-label={expanded ? `Collapse invite for ${i.email}` : `Expand invite for ${i.email}`}
+                  aria-expanded={expanded} onClick={toggle}>
+                  {expanded ? '⌃' : '⌄'}
+                </button>
+              </div>
+            )}
             emptyTitle="No pending invites." emptyHint="Invite a team member from the button above." />
         ) : (
           <DataTable
@@ -383,6 +395,22 @@ export default function TeamPage({ embedded = false }: { embedded?: boolean }) {
             sort={sort}
             onSort={toggleSort}
             rowKey={(m) => m.userId}
+            mobileSummary={(m, { expanded, toggle }) => (
+              <div className="mobile-data-card-summary">
+                <div className="mobile-data-card-title">{m.name}{m.isSelf ? ' (you)' : ''}</div>
+                <div className="mobile-data-card-status">
+                  {m.accountStatus === 'archived'
+                    ? <Pill tone="muted">Archived</Pill>
+                    : <Pill tone={m.status === 'active' ? 'ok' : 'muted'}>{m.status === 'active' ? 'Active' : m.status === 'removed' ? 'Removed' : 'Suspended'}</Pill>}
+                </div>
+                <div className="mobile-data-card-creator">{roleLabel(m.role)}{m.accountName ? ` · ${m.accountName}` : ''}</div>
+                <button type="button" className="mobile-card-toggle"
+                  aria-label={expanded ? `Collapse ${m.name}` : `Expand ${m.name}`}
+                  aria-expanded={expanded} onClick={toggle}>
+                  {expanded ? '⌃' : '⌄'}
+                </button>
+              </div>
+            )}
             isLoading={isLoading}
             emptyTitle={isError ? "Couldn't load the team." : query ? 'No members match that search.' : 'No members in this view.'}
             emptyHint={isError ? 'Try again in a moment.' : query ? 'Clear the search to see them all.' : undefined}
