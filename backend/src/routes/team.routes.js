@@ -111,8 +111,8 @@ router.patch('/:userId/role', requireRoleManager, asyncHandler(async (req, res) 
     if (!req.canGrantAllRolePermissions && role.permissions.some((permission) => !req.access.permissions.has(permission))) {
       return { error: 'role_not_assignable', status: 403 };
     }
-    if (target.has_agent && nextRole !== 'agent') return { error: 'profile_role_locked', status: 409 };
-    if (target.has_account && nextRole !== 'account_owner') return { error: 'profile_role_locked', status: 409 };
+    if (target.has_agent && nextRole === 'account_owner') return { error: 'profile_role_mismatch', status: 409 };
+    if (target.has_account && nextRole === 'agent') return { error: 'profile_role_mismatch', status: 409 };
     if (!target.has_agent && !target.has_account && PROFILE_ROLES.has(nextRole)) {
       return { error: 'profile_required', status: 409 };
     }

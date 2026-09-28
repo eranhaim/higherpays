@@ -1,8 +1,7 @@
 'use strict';
 // Creating an agent or an account always creates its login. The three rows
-// (user, workspace access, profile) land in one transaction, in the order the
-// foreign keys demand: the profile's composite key proves the user holds the
-// matching role in this workspace.
+// (user, workspace access, profile) land in one transaction so the profile is
+// always attached to an existing workspace membership.
 const { hashPassword } = require('../auth/passwords');
 
 const MIN_PASSWORD_LENGTH = 8;

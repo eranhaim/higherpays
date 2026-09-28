@@ -203,8 +203,8 @@ const WorkspaceUser = entity('workspace_users', {
     { columns: ['workspaceId', 'role'], table: 'workspace_roles',
       references: ['workspaceId', 'key'], onDelete: 'RESTRICT' },
   ],
-  // Redundant on its own — accounts and agents point at it to prove the user
-  // holds the matching role in that workspace.
+  // Accounts and agents point at this membership so their business records
+  // remain scoped to the same workspace while their access role can change.
   unique: [['workspaceId', 'userId', 'role']],
   indexes: [
     'userId',
@@ -243,8 +243,7 @@ const Account = entity('accounts', {
     id:                uuid().primaryKey(),
     workspaceId:       uuid().references('workspaces').notNull(),
     userId:            uuid().notNull(),
-    // Constant, and only here so the foreign key below can carry it: the owner
-    // must hold role 'account_owner' in this same workspace.
+    // Identifies the business profile. Access comes from workspace_users.
     role:              enumOf(['account_owner']).notNull().default("'account_owner'"),
     name:              text().notNull(),   // trading name; the person's name is users.fullName
     handle:            text(),
@@ -255,8 +254,8 @@ const Account = entity('accounts', {
     salaryAmount:      money().notNull().default('0'),      // owed once per payout period
   },
   foreignKeys: [
-    { columns: ['workspaceId', 'userId', 'role'], table: 'workspace_users',
-      references: ['workspaceId', 'userId', 'role'], onDelete: 'RESTRICT' },
+    { columns: ['workspaceId', 'userId'], table: 'workspace_users',
+      references: ['workspaceId', 'userId'], onDelete: 'RESTRICT' },
   ],
   unique: [
     ['workspaceId', 'userId'],   // one account per owner, per workspace
@@ -273,14 +272,14 @@ const Agent = entity('agents', {
     id:            uuid().primaryKey(),
     workspaceId:   uuid().references('workspaces').notNull(),
     userId:        uuid().notNull(),
-    // Same device as accounts.role: the user must hold role 'agent' here.
+    // Identifies the business profile. Access comes from workspace_users.
     role:          enumOf(['agent']).notNull().default("'agent'"),
     country:       char(2),
     commissionPct: percent().notNull(),                     // set for each agent
   },
   foreignKeys: [
-    { columns: ['workspaceId', 'userId', 'role'], table: 'workspace_users',
-      references: ['workspaceId', 'userId', 'role'], onDelete: 'RESTRICT' },
+    { columns: ['workspaceId', 'userId'], table: 'workspace_users',
+      references: ['workspaceId', 'userId'], onDelete: 'RESTRICT' },
   ],
   unique: [
     ['workspaceId', 'userId'],
