@@ -5,9 +5,10 @@ const assert = require('node:assert/strict');
 const request = require('supertest');
 const { app, pool } = require('../helpers/setup');
 const {
-  createTenant, createAccount, createAgent, addMember, getPlatformAdmin, tag,
+  PASSWORD, createTenant, createAccount, createAgent, addMember, getPlatformAdmin, tag,
 } = require('../helpers/tenant');
 const { verifyAccessToken } = require('../../src/auth/tokens');
+const { totp } = require('../../src/auth/totp');
 
 test('roles enforce dependencies, profile restrictions, and explicit owner transfer', async () => {
   const owner = await createTenant(app);
@@ -154,10 +155,46 @@ test('platform admin promotion preserves existing roles and demotion removes onl
   const tenant = await createTenant(app);
   const admin = await getPlatformAdmin(app);
   const member = await addMember(app, tenant, 'analyst');
+  const agent = await createAgent(app, tenant);
   const setPlatformAdmin = (userId, isPlatformAdmin) => request(app)
     .patch(`/platform/users/${userId}/platform-admin`)
     .set(admin.headers)
     .send({ isPlatformAdmin });
+
+  const agentOnly = await request(app).get('/platform/overview').set(agent.headers).expect(403);
+  assert.equal(agentOnly.body.error, 'not_platform_admin');
+
+  await setPlatformAdmin(agent.userId, true).expect(200);
+  await request(app).get(`/workspaces/${tenant.workspaceId}/accounts`).set(agent.headers).expect(401);
+
+  const dualRoleLogin = (await request(app).post('/auth/login')
+    .send({ email: agent.email, password: PASSWORD }).expect(200)).body;
+  assert.equal(dualRoleLogin.user.isPlatformAdmin, true);
+  const dualRoleHeaders = {
+    Authorization: `Bearer ${dualRoleLogin.accessToken}`,
+    'X-Workspace-Id': tenant.workspaceId,
+  };
+  const claims = (await request(app).get('/auth/me').set(dualRoleHeaders).expect(200)).body;
+  assert.equal(claims.user.isPlatformAdmin, true);
+  await request(app).get(`/workspaces/${tenant.workspaceId}/accounts`).set(dualRoleHeaders).expect(200);
+
+  const pendingMfa = await request(app).get('/platform/overview').set(dualRoleHeaders).expect(403);
+  assert.equal(pendingMfa.body.error, 'platform_two_factor_required');
+  const setup = (await request(app).post('/auth/2fa/setup').set(dualRoleHeaders).send({}).expect(200)).body;
+  const enabled = (await request(app).post('/auth/2fa/enable').set(dualRoleHeaders)
+    .send({ code: totp(setup.secret) }).expect(200)).body;
+  dualRoleHeaders.Authorization = `Bearer ${enabled.accessToken}`;
+  await request(app).get('/platform/overview').set(dualRoleHeaders).expect(200);
+  await request(app).get(`/workspaces/${tenant.workspaceId}/accounts`).set(dualRoleHeaders).expect(200);
+
+  const agentSeat = (await pool.query(
+    `SELECT wu.role, ag.id AS agent_id
+       FROM workspace_users wu
+       JOIN agents ag ON ag.workspace_id=wu.workspace_id AND ag.user_id=wu.user_id
+      WHERE wu.workspace_id=$1 AND wu.user_id=$2`,
+    [tenant.workspaceId, agent.userId])).rows[0];
+  assert.equal(agentSeat.role, 'agent');
+  assert.ok(agentSeat.agent_id);
 
   await setPlatformAdmin(member.userId, true).expect(200);
   let seat = (await pool.query(

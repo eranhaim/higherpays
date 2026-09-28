@@ -54,7 +54,7 @@ function SecurityCard() {
         </div>
       </div>
       {user?.isPlatformAdmin && !enabled && (
-        <div className="warnbar" role="status">Two-factor authentication is required before you can use platform administration.</div>
+        <div className="warnbar" role="status">Two-factor authentication is required for platform administration. Your workspace role is unchanged.</div>
       )}
       {enableOpen && <EnableTwoFactorModal onClose={() => setEnableOpen(false)} />}
       {reEnrollOpen && <ReEnrollTwoFactorModal onClose={() => setReEnrollOpen(false)} />}

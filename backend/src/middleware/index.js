@@ -114,14 +114,15 @@ const requirePermission = (permission) => (req, _res, next) => {
   next();
 };
 
-// Platform administrators also receive workspace-admin seats. Their operator
-// MFA must still protect those workspace routes.
+// A workspace route uses workspace membership and permissions. Call this only
+// when a platform capability is being exercised from a workspace route.
 const requirePlatformMfa = asyncHandler(async (req, _res, next) => {
   const userIds = [req.user.id, req.user.actorId].filter(Boolean);
-  const row = (await query(
-    'SELECT 1 FROM users WHERE id = ANY($1::uuid[]) AND is_platform_admin',
-    [userIds])).rows[0];
-  if (row && !req.user.twoFactorAuthenticated) {
+  const rows = (await query(
+    'SELECT is_platform_admin, two_factor_enabled FROM users WHERE id = ANY($1::uuid[])',
+    [userIds])).rows;
+  const platformAdmin = rows.find((row) => row.is_platform_admin);
+  if (platformAdmin && (!platformAdmin.two_factor_enabled || !req.user.twoFactorAuthenticated)) {
     throw new ForbiddenError('platform_two_factor_required');
   }
   next();
@@ -140,7 +141,7 @@ const requireRoleManager = asyncHandler(async (req, _res, next) => {
     [userIds])).rows[0];
   if (!row) throw new ForbiddenError('role_manager_required');
   req.canGrantAllRolePermissions = true;
-  next();
+  return requirePlatformMfa(req, _res, next);
 });
 
 const requireArchiveManager = asyncHandler(async (req, _res, next) => {
@@ -150,7 +151,7 @@ const requireArchiveManager = asyncHandler(async (req, _res, next) => {
   const row = (await query(
     'SELECT is_platform_admin FROM users WHERE id = $1', [req.user.id])).rows[0];
   if (!row?.is_platform_admin) throw new ForbiddenError('archive_manager_required');
-  next();
+  return requirePlatformMfa(req, _res, next);
 });
 
 // 4) requirePlatformAdmin — HigherPays operator gate, above any single workspace.

@@ -28,7 +28,7 @@ const publicPaymentRoutes = require('./routes/public-payment.routes');
 const { router: marketplaceRoutes, startMarketplaceOutboxLoop } = require('./routes/marketplace.routes');
 const { wsRouter: invitesWsRoutes, publicRouter: invitesPublicRoutes } = require('./routes/invites.routes');
 const { startReconcileLoop } = require('./services/links.service');
-const { requireAuth, requireWorkspace, requirePlatformMfa, errorHandler } = require('./middleware');
+const { requireAuth, requireWorkspace, errorHandler } = require('./middleware');
 const { auditRequestContext } = require('./util/audit');
 const { asyncHandler } = require('./lib/http');
 
@@ -99,9 +99,9 @@ app.use('/integrations/marketplace', marketplaceRoutes);
 // The operator console, above any single workspace.
 app.use('/platform', requireAuth, platformRoutes);
 
-// Every workspace router runs behind auth + access resolution. Routes inside
-// then gate on specific permissions.
-const ws = [requireAuth, requireWorkspace, requirePlatformMfa];
+// Every workspace router runs behind auth + access resolution. Platform
+// capability is a separate, 2FA-gated concern and never changes this role.
+const ws = [requireAuth, requireWorkspace];
 app.use('/workspaces/:workspaceId/accounts', ws, accountsRoutes);
 app.use('/workspaces/:workspaceId/agents', ws, agentsRoutes);
 app.use('/workspaces/:workspaceId/categories', ws, categoriesRoutes);

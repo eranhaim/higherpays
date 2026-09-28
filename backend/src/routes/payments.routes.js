@@ -159,8 +159,10 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
               (SELECT currency FROM workspaces WHERE id = $1) AS currency
          FROM matching`,
       paymentFilterParams(req, scope))).rows[0];
-    const platform = !req.user.actorId && (await c.query(
-      'SELECT is_platform_admin FROM users WHERE id = $1', [req.user.id])).rows[0]?.is_platform_admin === true;
+    const platform = !req.user.actorId && req.user.twoFactorAuthenticated
+      && (await c.query(
+        'SELECT 1 FROM users WHERE id = $1 AND is_platform_admin AND two_factor_enabled',
+        [req.user.id])).rows.length === 1;
     return { row, platform };
   });
 

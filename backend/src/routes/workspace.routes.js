@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const { query } = require('../db');
-const { requirePermission } = require('../middleware');
+const { requirePermission, requirePlatformAdmin } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { isStr, badRequest } = require('../util/validate');
@@ -14,6 +14,11 @@ const { wid, uid } = require('../lib/scope');
 const n = (v) => (v == null ? 0 : Number(v));
 
 const LABELS = { accountLabel: 'account_label', accountLabelPlural: 'account_label_plural', agentLabel: 'agent_label', agentLabelPlural: 'agent_label_plural' };
+
+function requirePlatformAdminForMerchantChange(req, res, next) {
+  if (!Object.hasOwn(req.body || {}, 'merchantId')) return next();
+  return requirePlatformAdmin(req, res, next);
+}
 
 const publicWorkspace = (w) => ({
   id: w.id, name: w.name, currency: w.currency, status: w.status,
@@ -33,7 +38,7 @@ router.get('/', requirePermission('settings.view'), asyncHandler(async (req, res
 }));
 
 // PATCH /workspaces/:id  { name?, accountLabel?, …, merchantId? }
-router.patch('/', requirePermission('settings.edit'), asyncHandler(async (req, res) => {
+router.patch('/', requirePermission('settings.edit'), requirePlatformAdminForMerchantChange, asyncHandler(async (req, res) => {
   const body = req.body || {};
   const sets = [], vals = [];
   if ('name' in body) {
@@ -42,8 +47,6 @@ router.patch('/', requirePermission('settings.edit'), asyncHandler(async (req, r
   }
   // Empty clears it, which falls the server back to MANTAPAY_MERCHANT_ID.
   if ('merchantId' in body) {
-    const operator = (await query('SELECT is_platform_admin FROM users WHERE id=$1', [uid(req)])).rows[0];
-    if (!operator?.is_platform_admin) return res.status(403).json({ error: 'platform_admin_required' });
     const mid = body.merchantId == null ? '' : String(body.merchantId).trim();
     if (mid.length > 64) return badRequest(res, 'merchantId is at most 64 characters', ['merchantId']);
     vals.push(mid || null); sets.push(`merchant_id = $${vals.length}`);

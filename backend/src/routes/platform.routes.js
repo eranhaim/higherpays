@@ -9,6 +9,7 @@ const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { requirePlatformAdmin } = require('../middleware');
 const { signImpersonationToken } = require('../auth/tokens');
+const { revokeUserSessions } = require('../auth/sessions');
 const { ensureWorkspaceRoles } = require('../services/workspaceRoles');
 const { isStr, badRequest } = require('../util/validate');
 const { sendEmail } = require('../util/email');
@@ -513,16 +514,12 @@ router.patch('/users/:id/platform-admin', asyncHandler(async (req, res) => {
   const on = !!(req.body || {}).isPlatformAdmin;
   if (req.params.id === uid(req) && !on) return res.status(403).json({ error: 'cannot_demote_self' });
   const user = await withTransaction(async (c) => {
-    if (on) {
-      const profile = (await c.query(
-        `SELECT 1 FROM agents WHERE user_id=$1
-         UNION ALL SELECT 1 FROM accounts WHERE user_id=$1 LIMIT 1`,
-        [req.params.id])).rows[0];
-      if (profile) return { error: 'profile_user_cannot_be_platform_admin' };
-    }
     const u = (await c.query('UPDATE users SET is_platform_admin=$2 WHERE id=$1 RETURNING id, email, is_platform_admin', [req.params.id, on])).rows[0];
     if (!u) return null;
     if (on) {
+      // Platform capability is independent from a person's workspace role and
+      // profile. Existing agent/account seats remain untouched; only absent
+      // workspace seats are created for cross-workspace operator access.
       await c.query(
         `INSERT INTO workspace_users (workspace_id, user_id, role, platform_granted)
          SELECT id, $1, 'workspace_admin', true FROM workspaces
@@ -534,8 +531,8 @@ router.patch('/users/:id/platform-admin', asyncHandler(async (req, res) => {
     }
     return u;
   });
-  if (user?.error) return res.status(409).json({ error: user.error });
   if (!user) return res.status(404).json({ error: 'not_found' });
+  await revokeUserSessions(user.id);
   await audit({ actorUserId: uid(req), action: 'platform.admin.grant', entityType: 'user', entityId: user.id, metadata: { isPlatformAdmin: on } });
   res.json({ id: user.id, email: user.email, isPlatformAdmin: user.is_platform_admin });
 }));
