@@ -10,6 +10,8 @@ export interface CreateLinkFormInput {
   type: LinkType;
   amount: number;
   description?: string;
+  /** single_use only: create a link that never times out. */
+  noExpiry?: boolean;
 }
 
 export interface UseLinksDataResult {

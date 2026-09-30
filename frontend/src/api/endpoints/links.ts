@@ -3,7 +3,9 @@ import { workspacePath } from '../workspacePath';
 import type { Page } from '../types';
 
 /**
- * single_use dies on the first payment, or 24h after creation if nobody pays.
+ * single_use dies on the first payment, or after the link TTL (default 48h) if
+ * nobody pays — unless it was created with no expiry, when it stays open until
+ * paid or cancelled by hand.
  * reusable stays open through any number of payments until someone cancels it.
  */
 export type LinkType = 'single_use' | 'reusable';
@@ -109,6 +111,8 @@ export interface CreateLinkInput {
   amount: number;
   currency: string;
   description?: string;
+  /** single_use only: create a link that never times out. */
+  noExpiry?: boolean;
 }
 
 /** Server-side filters for the link list. Empty fields are simply not sent. */

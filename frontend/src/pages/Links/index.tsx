@@ -101,6 +101,7 @@ export default function LinksPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [accountId, setAccountId] = useState('');
   const [type, setType] = useState<LinkType>('single_use');
+  const [noExpiry, setNoExpiry] = useState(false);
   const [amountText, setAmountText] = useState('');
   const [description, setDescription] = useState('');
   const [isCreating, setIsCreating] = useState(false);
@@ -146,6 +147,7 @@ export default function LinksPage() {
   const openCreate = () => {
     setAccountId(activeAccounts[0]?.id ?? '');
     setType('single_use');
+    setNoExpiry(false);
     setAmountText('');
     setDescription('');
     setCreateOpen(true);
@@ -157,7 +159,11 @@ export default function LinksPage() {
     if (aboveMax) { toast(`Maximum link amount is ${formatMoney(maxAmount ?? 0)}.`); return; }
     setIsCreating(true);
     try {
-      const created = await createLink({ accountId, type, amount, description: description.trim() || undefined });
+      const created = await createLink({
+        accountId, type, amount,
+        description: description.trim() || undefined,
+        noExpiry: type === 'single_use' ? noExpiry : undefined,
+      });
       setCreateOpen(false);
       setCreatedUrl(created.checkoutUrl);
     } catch (err) {
@@ -488,12 +494,20 @@ export default function LinksPage() {
         </Select>
         <Select id="link-type" label="Type" value={type} onChange={(v) => setType(v as LinkType)}
           hint={type === 'single_use'
-            ? `Closes on the first payment, or after ${expiryHours} ${expiryHours === 1 ? 'hour' : 'hours'} if nobody pays.`
+            ? noExpiry
+              ? 'Closes on the first payment. Stays open until then — no deadline.'
+              : `Closes on the first payment, or after ${expiryHours} ${expiryHours === 1 ? 'hour' : 'hours'} if nobody pays.`
             : 'Stays open through any number of payments until you cancel it.'}>
           {LINK_TYPES
             .filter((t) => t !== 'reusable' || linkLimits?.reusableLinksEnabled !== false)
             .map((t) => <option key={t} value={t}>{LINK_TYPE_LABELS[t]}</option>)}
         </Select>
+        {type === 'single_use' && (
+          <label className="check-row">
+            <input type="checkbox" checked={noExpiry} onChange={(e) => setNoExpiry(e.target.checked)} />
+            <span>No expiry — keep this link open until it is paid or cancelled.</span>
+          </label>
+        )}
         <div className="field">
           <label htmlFor="link-amount">Amount</label>
           <input id="link-amount" type="number" min={minAmount} max={maxAmount ?? undefined} step={0.01} placeholder="0.00"
