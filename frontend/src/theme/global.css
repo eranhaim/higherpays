@@ -934,6 +934,9 @@ label.setrow { cursor: pointer; }
   .tableblock.has-mobile-cards > .tablewrap { display: none; }
   .mobile-card-list { display: grid; gap: 8px; padding: 8px; }
   .mobile-data-card { background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius); }
+  .mobile-data-card.clickable { cursor: pointer; }
+  .mobile-data-card.clickable:active { background: var(--brand-wash); }
+  .mobile-data-card.clickable:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
   .mobile-data-card-summary {
     display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px 12px;
     align-items: center; padding: 12px 14px;

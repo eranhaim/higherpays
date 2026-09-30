@@ -149,7 +149,25 @@ export function DataTable<T>(props: DataTableProps<T>) {
             const key = keyFor(row, index);
             const expanded = expandedMobileRows.has(key);
             return (
-              <div className="mobile-data-card" key={key}>
+              <div
+                className={`mobile-data-card${onRowClick ? ' clickable' : ''}`}
+                key={key}
+                // Mirrors the desktop <tr>: the card opens the detail modal. The
+                // expand chevron and any button/link/field inside it are their
+                // own actions, so a tap on one must not also open the modal.
+                role={onRowClick ? 'button' : undefined}
+                tabIndex={onRowClick ? 0 : undefined}
+                onClick={onRowClick ? (e) => {
+                  if ((e.target as HTMLElement).closest('button, a, input, select, label')) return;
+                  onRowClick(row);
+                } : undefined}
+                onKeyDown={onRowClick ? (e) => {
+                  if (e.key !== 'Enter' && e.key !== ' ') return;
+                  if ((e.target as HTMLElement).closest('button, a, input, select, label')) return;
+                  e.preventDefault();
+                  onRowClick(row);
+                } : undefined}
+              >
                 {mobileSummary(row, { expanded, toggle: () => toggleMobileRow(key) })}
                 {expanded && (
                   <div className="mobile-data-card-details">
