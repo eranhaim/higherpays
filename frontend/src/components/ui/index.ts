@@ -11,5 +11,6 @@ export { DateRangePicker, type DateRange } from './DateRangePicker';
 export { Calendar } from './Calendar';
 export { DetailRow } from './DetailRow';
 export { CopyButton } from './CopyButton';
+export { RowViewButton } from './RowViewButton';
 export { Select } from './Select';
 export { ViewPicker } from './ViewPicker';

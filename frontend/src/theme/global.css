@@ -437,6 +437,16 @@ tbody tr.clickable:focus-visible {
   background: var(--brand-wash);
   outline: 2px solid var(--brand); outline-offset: -2px;
 }
+
+/* Explicit per-row "View details" control (Payments and Links). */
+.row-view {
+  display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface); color: var(--muted); cursor: pointer;
+}
+.row-view svg { width: 16px; height: 16px; display: block; }
+.row-view:hover { color: var(--brand); border-color: var(--brand-edge); background: var(--brand-wash); }
+.row-view:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 .table-note { padding: 40px; text-align: center; color: var(--muted); }
 .table-foot {
   padding: 12px 16px; font-size: var(--text-sm); color: var(--muted);
@@ -945,8 +955,17 @@ label.setrow { cursor: pointer; }
   .mobile-data-card-title { min-width: 0; font-size: 16px; font-weight: 750; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-data-card-creator { color: var(--muted); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .mobile-data-card-status { justify-self: end; }
+  /* The right-hand control cluster: the explicit View button and the expand
+     chevron. Occupies the summary grid's third column so the amount/status/
+     creator layout is unchanged. */
+  .mobile-card-actions {
+    grid-column: 3; grid-row: 1 / span 2; justify-self: end;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .mobile-card-actions .row-view { width: 36px; height: 36px; }
+  .mobile-card-actions .row-view svg { width: 18px; height: 18px; }
   .mobile-card-toggle {
-    grid-column: 3; grid-row: 1 / span 2; width: 36px; height: 36px; padding: 0;
+    width: 36px; height: 36px; padding: 0;
     border: 1px solid var(--brand-edge); border-radius: 50%; background: var(--brand-wash); color: var(--brand);
     display: grid; place-items: center; cursor: pointer;
   }
