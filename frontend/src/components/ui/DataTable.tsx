@@ -16,6 +16,12 @@ export interface Column<T> {
   filter?: ReactNode;
   /** Marks the header while its filter is narrowing the list. */
   isFiltered?: boolean;
+  /**
+   * Kept out of the phone card's expanded field list. For a leading row
+   * control (e.g. a View button) that already shows in the card summary and
+   * would otherwise repeat as a labelled field.
+   */
+  hideInMobileDetails?: boolean;
 }
 
 export interface SortState {
@@ -171,7 +177,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                 {mobileSummary(row, { expanded, toggle: () => toggleMobileRow(key) })}
                 {expanded && (
                   <div className="mobile-data-card-details">
-                    {columns.map((column) => (
+                    {columns.filter((column) => !column.hideInMobileDetails).map((column) => (
                       <div className="mobile-data-field" key={column.key}>
                         <span>{column.header}</span>
                         <div>{column.render(row)}</div>

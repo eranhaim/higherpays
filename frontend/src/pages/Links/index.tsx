@@ -11,7 +11,7 @@ import ReassignFields from '../../components/ReassignFields';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DateCell, CopyButton, DetailRow, Select,
-  DataTable, FilterBar, DateRangePicker, ViewPicker,
+  DataTable, FilterBar, DateRangePicker, ViewPicker, RowViewButton,
   type Column, type DateRange, type SortState,
 } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
@@ -254,6 +254,13 @@ export default function LinksPage() {
 
   const columnsView = useViewLayout('links.columns', columns.map((c) => ({ key: c.key, label: c.header })));
   const shownColumns: Column<PaymentLink>[] = [
+    // The explicit way to open a link's detail modal, always first and never
+    // hidden or reordered. It also shows on the phone card, so it is kept out
+    // of the card's expanded field list.
+    {
+      key: 'view', header: 'View', hideHeader: true, hideInMobileDetails: true, width: 44,
+      render: (l: PaymentLink) => <RowViewButton onClick={() => openDetail(l)} />,
+    },
     ...orderBy(columns, columnsView.visibleKeys),
     // The actions cell is a control, not data: it is never hidden or moved.
     {
@@ -352,15 +359,18 @@ export default function LinksPage() {
               <Pill tone={STATUS_TONE[l.status]}>{LINK_STATUS_LABELS[l.status]}</Pill>
             </div>
             <div className="mobile-data-card-creator">{labels.account}: {l.account}</div>
-            <button
-              type="button"
-              className="mobile-card-toggle"
-              aria-label={expanded ? `Collapse ${l.referenceId}` : `Expand ${l.referenceId}`}
-              aria-expanded={expanded}
-              onClick={toggle}
-            >
-              <span className={`mobile-card-chevron${expanded ? ' open' : ''}`} aria-hidden="true" />
-            </button>
+            <div className="mobile-card-actions">
+              <RowViewButton onClick={() => openDetail(l)} label={`View ${l.referenceId}`} />
+              <button
+                type="button"
+                className="mobile-card-toggle"
+                aria-label={expanded ? `Collapse ${l.referenceId}` : `Expand ${l.referenceId}`}
+                aria-expanded={expanded}
+                onClick={toggle}
+              >
+                <span className={`mobile-card-chevron${expanded ? ' open' : ''}`} aria-hidden="true" />
+              </button>
+            </div>
           </div>
         )}
         sort={sort}
