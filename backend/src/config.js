@@ -79,9 +79,10 @@ const config = {
   webhookPublicBase: process.env.WEBHOOK_PUBLIC_BASE || null,
   // Where the console is served, for the links we put in emails.
   appPublicBase: (process.env.APP_PUBLIC_BASE || 'https://higherpays.com').replace(/\/$/, ''),
-  // A single-use payment link dies this long after creation if nobody pays.
+  // A single-use payment link dies this long after creation if nobody pays,
+  // unless it was created with no expiry (expires_at NULL).
   // MantaPay honours ExpiredOn on the hosted page; the reconciler mirrors it.
-  linkTtlMinutes: parseInt(process.env.LINK_TTL_MINUTES || String(24 * 60), 10),
+  linkTtlMinutes: parseInt(process.env.LINK_TTL_MINUTES || String(48 * 60), 10),
   // Marketplace integration secrets are dedicated service credentials. The
   // raw API key and event signing secret never enter the database.
   marketplaceIntegrationApiKeyHash: process.env.MARKETPLACE_INTEGRATION_API_KEY_HASH || null,

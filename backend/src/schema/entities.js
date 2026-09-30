@@ -24,7 +24,9 @@ const ACCOUNT_STATUS = [ 'active', 'paused', 'archived'];
 const PAY_MODEL = ['share', 'salary'];
 const CUSTOMER_SEGMENT = ['new', 'regular', 'high_value', 'vip', 'inactive', 'at_risk'];
 const PRICING_MODE = ['fixed', 'open'];
-// single_use dies on the first payment, or 24h after creation if nobody pays.
+// single_use dies on the first payment, or after the link TTL (default 48h) if
+// nobody pays — unless it was created with no expiry, when it stays open until
+// paid or cancelled by hand.
 // reusable stays open through any number of payments until someone cancels it.
 const LINK_TYPE = ['single_use', 'reusable'];
 //   active     payable
@@ -364,7 +366,7 @@ const PaymentLink = entity('payment_links', {
     providerRequestId:     text(),              // provider's id for the create-link call
     providerLinkId:        text(),
     checkoutUrl:           text(),
-    expiresAt:             timestamp(),   // single_use only, set to creation + 24h
+    expiresAt:             timestamp(),   // single_use only; creation + TTL, or null for a no-expiry link
     paidAt:                timestamp(),   // single_use only; reusable links read payments
     archivedAt:            timestamp(),   // hidden from the default operations list
   },

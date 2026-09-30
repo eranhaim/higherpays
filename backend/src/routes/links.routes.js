@@ -281,12 +281,14 @@ router.get('/:id', requirePermission('links.view'), asyncHandler(async (req, res
   });
 }));
 
-// POST /  { accountId, type: 'single_use'|'reusable', amount, currency, description? }
+// POST /  { accountId, type: 'single_use'|'reusable', amount, currency, description?, noExpiry? }
 // The customer is attached later, when the agent completes the payment's details.
+// noExpiry keeps a single_use link open until it is paid or cancelled by hand.
 router.post('/', requirePermission('links.create'), asyncHandler(async (req, res) => {
-  const { accountId, type, amount, currency, description } = req.body || {};
+  const { accountId, type, amount, currency, description, noExpiry } = req.body || {};
   if (!accountId) return badRequest(res, 'accountId is required', ['accountId']);
   if (description != null && typeof description !== 'string') return badRequest(res, 'description must be text', ['description']);
+  if (noExpiry != null && typeof noExpiry !== 'boolean') return badRequest(res, 'noExpiry must be true or false', ['noExpiry']);
   if (!vocab.LINK_TYPE.includes(type)) return badRequest(res, `type must be one of ${vocab.LINK_TYPE.join(', ')}`, ['type']);
   if (!/^[A-Za-z]{3}$/.test(currency || '')) return badRequest(res, 'currency must be a 3-letter code', ['currency']);
   if (!isValidMoneyAmount(amount)) {
@@ -347,7 +349,11 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
 
     const checkoutUrl = generateProviderLink(referenceId);
     const ttlMinutes = ws.link_ttl_minutes == null ? config.linkTtlMinutes : Number(ws.link_ttl_minutes);
-    const expiresAt = type === 'single_use' ? new Date(Date.now() + ttlMinutes * 60_000) : null;
+    // A reusable link never has a deadline; a single_use one gets the TTL unless
+    // it was explicitly created with no expiry.
+    const expiresAt = type === 'single_use' && !noExpiry
+      ? new Date(Date.now() + ttlMinutes * 60_000)
+      : null;
 
     const link = (await c.query(
       `INSERT INTO payment_links
@@ -367,7 +373,7 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
   if (result.validation) return badRequest(res, result.validation, result.fields);
   if (result.err) return res.status(404).json({ error: result.err });
 
-  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'link.create', entityType: 'payment_link', entityId: result.link.id, metadata: { type, amount: amt, currency: cur } });
+  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'link.create', entityType: 'payment_link', entityId: result.link.id, metadata: { type, amount: amt, currency: cur, noExpiry: result.link.expires_at == null && type === 'single_use' } });
   res.status(201).json(publicLink(result.link));
 }));
 
