@@ -47,7 +47,6 @@ export default function ReassignFields({ kind, id, accountId, agentId, accounts,
   const { activeWorkspaceId, labels } = useCurrentSession();
   const [nextAccountId, setNextAccountId] = useState(accountId);
   const [nextAgentId, setNextAgentId] = useState(agentId ?? '');
-  const [isConfirming, setIsConfirming] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   const changed = nextAccountId !== accountId || nextAgentId !== (agentId ?? '');
@@ -72,7 +71,6 @@ export default function ReassignFields({ kind, id, accountId, agentId, accounts,
   const reset = () => {
     setNextAccountId(accountId);
     setNextAgentId(agentId ?? '');
-    setIsConfirming(false);
   };
 
   const save = async () => {
@@ -89,18 +87,12 @@ export default function ReassignFields({ kind, id, accountId, agentId, accounts,
   return (
     <>
       <DetailRow label={labels.account}>
-        <Select label={labels.account} hideLabel value={nextAccountId} onChange={(value) => {
-          setNextAccountId(value);
-          setIsConfirming(false);
-        }}>
+        <Select label={labels.account} hideLabel value={nextAccountId} onChange={setNextAccountId}>
           {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </Select>
       </DetailRow>
       <DetailRow label={labels.agent}>
-        <Select label={labels.agent} hideLabel value={nextAgentId} onChange={(value) => {
-          setNextAgentId(value);
-          setIsConfirming(false);
-        }}>
+        <Select label={labels.agent} hideLabel value={nextAgentId} onChange={setNextAgentId}>
           <option value="">Unassigned</option>
           {roster.map((a) => <option key={a.agentId} value={a.agentId}>{a.name}</option>)}
         </Select>
@@ -135,21 +127,10 @@ export default function ReassignFields({ kind, id, accountId, agentId, accounts,
             </>
           )}
           <div className="actions-right">
-            {isConfirming ? (
-              <>
-                <button className="btn ghost small" onClick={() => setIsConfirming(false)} disabled={isSaving}>Back</button>
-                <button className="btn small" onClick={save} disabled={isSaving || !agentIsAssigned}>
-                  {isSaving ? 'Saving…' : 'Confirm and save'}
-                </button>
-              </>
-            ) : (
-              <>
-                <button className="btn ghost small" onClick={reset} disabled={isSaving}>Undo</button>
-                <button className="btn small" onClick={() => setIsConfirming(true)} disabled={isSaving || !agentIsAssigned}>
-                  Review change
-                </button>
-              </>
-            )}
+            <button className="btn ghost small" onClick={reset} disabled={isSaving}>Undo</button>
+            <button className="btn small" onClick={save} disabled={isSaving || !agentIsAssigned}>
+              {isSaving ? 'Saving…' : 'Save'}
+            </button>
           </div>
         </div>
       )}
