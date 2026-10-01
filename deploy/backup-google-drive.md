@@ -12,17 +12,21 @@ successfully without attempting an upload.
 ## One-time Google Drive setup
 
 Use a Google **service account** JSON key, not an OAuth `client_secret_*.json`
-file. Store it at:
+file. Store it at the path configured in the root-only backup config:
 
 ```sh
 install -d -m 700 /etc/higherpays
 install -o root -g root -m 600 /path/to/service-account.json \
   /etc/higherpays/google-drive-service-account.json
+install -o root -g root -m 600 deploy/backup-drive.env.example \
+  /etc/higherpays/backup-drive.env
+# Set BACKUP_GOOGLE_DRIVE_FOLDER_ID to the folder ID supplied by the customer.
+. /etc/higherpays/backup-drive.env
 ```
 
-In Google Drive, share the destination folder with the service account's
-`client_email` as **Editor**. The folder ID is
-`1LPgi1eyXJMKcTInBORjPzQ02UPVg4bH-`.
+In Google Drive, share the customer-provided destination folder with the
+service account's `client_email` as **Editor**. Set its folder ID only in
+`/etc/higherpays/backup-drive.env`; do not put the Drive URL or ID in git.
 
 Install rclone and create its root-only configuration:
 
@@ -33,7 +37,7 @@ install -d -m 700 /root/.config/rclone
 rclone config create higherpays-drive drive \
   scope drive \
   service_account_file /etc/higherpays/google-drive-service-account.json \
-  root_folder_id 1LPgi1eyXJMKcTInBORjPzQ02UPVg4bH-
+  root_folder_id "$BACKUP_GOOGLE_DRIVE_FOLDER_ID"
 CRYPT_PASSWORD="$(rclone obscure "$(openssl rand -base64 48)")"
 CRYPT_SALT="$(rclone obscure "$(openssl rand -base64 48)")"
 rclone config create higherpays-drive-crypt crypt \
@@ -56,8 +60,8 @@ Enable uploads only after this remote can list the target folder:
 rclone lsd higherpays-drive-crypt:
 install -o root -g root -m 600 deploy/backup-drive.env.example \
   /etc/higherpays/backup-drive.env
-sed -i 's/BACKUP_GOOGLE_DRIVE_UPLOAD=false/BACKUP_GOOGLE_DRIVE_UPLOAD=true/' \
-  /etc/higherpays/backup-drive.env
+# Set BACKUP_GOOGLE_DRIVE_FOLDER_ID and BACKUP_GOOGLE_DRIVE_REMOTE, then
+# change BACKUP_GOOGLE_DRIVE_UPLOAD=true in /etc/higherpays/backup-drive.env.
 ```
 
 ## Test and restore

@@ -15,4 +15,8 @@ else
   echo "[backup] Google Drive configuration is absent; running local backup only"
 fi
 
+if [ -n "${BACKUP_KEEP_LOCAL:-}" ]; then
+  export KEEP_LOCAL="$BACKUP_KEEP_LOCAL"
+fi
+
 exec /bin/sh deploy/backup-postgres.sh
