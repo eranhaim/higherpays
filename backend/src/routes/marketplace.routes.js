@@ -90,7 +90,7 @@ async function enqueueLifecycleEventForReference(c, referenceId, type, providerT
        JOIN payment_links pl ON pl.id=mo.payment_link_id
        LEFT JOIN payments p ON p.payment_link_id=pl.id
       WHERE pl.reference_id=$1
-      LIMIT 1 FOR UPDATE`,
+      LIMIT 1 FOR UPDATE OF mo`,
     [referenceId],
   )).rows[0];
   if (!row) return;

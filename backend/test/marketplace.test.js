@@ -54,7 +54,7 @@ test('marketplace lifecycle events enqueue through the caller transaction', asyn
   );
 
   assert.equal(calls.length, 2);
-  assert.match(calls[0].text, /FOR UPDATE/);
+  assert.match(calls[0].text, /FOR UPDATE OF mo/);
   assert.match(calls[1].text, /INSERT INTO marketplace_event_outbox/);
   const [, type, payload] = calls[1].values;
   assert.equal(type, 'payment.approved');
