@@ -14,7 +14,10 @@ const { resolveAttribution, repostSales } = require('../services/attribution');
 const paymentsService = require('../services/payments.service');
 const { recordLinkEvent } = require('../services/linkEvents');
 const config = require('../config');
-const { queueLifecycleEventForReference } = require('./marketplace.routes');
+const {
+  enqueueLifecycleEventForReference,
+  drainMarketplaceOutbox,
+} = require('./marketplace.routes');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -566,25 +569,33 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
 // transaction under the same payment. Idempotent: the ledger refuses a second
 // reversal.
 async function reverse(req, res, kind) {
-  const result = await withTransaction((c) => paymentsService.recordPaymentReversal(c, wid(req), {
-    paymentId: req.params.id,
-    kind,
-  }));
+  const result = await withTransaction(async (c) => {
+    const reversal = await paymentsService.recordPaymentReversal(c, wid(req), {
+      paymentId: req.params.id,
+      kind,
+    });
+    if (reversal.notFound || reversal.noSale || reversal.already) return reversal;
+    const link = (await c.query(
+      'SELECT reference_id FROM payment_links WHERE id=(SELECT payment_link_id FROM payments WHERE id=$1)',
+      [req.params.id],
+    )).rows[0];
+    if (link?.reference_id) {
+      await enqueueLifecycleEventForReference(
+        c,
+        link.reference_id,
+        kind === 'refund' ? 'payment.refunded' : 'payment.chargeback',
+        `${kind}:${req.params.id}`,
+      );
+    }
+    return reversal;
+  });
 
   if (result.notFound) return res.status(404).json({ error: 'not_found' });
   if (result.noSale) return res.status(400).json({ error: 'no_sale_to_reverse' });
   if (result.already) return res.status(409).json({ error: 'already_reversed', as: result.already });
 
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: `payment.${kind}`, entityType: 'payment', entityId: req.params.id });
-  const link = (await query(
-    'SELECT reference_id FROM payment_links WHERE id=(SELECT payment_link_id FROM payments WHERE id=$1)',
-    [req.params.id],
-  )).rows[0];
-  if (link?.reference_id) void queueLifecycleEventForReference(
-    link.reference_id,
-    kind === 'refund' ? 'payment.refunded' : 'payment.chargeback',
-    `${kind}:${req.params.id}`,
-  );
+  void drainMarketplaceOutbox();
   const e = result.entry;
   res.json({
     ok: true, reversed: result.amount, currency: result.currency,

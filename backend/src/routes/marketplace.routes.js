@@ -82,39 +82,41 @@ function publicOrder(row) {
   };
 }
 
-async function queueLifecycleEventForReference(referenceId, type, providerTransactionId) {
+async function enqueueLifecycleEventForReference(c, referenceId, type, providerTransactionId) {
   if (!configured()) return;
-  await withTransaction(async (c) => {
-    const row = (await c.query(
-      `SELECT mo.marketplace_order_id, mo.amount_minor, mo.currency, pl.reference_id, p.id AS payment_id
-         FROM marketplace_orders mo
-         JOIN payment_links pl ON pl.id=mo.payment_link_id
-         LEFT JOIN payments p ON p.payment_link_id=pl.id
-        WHERE pl.reference_id=$1
-        LIMIT 1 FOR UPDATE`,
-      [referenceId],
-    )).rows[0];
-    if (!row) return;
-    const eventId = crypto.randomUUID();
-    const payload = {
-      eventId,
-      type,
-      occurredAt: new Date().toISOString(),
-      marketplaceOrderId: row.marketplace_order_id,
-      paymentLinkReference: row.reference_id,
-      paymentId: row.payment_id || null,
-      providerTransactionId: providerTransactionId || null,
-      amountMinor: Number(row.amount_minor),
-      currency: row.currency,
-    };
-    await c.query(
-      `INSERT INTO marketplace_event_outbox
-         (marketplace_order_id, event_type, payload)
-       VALUES ($1,$2,$3)
-       ON CONFLICT DO NOTHING`,
-      [row.marketplace_order_id, type, payload],
-    );
-  });
+  const row = (await c.query(
+    `SELECT mo.marketplace_order_id, mo.amount_minor, mo.currency, pl.reference_id, p.id AS payment_id
+       FROM marketplace_orders mo
+       JOIN payment_links pl ON pl.id=mo.payment_link_id
+       LEFT JOIN payments p ON p.payment_link_id=pl.id
+      WHERE pl.reference_id=$1
+      LIMIT 1 FOR UPDATE`,
+    [referenceId],
+  )).rows[0];
+  if (!row) return;
+  const eventId = crypto.randomUUID();
+  const payload = {
+    eventId,
+    type,
+    occurredAt: new Date().toISOString(),
+    marketplaceOrderId: row.marketplace_order_id,
+    paymentLinkReference: row.reference_id,
+    paymentId: row.payment_id || null,
+    providerTransactionId: providerTransactionId || null,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+  };
+  await c.query(
+    `INSERT INTO marketplace_event_outbox
+       (marketplace_order_id, event_type, payload)
+     VALUES ($1,$2,$3)
+     ON CONFLICT DO NOTHING`,
+    [row.marketplace_order_id, type, payload],
+  );
+}
+
+async function queueLifecycleEventForReference(referenceId, type, providerTransactionId) {
+  await withTransaction((c) => enqueueLifecycleEventForReference(c, referenceId, type, providerTransactionId));
   void drainMarketplaceOutbox();
 }
 
@@ -230,4 +232,11 @@ function startMarketplaceOutboxLoop() {
   return timer;
 }
 
-module.exports = { router, queueLifecycleEventForReference, drainMarketplaceOutbox, startMarketplaceOutboxLoop, eventSignature };
+module.exports = {
+  router,
+  enqueueLifecycleEventForReference,
+  queueLifecycleEventForReference,
+  drainMarketplaceOutbox,
+  startMarketplaceOutboxLoop,
+  eventSignature,
+};

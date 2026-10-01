@@ -5,7 +5,10 @@ const { query, withTransaction } = require('../db');
 const { asyncHandler } = require('../lib/http');
 const provider = require('../providers/mantapay');
 const paymentsService = require('../services/payments.service');
-const { queueLifecycleEventForReference } = require('./marketplace.routes');
+const {
+  enqueueLifecycleEventForReference,
+  drainMarketplaceOutbox,
+} = require('./marketplace.routes');
 
 const router = express.Router();
 const PROVIDER = 'mantapay';
@@ -104,10 +107,16 @@ router.post('/payment/:endpoint', asyncHandler(async (req, res) => {
           ? 'chargeback_original_transaction_not_found'
           : 'chargeback_sale_not_found'), { status: 422 });
       }
+      const lifecycleType = ev.kind === 'chargeback'
+        ? 'payment.chargeback'
+        : ev.status === 'approved' ? 'payment.approved' : null;
+      if (lifecycleType) {
+        await enqueueLifecycleEventForReference(c, ev.referenceId, lifecycleType, ev.transactionId);
+      }
       await c.query(
         'UPDATE webhook_events SET processed=true, processed_at=now(), processing_error=NULL WHERE id=$1',
         [event.id]);
-      return outcome;
+      return { ...outcome, lifecycleQueued: Boolean(lifecycleType) };
     });
   } catch (error) {
     await query(
@@ -116,12 +125,7 @@ router.post('/payment/:endpoint', asyncHandler(async (req, res) => {
     throw error;
   }
 
-  if (!result.duplicate && !result.already) {
-    const lifecycleType = ev.kind === 'chargeback'
-      ? 'payment.chargeback'
-      : ev.status === 'approved' ? 'payment.approved' : null;
-    if (lifecycleType) void queueLifecycleEventForReference(ev.referenceId, lifecycleType, ev.transactionId);
-  }
+  if (result.lifecycleQueued) void drainMarketplaceOutbox();
   res.status(200).json({
     ok: true,
     status: ev.status,
