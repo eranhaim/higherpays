@@ -78,14 +78,23 @@ function sortFor(req) {
   return { ...PAYMENT_SORTS[key], dir, after: dir === 'ASC' ? '>' : '<' };
 }
 
-function paymentFilterParams(req, scope) {
+function numericFilter(value) {
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  return Number.isFinite(Number(value)) ? value : null;
+}
+
+function paymentFilterParams(req, scope, { canFilterFees }) {
   const q = typeof req.query.q === 'string' && req.query.q.trim()
     ? `%${req.query.q.trim().toLowerCase()}%`
     : null;
   return [
     wid(req), ...scopeParams(scope),
     req.query.status || null, req.query.accountId || null, req.query.agentId || null,
+    req.query.customerId || null, req.query.categoryId || null,
     req.query.from || null, req.query.to || null, q, req.query.needsDetails === 'true',
+    numericFilter(req.query.minAmount), numericFilter(req.query.maxAmount),
+    canFilterFees ? numericFilter(req.query.minFee) : null,
+    canFilterFees ? numericFilter(req.query.maxFee) : null,
   ];
 }
 
@@ -95,45 +104,63 @@ const PAYMENT_FILTERS = `
   AND ($4::text IS NULL OR p.status = $4::text)
   AND ($5::uuid IS NULL OR p.account_id = $5::uuid)
   AND ($6::uuid IS NULL OR p.agent_id = $6::uuid)
-  AND ($7::timestamptz IS NULL OR p.occurred_at >= $7::timestamptz)
-  AND ($8::timestamptz IS NULL OR p.occurred_at <= $8::timestamptz)
-  AND ($9::text IS NULL OR lower(COALESCE(pl.reference_id, '')) LIKE $9::text
-       OR lower(COALESCE(t.provider_transaction_id, '')) LIKE $9::text
-       OR lower(COALESCE(p.provider_payment_id, '')) LIKE $9::text
-       OR lower(COALESCE(cu.name, '')) LIKE $9::text
-       OR lower(COALESCE(cu.telegram_name, '')) LIKE $9::text
-       OR lower(a.name) LIKE $9::text
-       OR lower(COALESCE(u.full_name, '')) LIKE $9::text
-       OR lower(COALESCE(ca.name, '')) LIKE $9::text
-       OR lower(p.status) LIKE $9::text
-       OR lower(COALESCE(p.payment_method, '')) LIKE $9::text
-       OR lower(p.amount::text) LIKE $9::text
-       OR lower(p.currency) LIKE $9::text
-       OR lower(COALESCE(t.fee::text, '')) LIKE $9::text)
-  AND (NOT $10::boolean OR (p.status = 'paid' AND p.review_reason IS NULL AND p.category_id IS NULL))
+  AND ($7::uuid IS NULL OR p.customer_id = $7::uuid)
+  AND ($8::uuid IS NULL OR p.category_id = $8::uuid)
+  AND ($9::timestamptz IS NULL OR p.occurred_at >= $9::timestamptz)
+  AND ($10::timestamptz IS NULL OR p.occurred_at <= $10::timestamptz)
+  AND ($11::text IS NULL OR lower(COALESCE(pl.reference_id, '')) LIKE $11::text
+       OR lower(COALESCE(t.provider_transaction_id, '')) LIKE $11::text
+       OR lower(COALESCE(p.provider_payment_id, '')) LIKE $11::text
+       OR lower(COALESCE(cu.name, '')) LIKE $11::text
+       OR lower(COALESCE(cu.telegram_name, '')) LIKE $11::text
+       OR lower(a.name) LIKE $11::text
+       OR lower(COALESCE(u.full_name, '')) LIKE $11::text
+       OR lower(COALESCE(ca.name, '')) LIKE $11::text
+       OR lower(p.status) LIKE $11::text
+       OR lower(COALESCE(p.payment_method, '')) LIKE $11::text
+       OR lower(p.amount::text) LIKE $11::text
+       OR lower(p.currency) LIKE $11::text
+       OR lower(COALESCE(t.fee::text, '')) LIKE $11::text)
+  AND (NOT $12::boolean OR (p.status = 'paid' AND p.review_reason IS NULL AND p.category_id IS NULL))
+  AND ($13::numeric IS NULL OR p.amount >= $13::numeric)
+  AND ($14::numeric IS NULL OR p.amount <= $14::numeric)
+  AND ($15::numeric IS NULL OR EXISTS (
+    SELECT 1 FROM revenue_entries fee_entry
+     WHERE fee_entry.transaction_id = t.id
+       AND fee_entry.entry_type = 'sale'
+       AND fee_entry.platform_fee >= $15::numeric
+  ))
+  AND ($16::numeric IS NULL OR EXISTS (
+    SELECT 1 FROM revenue_entries fee_entry
+     WHERE fee_entry.transaction_id = t.id
+       AND fee_entry.entry_type = 'sale'
+       AND fee_entry.platform_fee <= $16::numeric
+  ))
   AND p.archived_at IS NULL`;
 
 // The list and the export answer the same question with the same filters;
 // only the page size differs. `cursor` null and `limit` null mean "all".
-async function listPayments(c, req, { cursor, limit }) {
+async function listPayments(c, req, { cursor, limit, canFilterFees }) {
   const sort = sortFor(req);
   const scope = await resolveDataScope(c, req);
   return (await c.query(
     `${SELECT}
       WHERE p.workspace_id = $1
         AND ${PAYMENT_FILTERS}
-        AND ($11::text IS NULL OR (${sort.expr}, p.id) ${sort.after} ($11::${sort.cast}, $12::uuid))
-      ORDER BY ${sort.expr} ${sort.dir}, p.id ${sort.dir} LIMIT $13`,
-    [...paymentFilterParams(req, scope),
+        AND ($17::text IS NULL OR (${sort.expr}, p.id) ${sort.after} ($17::${sort.cast}, $18::uuid))
+      ORDER BY ${sort.expr} ${sort.dir}, p.id ${sort.dir} LIMIT $19`,
+    [...paymentFilterParams(req, scope, { canFilterFees }),
       cursor ? cursor.value : null, cursor ? cursor.id : null, limit])).rows;
 }
 
-// GET /?limit&cursor&sort&dir&status&accountId&agentId&from&to&q&needsDetails
+// GET /?limit&cursor&sort&dir&status&accountId&agentId&customerId&categoryId&from&to&q&needsDetails&minAmount&maxAmount&minFee&maxFee
 router.get('/', requirePermission('payments.view'), asyncHandler(async (req, res) => {
   const limit = parseLimit(req.query.limit);
   const cursor = decodeCursor(req.query.cursor);
-  const rows = await withTransaction((c) => listPayments(c, req, { cursor, limit: limit + 1 }));
   const seesFees = hasPermission(req.access, 'data.view_all');
+  const rows = await withTransaction((c) => listPayments(c, req, {
+    cursor, limit: limit + 1, canFilterFees: seesFees,
+  }));
   const result = page(rows, limit, sortFor(req).keyOf, (r) => r.id);
   res.json({ items: result.items.map((r) => publicPayment(r, { seesFees })), nextCursor: result.nextCursor });
 }));
@@ -161,7 +188,9 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
               ), 0) AS checkout_fees,
               (SELECT currency FROM workspaces WHERE id = $1) AS currency
          FROM matching`,
-      paymentFilterParams(req, scope))).rows[0];
+      paymentFilterParams(req, scope, {
+        canFilterFees: hasPermission(req.access, 'data.view_all'),
+      }))).rows[0];
     const platform = !req.user.actorId && (await c.query(
       'SELECT is_platform_admin FROM users WHERE id = $1', [req.user.id])).rows[0]?.is_platform_admin === true;
     return { row, platform };
@@ -184,6 +213,55 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
     ...(out.platform ? { checkoutFeeRevenue: Number(out.row.checkout_fees) } : {}),
     currency: out.row.currency,
   });
+}));
+
+// GET /filters — only values that appear in payments visible to this caller.
+// Keeping these options on the payments scope prevents a dropdown from
+// revealing a customer, creator, or category from another caller's data.
+router.get('/filters', requirePermission('payments.view'), asyncHandler(async (req, res) => {
+  const options = await withTransaction(async (c) => {
+    const scope = await resolveDataScope(c, req);
+    const result = await c.query(
+      `WITH visible AS (
+        SELECT p.status, p.account_id, a.name AS account,
+               p.agent_id, u.full_name AS agent,
+               p.customer_id, cu.name AS customer,
+               p.category_id, ca.name AS category
+          FROM payments p
+          JOIN accounts a ON a.id = p.account_id
+          LEFT JOIN agents ag ON ag.id = p.agent_id
+          LEFT JOIN users u ON u.id = ag.user_id
+          LEFT JOIN customers cu ON cu.id = p.customer_id
+          LEFT JOIN categories ca ON ca.id = p.category_id
+         WHERE p.workspace_id = $1
+           AND ($2::uuid IS NULL OR p.agent_id = $2::uuid)
+           AND ($3::uuid IS NULL OR p.account_id = $3::uuid)
+           AND p.archived_at IS NULL
+      )
+      SELECT
+        COALESCE((SELECT json_agg(status ORDER BY status) FROM (
+          SELECT DISTINCT status FROM visible
+        ) statuses), '[]'::json) AS statuses,
+        COALESCE((SELECT json_agg(row_to_json(items) ORDER BY items.name) FROM (
+          SELECT DISTINCT account_id AS id, account AS name FROM visible
+        ) items), '[]'::json) AS accounts,
+        COALESCE((SELECT json_agg(row_to_json(items) ORDER BY items.name) FROM (
+          SELECT DISTINCT agent_id AS id, agent AS name FROM visible
+           WHERE agent_id IS NOT NULL
+        ) items), '[]'::json) AS agents,
+        COALESCE((SELECT json_agg(row_to_json(items) ORDER BY items.name) FROM (
+          SELECT DISTINCT customer_id AS id, customer AS name FROM visible
+           WHERE customer_id IS NOT NULL
+        ) items), '[]'::json) AS customers,
+        COALESCE((SELECT json_agg(row_to_json(items) ORDER BY items.name) FROM (
+          SELECT DISTINCT category_id AS id, category AS name FROM visible
+           WHERE category_id IS NOT NULL
+        ) items), '[]'::json) AS categories`,
+      [wid(req), ...scopeParams(scope)],
+    );
+    return result.rows[0];
+  });
+  res.json(options);
 }));
 
 // Every column the export can carry, in file order. Headers are what the agency
@@ -227,7 +305,9 @@ router.get('/export', requirePermission('payments.export'), asyncHandler(async (
   const asked = Number(req.query.limit);
   const limit = Number.isFinite(asked) && asked > 0 ? Math.min(asked, EXPORT_MAX_ROWS) : EXPORT_MAX_ROWS;
 
-  const rows = await withTransaction((c) => listPayments(c, req, { cursor: null, limit }));
+  const rows = await withTransaction((c) => listPayments(c, req, {
+    cursor: null, limit, canFilterFees: seesFees,
+  }));
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'payment.export', metadata: { count: rows.length }, ip: req.ip || null });
   const csv = toCSV(columns.map((c) => c.header), rows.map((r) => columns.map((c) => c.value(r))));
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');

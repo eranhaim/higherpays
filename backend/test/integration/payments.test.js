@@ -93,6 +93,33 @@ test('an account owner sees their own payments and none of the fees', async () =
   assert.ok(admin[0].platformFee > 0);
 });
 
+test('payment filters use ranges and only expose values in the caller scope', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const otherAccount = await createAccount(app, t);
+  const agent = await createAgent(app, t);
+  await assignAgent(app, t, account.id, agent.id);
+  const category = await createCategory(app, t, 'Membership');
+  const mine = await paySale(app, t, account, 40, { headers: agent.headers });
+  await request(app).patch(`/workspaces/${t.workspaceId}/payments/${mine.paymentId}/details`).set(agent.headers)
+    .send({ categoryId: category.id, customer: { name: 'Scoped customer' } }).expect(200);
+  await paySale(app, t, otherAccount, 99);
+
+  const options = (await request(app).get(`/workspaces/${t.workspaceId}/payments/filters`)
+    .set(agent.headers).expect(200)).body;
+  assert.deepEqual(options.accounts, [{ id: account.id, name: account.name }]);
+  assert.deepEqual(options.agents, [{ id: agent.id, name: agent.name }]);
+  assert.deepEqual(options.customers, [{ id: options.customers[0].id, name: 'Scoped customer' }]);
+  assert.deepEqual(options.categories, [{ id: category.id, name: 'Membership' }]);
+  assert.ok(options.statuses.includes('paid'));
+
+  const range = (await request(app)
+    .get(`/workspaces/${t.workspaceId}/payments?status=paid&minAmount=30&maxAmount=50`)
+    .set(agent.headers).expect(200)).body.items;
+  assert.equal(range.length, 1);
+  assert.equal(range[0].id, mine.paymentId);
+});
+
 test('an agent sees the after-fee receipt, not the customer-facing price', async () => {
   const t = await createTenant(app);
   const account = await createAccount(app, t);

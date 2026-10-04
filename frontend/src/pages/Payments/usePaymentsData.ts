@@ -2,7 +2,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
   paymentsApi, categoriesApi, customersApi, accountsApi, agentsApi,
-  type Payment, type ListPaymentsQuery, type CompletePaymentInput, type Category, type Customer, type Account, type Agent,
+  type Payment, type ListPaymentsQuery, type CompletePaymentInput, type Category, type Customer, type Account, type Agent, type PaymentFilterOptions,
   type ReassignInput, type PaymentsSummary,
 } from '../../api/endpoints';
 
@@ -21,6 +21,7 @@ export interface UsePaymentsDataResult {
   customers: Customer[];
   accounts: Account[];
   agents: Agent[];
+  filterOptions: PaymentFilterOptions | null;
   areCustomersLoading: boolean;
   hasCustomersError: boolean;
   retryCustomers: () => void;
@@ -59,6 +60,12 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     queryFn: () => paymentsApi.summary(filters),
     enabled,
   });
+  const filterOptions = useQuery({
+    queryKey: ['payment-filter-options', activeWorkspaceId],
+    queryFn: () => paymentsApi.filters(),
+    enabled,
+    staleTime: 5 * 60_000,
+  });
   const categories = useQuery({
     queryKey: ['categories', activeWorkspaceId],
     queryFn: () => categoriesApi.list(),
@@ -84,6 +91,7 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['payments', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['payments-summary', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['payment-filter-options', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['links', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['links-summary', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['customers', activeWorkspaceId] });
@@ -116,6 +124,7 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     customers: customers.data ?? [],
     accounts: accounts.data ?? [],
     agents: agents.data ?? [],
+    filterOptions: filterOptions.data ?? null,
     areCustomersLoading: customers.isLoading,
     hasCustomersError: customers.isError,
     retryCustomers: () => { void customers.refetch(); },

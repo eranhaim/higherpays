@@ -135,14 +135,30 @@ export interface ListPaymentsQuery {
   status?: string;
   accountId?: string;
   agentId?: string;
+  customerId?: string;
+  categoryId?: string;
   /** YYYY-MM-DD, inclusive. */
   from?: string;
   to?: string;
   /** Matches HigherPays Order, MantaPay transaction ID, customer, account, or agent. */
   q?: string;
   needsDetails?: boolean;
+  minAmount?: string;
+  maxAmount?: string;
+  /** Available only to workspace-wide viewers. */
+  minFee?: string;
+  /** Available only to workspace-wide viewers. */
+  maxFee?: string;
   sort?: PaymentSort;
   dir?: 'asc' | 'desc';
+}
+
+export interface PaymentFilterOptions {
+  statuses: PaymentStatus[];
+  accounts: { id: string; name: string }[];
+  agents: { id: string; name: string }[];
+  customers: { id: string; name: string }[];
+  categories: { id: string; name: string }[];
 }
 
 /** The agent's completion: pick an existing customer or type a new one. */
@@ -216,6 +232,8 @@ export const paymentsApi = {
 
   summary: (filters: ListPaymentsQuery = {}) =>
     api.get<PaymentsSummary>(workspacePath(`/payments/summary?${filterParams(filters).toString()}`)),
+
+  filters: () => api.get<PaymentFilterOptions>(workspacePath('/payments/filters')),
 
   /** The same filtered list, as a CSV download. */
   exportCsv(filters: ListPaymentsQuery = {}, options: ExportOptions = {}) {

@@ -12,7 +12,7 @@ import EnableTwoFactorModal from '../../components/EnableTwoFactorModal';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DateCell,
-  DataTable, FilterBar, Calendar, DateRangePicker, DetailRow, Select, ViewPicker, RowViewButton,
+  DataTable, FilterBar, DateRangePicker, DetailRow, Select, ViewPicker, RowViewButton,
   type Column, type DateRange, type SortState,
 } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
@@ -24,14 +24,14 @@ import {
 } from '../../api/endpoints';
 import { usePaymentsData, type ExportInput } from './usePaymentsData';
 
-const STATUS_TONE: Record<PaymentStatus, 'ok' | 'no' | 'warn'> = {
-  pending: 'warn',
+const STATUS_TONE: Record<Exclude<PaymentStatus, 'pending'>, 'ok' | 'no'> = {
   paid: 'ok',
   failed: 'no',
   refunded: 'no',
 };
 
 function StatusPill({ payment }: { payment: Payment }) {
+  if (payment.status === 'pending') return <span className="sub">Waiting for payment</span>;
   if (payment.reviewRequired) return <Pill tone="warn">Review required</Pill>;
   return <Pill tone={payment.needsDetails ? 'warn' : STATUS_TONE[payment.status]}>{paymentStatusLabel(payment)}</Pill>;
 }
@@ -40,13 +40,23 @@ interface Filters {
   status: '' | PaymentStatus;
   accountId: string;
   agentId: string;
+  customerId: string;
+  categoryId: string;
   from: string;
   to: string;
   search: string;
   needsDetails: boolean;
+  minAmount: string;
+  maxAmount: string;
+  minFee: string;
+  maxFee: string;
 }
 
-const DEFAULT_FILTERS: Filters = { status: '', accountId: '', agentId: '', from: '', to: '', search: '', needsDetails: false };
+const DEFAULT_FILTERS: Filters = {
+  status: 'paid', accountId: '', agentId: '', customerId: '', categoryId: '',
+  from: '', to: '', search: '', needsDetails: false,
+  minAmount: '', maxAmount: '', minFee: '', maxFee: '',
+};
 
 type ReversalKind = 'refund' | 'chargeback';
 
@@ -78,16 +88,26 @@ export default function PaymentsPage() {
     status: filters.status || undefined,
     accountId: filters.accountId || undefined,
     agentId: filters.agentId || undefined,
+    customerId: filters.customerId || undefined,
+    categoryId: filters.categoryId || undefined,
     from: filters.from || undefined,
     to: filters.to || undefined,
     q: search.trim() || undefined,
     needsDetails: filters.needsDetails || undefined,
+    minAmount: filters.minAmount || undefined,
+    maxAmount: filters.maxAmount || undefined,
+    minFee: canScope ? filters.minFee || undefined : undefined,
+    maxFee: canScope ? filters.maxFee || undefined : undefined,
     sort: sort.key as PaymentSort,
     dir: sort.dir,
-  }), [filters.status, filters.accountId, filters.agentId, filters.from, filters.to, filters.needsDetails, search, sort]);
+  }), [
+    canScope, filters.status, filters.accountId, filters.agentId, filters.customerId, filters.categoryId,
+    filters.from, filters.to, filters.needsDetails, filters.minAmount, filters.maxAmount, filters.minFee, filters.maxFee,
+    search, sort,
+  ]);
 
   const {
-    payments, summary, categories, customers, accounts, agents,
+    payments, summary, categories, customers, accounts, filterOptions,
     areCustomersLoading, hasCustomersError, retryCustomers,
     isLoading, isError, isSummaryLoading, isSummaryError, hasMore, isLoadingMore, loadMore, complete, recordReversal, reassign, archivePayment, exportCsv,
   } = usePaymentsData(query, canScope);
@@ -162,6 +182,13 @@ export default function PaymentsPage() {
 
   const range: DateRange = { from: filters.from, to: filters.to };
   const setRange = (r: DateRange) => setFilters((f) => ({ ...f, ...r }));
+  const availableStatuses = PAYMENT_STATUSES.filter((status) =>
+    status === filters.status || filterOptions?.statuses.includes(status),
+  );
+  const activeMoreFilters = [
+    filters.customerId, filters.accountId, filters.agentId, filters.categoryId,
+    filters.minAmount, filters.maxAmount, canScope ? filters.minFee : '', canScope ? filters.maxFee : '',
+  ].filter(Boolean).length;
 
   const columns: Column<Payment>[] = [
     {
@@ -178,23 +205,9 @@ export default function PaymentsPage() {
     },
     {
       key: 'account', header: labels.account, render: (p) => p.account,
-      isFiltered: filters.accountId !== '',
-      filter: canScope ? (
-        <Select label={labels.account} hideLabel value={filters.accountId} onChange={(v) => setFilters((f) => ({ ...f, accountId: v }))}>
-          <option value="">All {labels.accounts.toLowerCase()}</option>
-          {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </Select>
-      ) : undefined,
     },
     {
       key: 'agent', header: labels.agent, render: (p) => p.agent ?? '—',
-      isFiltered: filters.agentId !== '',
-      filter: canScope ? (
-        <Select label={labels.agent} hideLabel value={filters.agentId} onChange={(v) => setFilters((f) => ({ ...f, agentId: v }))}>
-          <option value="">All {labels.agents.toLowerCase()}</option>
-          {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </Select>
-      ) : undefined,
     },
     { key: 'category', header: 'Category', render: (p) => p.category ?? '—' },
     {
@@ -208,23 +221,9 @@ export default function PaymentsPage() {
     }] : []),
     {
       key: 'status', header: 'Status', sortKey: 'status', render: (p) => <StatusPill payment={p} />,
-      isFiltered: filters.status !== '' || filters.needsDetails,
-      filter: (
-        <Select
-          label="Status" hideLabel
-          value={filters.needsDetails ? 'needs_details' : filters.status}
-          onChange={(v) => setFilters((f) => ({ ...f, needsDetails: v === 'needs_details', status: v === 'needs_details' ? '' : v as Filters['status'] }))}
-        >
-          <option value="">All statuses</option>
-          <option value="needs_details">Waiting to fill details</option>
-          {PAYMENT_STATUSES.map((s) => <option key={s} value={s}>{PAYMENT_STATUS_LABELS[s]}</option>)}
-        </Select>
-      ),
     },
     {
       key: 'date', header: 'Date', sortKey: 'date', render: (p) => <DateCell ts={p.occurredAt} />,
-      isFiltered: filters.from !== '' || filters.to !== '',
-      filter: <Calendar value={range} onChange={setRange} />,
     },
   ];
 
@@ -280,16 +279,78 @@ export default function PaymentsPage() {
       </StatGrid>
 
       <FilterBar>
-        <input
-          type="search"
-          className="search-input"
-          aria-label="Search payments"
-          placeholder="Search any visible payment field"
-          value={filters.search}
-          onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
-        />
-        <button className="btn ghost" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear filters</button>
-        <ViewPicker label="Edit columns" view={columnsView} />
+        <div className="payment-filter-top">
+          <input
+            type="search"
+            className="search-input"
+            aria-label="Search payments"
+            placeholder="Search any visible payment field"
+            value={filters.search}
+            onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
+          />
+          <Select
+            label="Status"
+            hideLabel
+            value={filters.needsDetails ? 'needs_details' : filters.status}
+            onChange={(value) => setFilters((f) => ({
+              ...f,
+              needsDetails: value === 'needs_details',
+              status: value === 'needs_details' ? '' : value as Filters['status'],
+            }))}
+          >
+            <option value="">All statuses</option>
+            <option value="needs_details">Waiting to fill details</option>
+            {availableStatuses.map((status) => (
+              <option key={status} value={status}>{PAYMENT_STATUS_LABELS[status]}</option>
+            ))}
+          </Select>
+          <DateRangePicker value={range} onChange={setRange} />
+          <button className="btn ghost" onClick={() => setFilters(DEFAULT_FILTERS)}>Reset to completed</button>
+          <ViewPicker label="Edit columns" view={columnsView} />
+        </div>
+        <details className="payment-filter-more">
+          <summary>More filters{activeMoreFilters ? ` (${activeMoreFilters})` : ''}</summary>
+          <div className="payment-filter-grid">
+            <Select label="Customer" value={filters.customerId} onChange={(customerId) => setFilters((f) => ({ ...f, customerId }))}>
+              <option value="">All customers</option>
+              {filterOptions?.customers.map((customer) => (
+                <option key={customer.id} value={customer.id}>{customer.name}</option>
+              ))}
+            </Select>
+            <Select label={labels.account} value={filters.accountId} onChange={(accountId) => setFilters((f) => ({ ...f, accountId }))}>
+              <option value="">All {labels.accounts.toLowerCase()}</option>
+              {filterOptions?.accounts.map((account) => (
+                <option key={account.id} value={account.id}>{account.name}</option>
+              ))}
+            </Select>
+            <Select label={labels.agent} value={filters.agentId} onChange={(agentId) => setFilters((f) => ({ ...f, agentId }))}>
+              <option value="">All {labels.agents.toLowerCase()}</option>
+              {filterOptions?.agents.map((agent) => (
+                <option key={agent.id} value={agent.id}>{agent.name}</option>
+              ))}
+            </Select>
+            <Select label="Category" value={filters.categoryId} onChange={(categoryId) => setFilters((f) => ({ ...f, categoryId }))}>
+              <option value="">All categories</option>
+              {filterOptions?.categories.map((category) => (
+                <option key={category.id} value={category.id}>{category.name}</option>
+              ))}
+            </Select>
+            <RangeFilter
+              label="Amount"
+              min={filters.minAmount}
+              max={filters.maxAmount}
+              onChange={(minAmount, maxAmount) => setFilters((f) => ({ ...f, minAmount, maxAmount }))}
+            />
+            {canScope && (
+              <RangeFilter
+                label="Fee"
+                min={filters.minFee}
+                max={filters.maxFee}
+                onChange={(minFee, maxFee) => setFilters((f) => ({ ...f, minFee, maxFee }))}
+              />
+            )}
+          </div>
+        </details>
       </FilterBar>
 
       <DataTable
@@ -494,6 +555,49 @@ export default function PaymentsPage() {
       {enableTwoFactorOpen && (
         <EnableTwoFactorModal onClose={() => setEnableTwoFactorOpen(false)} />
       )}
+    </div>
+  );
+}
+
+function RangeFilter({ label, min, max, onChange }: {
+  label: string;
+  min: string;
+  max: string;
+  onChange: (min: string, max: string) => void;
+}) {
+  const minId = `payment-${label.toLowerCase()}-min`;
+  const maxId = `payment-${label.toLowerCase()}-max`;
+  return (
+    <div className="payment-range-filter">
+      <span className="field-label">{label}</span>
+      <div className="payment-range-inputs">
+        <label htmlFor={minId}>
+          Minimum
+          <input
+            id={minId}
+            type="number"
+            min="0"
+            step="0.01"
+            inputMode="decimal"
+            placeholder="No minimum"
+            value={min}
+            onChange={(event) => onChange(event.target.value, max)}
+          />
+        </label>
+        <label htmlFor={maxId}>
+          Maximum
+          <input
+            id={maxId}
+            type="number"
+            min="0"
+            step="0.01"
+            inputMode="decimal"
+            placeholder="No maximum"
+            value={max}
+            onChange={(event) => onChange(min, event.target.value)}
+          />
+        </label>
+      </div>
     </div>
   );
 }
