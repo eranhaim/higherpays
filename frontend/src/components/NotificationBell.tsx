@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { notificationsApi, type Notification, type NotificationEvent } from '../api/endpoints';
 import { useCurrentSession } from '../hooks/useCurrentSession';
 import { Money, Pill } from './ui';
+import { markNotificationsRead } from './notificationFeed';
 
 const EVENT_TAGS: Record<NotificationEvent, { label: string; tone: 'ok' | 'no' }> = {
   'payment.paid': { label: 'Paid', tone: 'ok' },
@@ -64,7 +65,11 @@ export default function NotificationBell() {
 
   const markRead = useMutation({
     mutationFn: (ids?: string[]) => notificationsApi.markRead(ids),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+    onSuccess: (_data, ids) => {
+      queryClient.setQueryData(queryKey, (feed: { unread: number; notifications: Notification[] } | undefined) =>
+        feed ? markNotificationsRead(feed, ids) : feed);
+      queryClient.invalidateQueries({ queryKey });
+    },
   });
 
   useEffect(() => {

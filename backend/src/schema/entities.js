@@ -616,10 +616,14 @@ const Notification = entity('notifications', {
     currency:          char(3),
     entityType:        text(),
     entityId:          uuid(),
+    eventKey:          text(),                  // prevents repeat delivery of one business event
     accountId:         uuid().references('accounts', 'SET NULL'),
     agentId:           uuid().references('agents', 'SET NULL'),
   },
-  indexes: [{ columns: ['workspaceId', 'createdAt'] }],
+  indexes: [
+    { columns: ['workspaceId', 'createdAt'] },
+    { columns: ['workspaceId', 'event', 'eventKey'], unique: true, where: 'event_key IS NOT NULL' },
+  ],
   timestamps: 'created',
 });
 

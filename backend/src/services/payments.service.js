@@ -175,6 +175,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
         currency,
         entityType: 'payment',
         entityId: payment.id,
+        eventKey: `${status === 'approved' ? 'payment.paid' : 'payment.failed'}:${payment.id}`,
       });
     });
   }
@@ -293,6 +294,7 @@ async function recordPaymentReversal(client, workspaceId, {
     currency: p.currency,
     entityType: 'payment',
     entityId: p.id,
+    eventKey: `payment.${kind === 'refund' ? 'refunded' : 'chargeback'}:${p.id}`,
   }));
   return { entry, amount: Number(p.amount), currency: p.currency, paymentId: p.id };
 }
