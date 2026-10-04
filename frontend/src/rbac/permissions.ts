@@ -44,7 +44,7 @@ const ALL: Permission[] = [
 export const ROLE_PERMISSIONS: Record<SystemWorkspaceRole, Permission[]> = {
   workspace_owner: ALL,
   workspace_admin: ALL,
-  analyst: [
+  member: [
     'payments.view', 'payments.export', 'links.view', 'analytics.view',
     'accounts.view', 'agents.view', 'customers.view', 'revenue.view',
     'team.view', 'settings.view', 'data.view_all',

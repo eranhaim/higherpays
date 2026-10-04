@@ -59,15 +59,15 @@ test('an account owner sees their own analytics and none of the agency figures; 
   assert.equal(admin.agents.length, 1);
 });
 
-test('an analyst reads across the workspace but cannot read the fee breakdown or change anything', async () => {
+test('a member reads across the workspace but cannot read the fee breakdown or change anything', async () => {
   const { t, mine } = await fixture();
-  const analyst = await addMember(app, t, 'analyst');
-  const list = (await request(app).get(`/workspaces/${t.workspaceId}/accounts`).set(analyst.headers).expect(200)).body.accounts;
+  const member = await addMember(app, t, 'member');
+  const list = (await request(app).get(`/workspaces/${t.workspaceId}/accounts`).set(member.headers).expect(200)).body.accounts;
   assert.equal(list.length, 2);
   assert.ok(list[0].revenueSplitPct !== undefined);
-  await request(app).get(`/workspaces/${t.workspaceId}/fees`).set(analyst.headers).expect(403);
+  await request(app).get(`/workspaces/${t.workspaceId}/fees`).set(member.headers).expect(403);
   await request(app).get(`/workspaces/${t.workspaceId}/fees`).set(t.authHeaders).expect(200);
-  await request(app).patch(`/workspaces/${t.workspaceId}/accounts/${mine.id}`).set(analyst.headers).send({ name: 'X' }).expect(403);
+  await request(app).patch(`/workspaces/${t.workspaceId}/accounts/${mine.id}`).set(member.headers).send({ name: 'X' }).expect(403);
 });
 
 test('a payment notifies the people it concerns, not the whole workspace', async () => {

@@ -5,11 +5,11 @@
  * actually sends, as opposed to UI-facing shapes derived in hooks.
  */
 
-/** System roles have stable keys; custom role keys are workspace data. */
-export type SystemWorkspaceRole = 'workspace_owner' | 'workspace_admin' | 'analyst' | 'agent' | 'account_owner';
-export type WorkspaceRole = SystemWorkspaceRole | (string & {});
+/** Fixed membership types. Agent and Creator preserve data-scope structure. */
+export type SystemWorkspaceRole = 'workspace_owner' | 'workspace_admin' | 'member' | 'agent' | 'account_owner';
+export type WorkspaceRole = SystemWorkspaceRole;
 
-export const WORKSPACE_ROLES: SystemWorkspaceRole[] = ['workspace_owner', 'workspace_admin', 'analyst', 'agent', 'account_owner'];
+export const WORKSPACE_ROLES: SystemWorkspaceRole[] = ['workspace_owner', 'workspace_admin', 'member', 'agent', 'account_owner'];
 
 /** What this agency calls a creator and an agent. */
 export interface WorkspaceLabels {

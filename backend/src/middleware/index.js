@@ -57,8 +57,8 @@ const requireAuth = asyncHandler(async (req, _res, next) => {
 
 // 2) requireWorkspace — resolves the workspace from the X-Workspace-Id header
 // (or the URL), confirms the caller has ACTIVE access to it, and attaches
-// req.access = { workspaceId, role, permissions }. Every workspace query after
-// this filters on req.access.workspaceId.
+// req.access = { workspaceId, role, permissions }. Permissions are stored on
+// the seat itself; the membership type only controls structural data scope.
 const requireWorkspace = asyncHandler(async (req, _res, next) => {
   const fromHeader = req.headers['x-workspace-id'];
   const fromPath = req.params.workspaceId;
@@ -76,7 +76,7 @@ const requireWorkspace = asyncHandler(async (req, _res, next) => {
               WHEN 'account_owner' THEN w.account_label || ' owner'
               ELSE wr.name
             END AS role_name,
-            wr.permissions
+            wu.permissions
        FROM workspace_users wu
        JOIN workspace_roles wr ON wr.workspace_id=wu.workspace_id AND wr.key=wu.role
        JOIN workspaces w ON w.id=wu.workspace_id
@@ -88,7 +88,7 @@ const requireWorkspace = asyncHandler(async (req, _res, next) => {
     workspaceId,
     role: row.role,
     roleName: row.role_name,
-    permissions: new Set(row.permissions),
+    permissions: new Set(row.permissions || []),
   };
   if (req.user.actorId) {
     await query(
@@ -124,24 +124,6 @@ const requirePlatformMfa = asyncHandler(async (req, _res, next) => {
   if (row && !req.user.twoFactorAuthenticated) {
     throw new ForbiddenError('platform_two_factor_required');
   }
-  next();
-});
-
-const requireRoleManager = asyncHandler(async (req, _res, next) => {
-  if (!req.access) throw new HttpError(500, 'workspace_context_missing');
-  if (req.access.role === 'workspace_owner') {
-    req.canGrantAllRolePermissions = true;
-    return next();
-  }
-
-  const userIds = [req.user.id, req.user.actorId].filter(Boolean);
-  const row = (await query(
-    'SELECT 1 FROM users WHERE id = ANY($1::uuid[]) AND is_platform_admin',
-    [userIds])).rows[0];
-  if (!hasPermission(req.access, 'roles.manage') && !row) {
-    throw new ForbiddenError('role_manager_required');
-  }
-  req.canGrantAllRolePermissions = Boolean(row);
   next();
 });
 
@@ -195,6 +177,6 @@ function errorHandler(err, req, res, next) {
 }
 
 module.exports = {
-  requireAuth, requireWorkspace, requirePlatformMfa, requirePermission, requireRoleManager, requireArchiveManager,
+  requireAuth, requireWorkspace, requirePlatformMfa, requirePermission, requireArchiveManager,
   requirePlatformAdmin, errorHandler,
 };

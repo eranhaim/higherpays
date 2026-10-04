@@ -3,6 +3,7 @@
 // (user, workspace access, profile) land in one transaction so the profile is
 // always attached to an existing workspace membership.
 const { hashPassword } = require('../auth/passwords');
+const { ROLE_PERMISSIONS } = require('../auth/permissions');
 
 const MIN_PASSWORD_LENGTH = 8;
 
@@ -30,8 +31,10 @@ async function grantWorkspaceRole(client, workspaceId, { email, fullName, passwo
     'SELECT role FROM workspace_users WHERE workspace_id = $1 AND user_id = $2', [workspaceId, user.id])).rows[0];
   if (existing && existing.role !== role) return { err: 'already_a_member', role: existing.role };
   if (!existing) {
+    const permissions = [...(ROLE_PERMISSIONS[role] || [])];
     await client.query(
-      'INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,$3)', [workspaceId, user.id, role]);
+      'INSERT INTO workspace_users (workspace_id, user_id, role, permissions) VALUES ($1,$2,$3,$4)',
+      [workspaceId, user.id, role, permissions]);
   }
   return { userId: user.id, isNewLogin };
 }

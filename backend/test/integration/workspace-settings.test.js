@@ -10,7 +10,7 @@ const { paySale } = require('../helpers/webhook');
 
 test('workspace vocabulary reaches other users, exports, and notifications', async () => {
   const tenant = await createTenant(app);
-  const analyst = await addMember(app, tenant, 'analyst');
+  const member = await addMember(app, tenant, 'member');
   await request(app).patch(`/workspaces/${tenant.workspaceId}`).set(tenant.authHeaders).send({
     accountLabel: 'Model',
     accountLabelPlural: 'Models',
@@ -19,7 +19,7 @@ test('workspace vocabulary reaches other users, exports, and notifications', asy
   }).expect(200);
 
   const me = (await request(app).get('/auth/me')
-    .set('Authorization', analyst.headers.Authorization).expect(200)).body;
+    .set('Authorization', member.headers.Authorization).expect(200)).body;
   const workspace = me.workspaces.find((item) => item.id === tenant.workspaceId);
   assert.deepEqual(workspace.labels, {
     account: 'Model', accounts: 'Models', agent: 'Closer', agents: 'Closers',

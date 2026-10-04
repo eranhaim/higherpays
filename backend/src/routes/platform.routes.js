@@ -11,6 +11,7 @@ const { requirePlatformAdmin } = require('../middleware');
 const { signImpersonationToken } = require('../auth/tokens');
 const { revokeUserSessions } = require('../auth/sessions');
 const { ensureWorkspaceRoles } = require('../services/workspaceRoles');
+const { ROLE_PERMISSIONS } = require('../auth/permissions');
 const { isStr, badRequest } = require('../util/validate');
 const { sendEmail } = require('../util/email');
 const { status: vocab } = require('../schema/entities');
@@ -164,9 +165,10 @@ const publicSettlementFee = (s) => ({
 // everywhere. Both go through here.
 async function grantPlatformAdminsAccess(c, workspaceId) {
   await c.query(
-    `INSERT INTO workspace_users (workspace_id, user_id, role, platform_granted)
-     SELECT $1, id, 'workspace_admin', true FROM users WHERE is_platform_admin
-     ON CONFLICT (workspace_id, user_id) DO NOTHING`, [workspaceId]);
+    `INSERT INTO workspace_users (workspace_id, user_id, role, permissions, platform_granted)
+     SELECT $1, id, 'workspace_admin', $2, true FROM users WHERE is_platform_admin
+     ON CONFLICT (workspace_id, user_id) DO NOTHING`,
+    [workspaceId, [...ROLE_PERMISSIONS.workspace_admin]]);
 }
 
 router.get('/me', (req, res) => res.json({ isPlatformAdmin: true }));
@@ -474,8 +476,10 @@ router.post('/agencies', asyncHandler(async (req, res) => {
        VALUES ($1,0,100,0,'-infinity',$2)`, [ws.id, uid(req)]);
     await grantPlatformAdminsAccess(c, ws.id);
     await c.query(
-      'INSERT INTO invites (workspace_id, email, role, token_hash, invited_by_user_id, expires_at) VALUES ($1,$2,$3,$4,$5,$6)',
-      [ws.id, b.adminEmail, 'workspace_owner', hashToken(token), uid(req), new Date(Date.now() + 7 * 86400 * 1000)]);
+      `INSERT INTO invites (workspace_id, email, role, permissions, token_hash, invited_by_user_id, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [ws.id, b.adminEmail, 'workspace_owner', [...ROLE_PERMISSIONS.workspace_owner],
+        hashToken(token), uid(req), new Date(Date.now() + 7 * 86400 * 1000)]);
     return ws;
   });
 
@@ -525,9 +529,10 @@ router.patch('/users/:id/platform-admin', asyncHandler(async (req, res) => {
     if (!u) return null;
     if (on) {
       await c.query(
-        `INSERT INTO workspace_users (workspace_id, user_id, role, platform_granted)
-         SELECT id, $1, 'workspace_admin', true FROM workspaces
-         ON CONFLICT (workspace_id, user_id) DO NOTHING`, [u.id]);
+        `INSERT INTO workspace_users (workspace_id, user_id, role, permissions, platform_granted)
+         SELECT id, $1, 'workspace_admin', $2, true FROM workspaces
+         ON CONFLICT (workspace_id, user_id) DO NOTHING`,
+        [u.id, [...ROLE_PERMISSIONS.workspace_admin]]);
     } else {
       await c.query(
         'DELETE FROM workspace_users WHERE user_id=$1 AND platform_granted=true',

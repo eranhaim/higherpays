@@ -8,53 +8,40 @@ const {
   createTenant, createAccount, createAgent, addMember, getPlatformAdmin, tag,
 } = require('../helpers/tenant');
 const { verifyAccessToken } = require('../../src/auth/tokens');
-const { PERMISSIONS } = require('../../src/auth/permissions');
+const { ROLE_PERMISSIONS } = require('../../src/auth/permissions');
 
-test('roles enforce dependencies, profile restrictions, and explicit owner transfer', async () => {
+test('member permissions are direct, custom roles are disabled, and ownership transfers safely', async () => {
   const owner = await createTenant(app);
-  const member = await addMember(app, owner, 'analyst', { email: `role-member+${tag()}@test.local` });
-  const admin = await addMember(app, owner, 'workspace_admin', { email: `role-admin+${tag()}@test.local` });
+  const member = await addMember(app, owner, 'member', { email: `role-member+${tag()}@test.local` });
 
   await request(app)
-    .post(`/workspaces/${owner.workspaceId}/roles`).set(admin.authHeaders)
-    .send({ name: 'Admin cannot edit roles', permissions: ['payments.view', 'data.view_all'] })
-    .expect(403);
-
-  const invalid = await request(app)
     .post(`/workspaces/${owner.workspaceId}/roles`).set(owner.authHeaders)
-    .send({ name: 'Exporter', permissions: ['payments.export'] }).expect(400);
-  assert.equal(invalid.body.error, 'permission_dependency_missing');
-
-  const role = (await request(app)
-    .post(`/workspaces/${owner.workspaceId}/roles`).set(owner.authHeaders)
-    .send({ name: 'Payment reader', permissions: ['payments.view', 'data.view_all'] }).expect(201)).body;
+    .send({ name: 'Retired', permissions: ['payments.view'] }).expect(410);
   await request(app)
-    .patch(`/workspaces/${owner.workspaceId}/team/${member.userId}/role`).set(owner.authHeaders)
-    .send({ role: role.key }).expect(200);
+    .patch(`/workspaces/${owner.workspaceId}/team/${member.userId}`).set(owner.authHeaders)
+    .send({ permissions: ['payments.view'] }).expect(200);
 
   const agent = await createAgent(app, owner);
   await request(app)
-    .patch(`/workspaces/${owner.workspaceId}/team/${agent.userId}/role`).set(owner.authHeaders)
-    .send({ role: role.key }).expect(200);
-  const profileRole = (await pool.query(
-    'SELECT role FROM agents WHERE workspace_id=$1 AND user_id=$2',
-    [owner.workspaceId, agent.userId])).rows[0];
-  assert.equal(profileRole.role, 'agent');
+    .patch(`/workspaces/${owner.workspaceId}/team/${agent.userId}`).set(owner.authHeaders)
+    .send({ permissions: [...ROLE_PERMISSIONS.agent, 'data.view_all'] }).expect(200);
 
   await request(app)
     .post(`/workspaces/${owner.workspaceId}/team/owner-transfer`).set(owner.authHeaders)
     .send({ userId: member.userId }).expect(200);
   const roles = (await pool.query(
-    'SELECT user_id, role FROM workspace_users WHERE workspace_id=$1 AND user_id=ANY($2)',
+    'SELECT user_id, role, permissions FROM workspace_users WHERE workspace_id=$1 AND user_id=ANY($2)',
     [owner.workspaceId, [owner.userId, member.userId]])).rows;
   assert.equal(roles.find((row) => row.user_id === owner.userId).role, 'workspace_admin');
   assert.equal(roles.find((row) => row.user_id === member.userId).role, 'workspace_owner');
+  assert.deepEqual(roles.find((row) => row.user_id === owner.userId).permissions, [...ROLE_PERMISSIONS.workspace_admin]);
 });
 
 test('impersonation is exact, workspace-scoped, non-refreshable, and dual-audited', async () => {
   const target = await createTenant(app);
   const other = await createTenant(app);
   const admin = await getPlatformAdmin(app);
+  const member = await addMember(app, target, 'member');
 
   const started = (await request(app).post('/platform/impersonation/start').set(admin.headers)
     .send({ workspaceId: target.workspaceId, userId: target.userId }).expect(200)).body;
@@ -77,12 +64,12 @@ test('impersonation is exact, workspace-scoped, non-refreshable, and dual-audite
   await request(app).post('/platform/impersonation/start').set(impersonated)
     .send({ workspaceId: target.workspaceId, userId: target.userId }).expect(403);
 
-  await request(app).post(`/workspaces/${target.workspaceId}/roles`).set(impersonated)
-    .send({ name: `Audit ${tag()}`, permissions: ['team.view', 'data.view_all'] }).expect(201);
+  await request(app).patch(`/workspaces/${target.workspaceId}/team/${member.userId}`).set(impersonated)
+    .send({ permissions: ['payments.view'] }).expect(200);
   const audit = (await pool.query(
     `SELECT actor_user_id, effective_user_id
        FROM audit_log
-      WHERE workspace_id=$1 AND action='role.create'
+      WHERE workspace_id=$1 AND action='team.member.update'
       ORDER BY id DESC LIMIT 1`,
     [target.workspaceId])).rows[0];
   assert.equal(audit.actor_user_id, admin.userId);
@@ -94,10 +81,10 @@ test('impersonation is exact, workspace-scoped, non-refreshable, and dual-audite
       WHERE workspace_id=$1 AND action='platform.impersonation.request'
         AND metadata->>'path'=$2
       ORDER BY id DESC LIMIT 1`,
-    [target.workspaceId, `/workspaces/${target.workspaceId}/roles`])).rows[0];
+    [target.workspaceId, `/workspaces/${target.workspaceId}/team/${member.userId}`])).rows[0];
   assert.equal(requestAudit.actor_user_id, admin.userId);
   assert.equal(requestAudit.effective_user_id, target.userId);
-  assert.equal(requestAudit.metadata.method, 'POST');
+  assert.equal(requestAudit.metadata.method, 'PATCH');
 
   await request(app).get('/auth/me').set(impersonated).expect(200);
   for (const endpoint of [
@@ -120,7 +107,7 @@ test('impersonation is exact, workspace-scoped, non-refreshable, and dual-audite
 test('platform owner recovery appoints only an active plain member when no owner exists', async () => {
   const tenant = await createTenant(app);
   const admin = await getPlatformAdmin(app);
-  const member = await addMember(app, tenant, 'analyst');
+  const member = await addMember(app, tenant, 'member');
   const agent = await createAgent(app, tenant);
   const account = await createAccount(app, tenant);
   const path = `/platform/workspaces/${tenant.workspaceId}/owner-recovery`;
@@ -154,22 +141,18 @@ test('platform owner recovery appoints only an active plain member when no owner
   assert.equal(action.entity_id, member.userId);
 });
 
-test('a custom agency administrator is workspace-scoped and does not require platform MFA', async () => {
+test('an agent with explicit full workspace access stays workspace-scoped', async () => {
   const tenant = await createTenant(app);
   const other = await createTenant(app);
   const agent = await createAgent(app, tenant);
-  const role = (await request(app)
-    .post(`/workspaces/${tenant.workspaceId}/roles`).set(tenant.authHeaders)
-    .send({ name: 'OnlyElite Administrator', permissions: PERMISSIONS }).expect(201)).body;
-
   await request(app)
-    .patch(`/workspaces/${tenant.workspaceId}/team/${agent.userId}/role`).set(tenant.authHeaders)
-    .send({ role: role.key }).expect(200);
+    .patch(`/workspaces/${tenant.workspaceId}/team/${agent.userId}`).set(tenant.authHeaders)
+    .send({ permissions: [...ROLE_PERMISSIONS.workspace_admin] }).expect(200);
 
   await request(app).get(`/workspaces/${tenant.workspaceId}/accounts`).set(agent.headers).expect(200);
   await request(app).get(`/workspaces/${tenant.workspaceId}/archive`).set(agent.headers).expect(200);
   await request(app).post(`/workspaces/${tenant.workspaceId}/roles`).set(agent.headers)
-    .send({ name: 'Administrator copy', permissions: PERMISSIONS }).expect(201);
+    .send({ name: 'Administrator copy' }).expect(410);
   await request(app).patch(`/workspaces/${tenant.workspaceId}`)
     .set(agent.headers).send({ accountLabel: 'Creator' }).expect(200);
   await request(app).patch(`/workspaces/${tenant.workspaceId}`)
@@ -182,7 +165,7 @@ test('a custom agency administrator is workspace-scoped and does not require pla
 test('platform admin promotion preserves existing roles, rejects profiles, and demotion removes only granted seats', async () => {
   const tenant = await createTenant(app);
   const admin = await getPlatformAdmin(app);
-  const member = await addMember(app, tenant, 'analyst');
+  const member = await addMember(app, tenant, 'member');
   const agent = await createAgent(app, tenant);
   const setPlatformAdmin = (userId, isPlatformAdmin) => request(app)
     .patch(`/platform/users/${userId}/platform-admin`)
@@ -198,13 +181,13 @@ test('platform admin promotion preserves existing roles, rejects profiles, and d
        FROM workspace_users
       WHERE workspace_id=$1 AND user_id=$2`,
     [tenant.workspaceId, member.userId])).rows[0];
-  assert.equal(seat.role, 'analyst');
+  assert.equal(seat.role, 'member');
   assert.equal(seat.platform_granted, false);
   await setPlatformAdmin(member.userId, false).expect(200);
   seat = (await pool.query(
     'SELECT role FROM workspace_users WHERE workspace_id=$1 AND user_id=$2',
     [tenant.workspaceId, member.userId])).rows[0];
-  assert.equal(seat.role, 'analyst');
+  assert.equal(seat.role, 'member');
 
   await setPlatformAdmin(tenant.userId, true).expect(200);
   assert.equal((await pool.query(

@@ -14,10 +14,14 @@ test('a workspace owner can create a plain member with a password and no invitat
 
   const created = await request(app).post(`/workspaces/${t.workspaceId}/team`)
     .set(t.authHeaders)
-    .send({ email, fullName: 'Direct Member', password, role: 'analyst' })
+    .send({ email, fullName: 'Direct Member', password: 'DirectMember123!', role: 'member', permissions: [
+      'payments.view', 'payments.export', 'links.view', 'analytics.view',
+      'accounts.view', 'agents.view', 'customers.view', 'revenue.view',
+      'team.view', 'settings.view', 'data.view_all',
+    ] })
     .expect(201);
 
-  assert.equal(created.body.role, 'analyst');
+  assert.equal(created.body.role, 'member');
   assert.equal((await pool.query(
     'SELECT count(*)::int AS count FROM invites WHERE workspace_id=$1 AND email=$2',
     [t.workspaceId, email])).rows[0].count, 0);
@@ -87,11 +91,11 @@ test('a new login needs a password; an existing user is attached without one', a
 
 test('the database refuses an agent profile for a user without the agent role', async () => {
   const t = await createTenant(app);
-  const analyst = await addMember(app, t, 'analyst');
+  const member = await addMember(app, t, 'member');
   await assert.rejects(
     () => pool.query(
       'INSERT INTO agents (workspace_id, user_id, commission_pct) VALUES ($1,$2,10)',
-      [t.workspaceId, analyst.userId]),
+      [t.workspaceId, member.userId]),
     /foreign key/);
 });
 
@@ -120,7 +124,7 @@ test('suspending a member ends their access but keeps the profile; removal is re
 
 test('removing a plain seat preserves it as former and allows reactivation', async () => {
   const t = await createTenant(app);
-  const member = await addMember(app, t, 'analyst');
+  const member = await addMember(app, t, 'member');
 
   await request(app).delete(`/workspaces/${t.workspaceId}/team/${member.userId}`)
     .set(t.authHeaders).expect(204);
@@ -166,10 +170,10 @@ test('archiving an agent suspends access and hides new assignments until reactiv
     .set(t.authHeaders).send({ agentId: agent.id }).expect(201);
 });
 
-test('the last admin cannot be suspended, and an analyst cannot manage the team', async () => {
+test('the last admin cannot be suspended, and a member cannot manage the team', async () => {
   const t = await createTenant(app);
-  const analyst = await addMember(app, t, 'analyst');
-  await request(app).patch(`/workspaces/${t.workspaceId}/team/${t.userId}/status`).set(analyst.headers).send({ status: 'suspended' }).expect(403);
+  const member = await addMember(app, t, 'member');
+  await request(app).patch(`/workspaces/${t.workspaceId}/team/${t.userId}/status`).set(member.headers).send({ status: 'suspended' }).expect(403);
 
   const admin2 = await addMember(app, t, 'workspace_admin');
   await request(app).patch(`/workspaces/${t.workspaceId}/team/${admin2.userId}/status`).set(t.authHeaders).send({ status: 'suspended' }).expect(200);

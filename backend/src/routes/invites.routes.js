@@ -1,6 +1,6 @@
 'use strict';
-// Invites bring in the roles that have no profile of their own: admins and
-// analysts. An agent or an account is created directly, login included, on
+// Invites bring in the membership types that have no profile of their own:
+// admins and members. An agent or a creator is created directly, login included, on
 // its own route.
 const express = require('express');
 const { query, withTransaction } = require('../db');
@@ -10,10 +10,10 @@ const { audit } = require('../util/audit');
 const { hashPassword } = require('../auth/passwords');
 const { isStr, badRequest } = require('../util/validate');
 const { createInvite, hashToken } = require('../services/invites');
-const { PROFILE_ROLES } = require('../services/workspaceRoles');
+const { ROLE_PERMISSIONS } = require('../auth/permissions');
 
 const { wid, uid } = require('../lib/scope');
-const INVITABLE_ROLES = ['workspace_admin', 'analyst'];
+const INVITABLE_ROLES = ['workspace_admin', 'member'];
 
 const wsRouter = express.Router({ mergeParams: true });
 
@@ -21,18 +21,15 @@ const wsRouter = express.Router({ mergeParams: true });
 wsRouter.post('/', requireAuth, requireWorkspace, requirePermission('team.manage'), asyncHandler(async (req, res) => {
   const { email, role } = req.body || {};
   if (!isStr(email, 100) || !email.includes('@')) return badRequest(res, 'a valid email is required', ['email']);
-  if (!role || PROFILE_ROLES.has(role) || role === 'workspace_owner') {
+  if (!INVITABLE_ROLES.includes(role)) {
     return badRequest(res, 'role is not invitable', ['role']);
   }
-  const roleRow = (await query(
-    'SELECT permissions FROM workspace_roles WHERE workspace_id=$1 AND key=$2',
-    [wid(req), role])).rows[0];
-  if (!roleRow) return badRequest(res, 'unknown role', ['role']);
-  if (roleRow.permissions.some((permission) => !req.access.permissions.has(permission))) {
+  const permissions = [...(ROLE_PERMISSIONS[role] || [])];
+  if (permissions.some((permission) => !req.access.permissions.has(permission))) {
     return res.status(403).json({ error: 'role_not_assignable' });
   }
   const row = await withTransaction((c) => createInvite(c, {
-    workspaceId: wid(req), email, role, invitedByUserId: uid(req),
+    workspaceId: wid(req), email, role, permissions, invitedByUserId: uid(req),
   }));
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'invite.create', metadata: { email, role } });
   // The token is a bearer credential for a seat and is NOT returned: it only
@@ -65,7 +62,7 @@ const publicRouter = express.Router();
 
 publicRouter.get('/:token', asyncHandler(async (req, res) => {
   const inv = (await query(
-    `SELECT i.email, i.role, w.name AS workspace, i.expires_at, i.accepted_at,
+      `SELECT i.email, i.role, w.name AS workspace, i.expires_at, i.accepted_at,
             CASE i.role
               WHEN 'agent' THEN w.agent_label
               WHEN 'account_owner' THEN w.account_label || ' owner'
@@ -121,8 +118,8 @@ publicRouter.post('/:token/accept', asyncHandler(async (req, res) => {
         if (owner) return { err: 'owner_exists' };
       }
       await c.query(
-        'INSERT INTO workspace_users (workspace_id, user_id, role) VALUES ($1,$2,$3)',
-        [inv.workspace_id, user.id, inv.role]);
+        'INSERT INTO workspace_users (workspace_id, user_id, role, permissions) VALUES ($1,$2,$3,$4)',
+        [inv.workspace_id, user.id, inv.role, inv.permissions || ROLE_PERMISSIONS[inv.role] || []]);
     }
     return { userId: user.id, workspaceId: inv.workspace_id, role: inv.role, existed };
   });

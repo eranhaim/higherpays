@@ -1,6 +1,6 @@
 'use strict';
-// The permission matrix. Permissions live in code, keyed by workspace role;
-// the frontend mirrors this list for what it shows, the server enforces it.
+// The fixed membership defaults. A seat keeps its own permission snapshot;
+// this matrix only supplies new seats and the migration from legacy roles.
 
 const { status } = require('../schema/entities');
 
@@ -41,7 +41,7 @@ const ROLE_PERMISSIONS = {
   workspace_owner: new Set(PERMISSIONS),
   workspace_admin: new Set(PERMISSIONS),
 
-  analyst: new Set([
+  member: new Set([
     'payments.view', 'payments.export',
     'links.view',
     'analytics.view',

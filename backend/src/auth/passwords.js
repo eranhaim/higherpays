@@ -7,6 +7,14 @@ const scrypt = promisify(crypto.scrypt);
 // Stored format: scrypt$N$r$p$saltHex$hashHex
 const N = 16384, r = 8, p = 1, KEYLEN = 64;
 
+function validatePasswordStrength(plain) {
+  if (typeof plain !== 'string' || plain.length < 12) return 'password_too_short';
+  if (!/[a-z]/.test(plain)) return 'password_lowercase_required';
+  if (!/[A-Z]/.test(plain)) return 'password_uppercase_required';
+  if (!/\d/.test(plain)) return 'password_number_required';
+  return null;
+}
+
 async function hashPassword(plain) {
   const salt = crypto.randomBytes(16);
   const derived = await scrypt(plain, salt, KEYLEN, { N, r, p });
@@ -29,4 +37,4 @@ async function verifyPassword(plain, stored) {
   }
 }
 
-module.exports = { hashPassword, verifyPassword };
+module.exports = { hashPassword, verifyPassword, validatePasswordStrength };

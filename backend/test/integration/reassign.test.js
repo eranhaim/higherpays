@@ -51,15 +51,15 @@ test('an agent must be assigned to the creator the link now belongs to', async (
     .set(t.authHeaders).send({ accountId: other.id, agentId: agent.id }).expect(400);
 });
 
-test('an analyst cannot reassign a link', async () => {
+test('a member cannot reassign a link', async () => {
   const t = await createTenant(app);
   const account = await createAccount(app, t);
   const { link } = await paySale(app, t, account, 40);
   const { addMember } = require('../helpers/tenant');
-  const analyst = await addMember(app, t, 'analyst');
+  const member = await addMember(app, t, 'member');
 
   await request(app).patch(`/workspaces/${t.workspaceId}/links/${link.id}/attribution`)
-    .set(analyst.headers).send({ accountId: account.id }).expect(403);
+    .set(member.headers).send({ accountId: account.id }).expect(403);
 });
 
 test('a reassigned payment takes its split, and its single-use link, with it', async () => {
