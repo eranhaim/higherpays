@@ -448,9 +448,21 @@ const Transaction = entity('transactions', {
     net:                   money().notNull().default('0'),
     currency:              char(3).notNull(),
     providerTransactionId: text(),
+    providerDeclineCode:   text(),
+    providerDeclineReason: text(),
+    providerDeclineCodeSource: text(),
+    providerDeclineReasonSource: text(),
     occurredAt:            timestamp().notNull().default('now()'),
     rawPayload:            jsonb(),
   },
+  checks: [
+    `provider_decline_code_source IS NULL OR provider_decline_code_source IN (
+      'mantapay_webhook_signed', 'mantapay_status', 'stored_raw_payload'
+    )`,
+    `provider_decline_reason_source IS NULL OR provider_decline_reason_source IN (
+      'mantapay_webhook', 'mantapay_status', 'stored_raw_payload'
+    )`,
+  ],
   unique: [['workspaceId', 'providerTransactionId']],
   indexes: [
     'workspaceId', 'paymentId',

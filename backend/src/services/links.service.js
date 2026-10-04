@@ -9,6 +9,7 @@
 const { query, withTransaction } = require('../db');
 const { log } = require('../lib/log');
 const provider = require('../providers/mantapay');
+const { DECLINE_SOURCE } = require('../providers/mantapay-reply');
 const paymentsService = require('./payments.service');
 const { recordLinkEvent } = require('./linkEvents');
 
@@ -48,6 +49,10 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
           fee: null,
           currency: (transaction.currency || link.currency || 'EUR').toString().toUpperCase(),
           linkReference: link.reference_id,
+          declineCode: transaction.replyCode,
+          declineReason: transaction.replyDesc,
+          declineCodeSource: DECLINE_SOURCE.status,
+          declineReasonSource: DECLINE_SOURCE.status,
           rawPayload: transaction,
         });
         summary.updated.push({
@@ -63,7 +68,7 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
 
     const st = statusResp.status;   // approved | declined | pending | abandoned | unknown
 
-    if (st === 'approved' || (st === 'pending' && statusResp.transaction_id)) {
+    if (['approved', 'declined'].includes(st) || (st === 'pending' && statusResp.transaction_id)) {
       const outcome = await paymentsService.recordPaymentOutcome(c, ws.id, {
         providerTransactionId: statusResp.transaction_id || ('ref-' + link.reference_id),
         status: st,
@@ -73,6 +78,10 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
         fee: null,
         currency: (statusResp.unit || link.currency || 'EUR').toString().toUpperCase(),
         linkReference: link.reference_id,
+        declineCode: statusResp.payment_request_status_id,
+        declineReason: statusResp.reply_description,
+        declineCodeSource: DECLINE_SOURCE.status,
+        declineReasonSource: DECLINE_SOURCE.status,
         rawPayload: statusResp,
       });
       if (st === 'approved') {
@@ -85,8 +94,18 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
         });
         continue;
       }
-      summary.skipped.push({ linkId: link.id, reason: 'status_pending', paymentId: outcome.paymentId });
-      if (!link.is_expired) continue;
+      if (st === 'declined') {
+        summary.updated.push({
+          linkId: link.id,
+          to: 'failed',
+          paymentId: outcome.paymentId,
+        });
+        if (!link.is_expired) continue;
+      }
+      if (st === 'pending') {
+        summary.skipped.push({ linkId: link.id, reason: 'status_pending', paymentId: outcome.paymentId });
+        if (!link.is_expired) continue;
+      }
     }
     // Anything short of approval leaves the link open until its deadline.
     if (link.is_expired) {

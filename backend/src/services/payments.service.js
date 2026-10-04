@@ -14,6 +14,7 @@
 const notifier = require('../notify');
 const { log } = require('../lib/log');
 const { recordLinkEvent } = require('./linkEvents');
+const { declineFields } = require('../providers/mantapay-reply');
 
 /**
  * @param {import('pg').PoolClient} client  a client inside an open transaction
@@ -26,6 +27,10 @@ const { recordLinkEvent } = require('./linkEvents');
  * @param {string}      params.currency
  * @param {string|null} [params.linkReference]  our reference_id, for attribution
  * @param {string|null} [params.paymentMethod]
+ * @param {string|null} [params.declineCode]
+ * @param {string|null} [params.declineReason]
+ * @param {string|null} [params.declineCodeSource]
+ * @param {string|null} [params.declineReasonSource]
  * @param {object}      params.rawPayload       stored verbatim
  * @returns {Promise<{ paymentId: string|null, transactionId: string|null, linkId: string|null, newSale: boolean, reviewRequired?: boolean }>}
  */
@@ -70,6 +75,12 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   const surcharge = Number(link.checkout_fee || 0);
   const feeValue = fee != null ? fee : 0;
   const feeIsEstimate = fee == null;
+  const decline = declineFields(status, {
+    code: params.declineCode,
+    reason: params.declineReason,
+    codeSource: params.declineCodeSource,
+    reasonSource: params.declineReasonSource,
+  });
 
   let reviewReason = null;
   if (status === 'approved' && link.type === 'single_use') {
@@ -107,8 +118,10 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   // 3) The provider's record of the attempt.
   const tx = (await client.query(
     `INSERT INTO transactions
-       (workspace_id, payment_id, type, status, gross, fee, fee_is_estimate, surcharge, net, currency, provider_transaction_id, occurred_at, raw_payload)
-     VALUES ($1,$2,'payment',$3,$4,$5,$6,$7,$8,$9,$10,now(),$11)
+       (workspace_id, payment_id, type, status, gross, fee, fee_is_estimate, surcharge, net, currency,
+        provider_transaction_id, provider_decline_code, provider_decline_reason,
+        provider_decline_code_source, provider_decline_reason_source, occurred_at, raw_payload)
+     VALUES ($1,$2,'payment',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now(),$15)
      ON CONFLICT (workspace_id, provider_transaction_id) DO UPDATE
        SET status = CASE
          WHEN transactions.status = 'approved' OR EXCLUDED.status = 'approved' THEN 'approved'
@@ -118,10 +131,47 @@ async function recordPaymentOutcome(client, workspaceId, params) {
            fee = CASE WHEN EXCLUDED.fee_is_estimate THEN transactions.fee ELSE EXCLUDED.fee END,
            fee_is_estimate = transactions.fee_is_estimate AND EXCLUDED.fee_is_estimate,
            net = CASE WHEN EXCLUDED.fee_is_estimate THEN transactions.net ELSE EXCLUDED.net END,
+           provider_decline_code = CASE
+             WHEN EXCLUDED.status <> 'declined' THEN transactions.provider_decline_code
+             WHEN EXCLUDED.provider_decline_code_source = 'mantapay_webhook_signed'
+               THEN EXCLUDED.provider_decline_code
+             WHEN transactions.provider_decline_code_source = 'mantapay_webhook_signed'
+               THEN transactions.provider_decline_code
+             ELSE COALESCE(EXCLUDED.provider_decline_code, transactions.provider_decline_code)
+           END,
+           provider_decline_code_source = CASE
+             WHEN EXCLUDED.status <> 'declined' THEN transactions.provider_decline_code_source
+             WHEN EXCLUDED.provider_decline_code_source = 'mantapay_webhook_signed'
+               AND EXCLUDED.provider_decline_code IS NOT NULL
+               THEN EXCLUDED.provider_decline_code_source
+             WHEN transactions.provider_decline_code_source = 'mantapay_webhook_signed'
+               THEN transactions.provider_decline_code_source
+             WHEN EXCLUDED.provider_decline_code IS NOT NULL THEN EXCLUDED.provider_decline_code_source
+             ELSE transactions.provider_decline_code_source
+           END,
+           provider_decline_reason = CASE
+             WHEN EXCLUDED.status <> 'declined' THEN transactions.provider_decline_reason
+             WHEN EXCLUDED.provider_decline_reason_source = 'mantapay_webhook'
+               AND EXCLUDED.provider_decline_reason IS NOT NULL
+               THEN EXCLUDED.provider_decline_reason
+             ELSE COALESCE(transactions.provider_decline_reason, EXCLUDED.provider_decline_reason)
+           END,
+           provider_decline_reason_source = CASE
+             WHEN EXCLUDED.status <> 'declined' THEN transactions.provider_decline_reason_source
+             WHEN EXCLUDED.provider_decline_reason_source = 'mantapay_webhook'
+               AND EXCLUDED.provider_decline_reason IS NOT NULL
+               THEN EXCLUDED.provider_decline_reason_source
+             WHEN transactions.provider_decline_reason IS NOT NULL
+               THEN transactions.provider_decline_reason_source
+             WHEN EXCLUDED.provider_decline_reason IS NOT NULL
+               THEN EXCLUDED.provider_decline_reason_source
+             ELSE NULL
+           END,
            raw_payload = EXCLUDED.raw_payload
      RETURNING id, status`,
     [workspaceId, payment.id, status, grossValue, feeValue, feeIsEstimate, surcharge,
-     grossValue - feeValue, currency, providerTransactionId, rawPayload])).rows[0];
+     grossValue - feeValue, currency, providerTransactionId, decline.code, decline.reason,
+     decline.codeSource, decline.reasonSource, rawPayload])).rows[0];
 
   await recordLinkEvent(client, {
     workspaceId,

@@ -20,6 +20,7 @@ const search = require('../src/providers/mantapay-search');
 const auth = require('../src/providers/mantapay-auth');
 const apm = require('../src/providers/mantapay-apm');
 const provider = require('../src/providers/mantapay');
+const reply = require('../src/providers/mantapay-reply');
 
 // ── Signature ────────────────────────────────────────────────────────────────
 
@@ -92,6 +93,24 @@ test('reply codes are strings, never parsed as integers', () => {
 test('abandonment is distinguished from a bank decline', () => {
   assert.equal(sig.mapReplyCode('600'), 'abandoned', 'customer closed the window');
   assert.equal(sig.mapReplyCode('100.051'), 'declined', 'insufficient funds');
+});
+
+test('webhook and status response aliases retain the MantaPay decline fields', () => {
+  const webhook = provider.parseWebhook(
+    'reply_code=100.051&reply_desc=Insufficient+funds&trans_id=1&trans_amount=100&trans_currency=EUR&trans_order=ord-1',
+  );
+  assert.equal(webhook.status, 'declined');
+  assert.equal(webhook.replyCode, '100.051');
+  assert.equal(webhook.replyDesc, 'Insufficient funds');
+  assert.equal(reply.readReplyCode({ Reply: 'N7' }), 'N7');
+  assert.equal(reply.readReplyDescription({ ReplyDescription: 'Do not honor' }), 'Do not honor');
+});
+
+test('pending and abandoned webhooks do not become decline events', () => {
+  const pending = provider.parseWebhook('reply_code=001&trans_id=1');
+  const abandoned = provider.parseWebhook('reply_code=600&trans_id=2');
+  assert.equal(pending.status, 'pending');
+  assert.equal(abandoned.status, 'abandoned');
 });
 
 test('integration errors are separated from card declines', () => {
@@ -307,6 +326,23 @@ test('status dates are DD/MM/YYYY, not American', () => {
 test('by-order signature follows CompanyNum + Order + key', () => {
   assert.equal(status.orderSignature('5722306', 'ord-1', '999999'),
     sig.digest('5722306' + 'ord-1' + '999999'));
+});
+
+test('status lookup preserves the provider decline code and display reason', async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    text: async () => 'Reply=100.051&ReplyDesc=Insufficient+funds&TransID=42',
+  });
+  try {
+    const result = await status.getStatusById('3771097', '42');
+    assert.equal(result.status, 'declined');
+    assert.equal(result.replyCode, '100.051');
+    assert.equal(result.replyDesc, 'Insufficient funds');
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
 
 // ── Search API ───────────────────────────────────────────────────────────────

@@ -93,6 +93,58 @@ test('an account owner sees their own payments and none of the fees', async () =
   assert.ok(admin[0].platformFee > 0);
 });
 
+test('failed payment decline details are searchable and respect the payment scope', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const otherAccount = await createAccount(app, t);
+  const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+    .send({ accountId: account.id, type: 'single_use', amount: 30, currency: 'EUR' }).expect(201)).body;
+  const payload = buildPaidPayload({
+    reference: link.referenceId,
+    transId: newTransId(),
+    amount: 30,
+    replyCode: '100.051',
+  });
+  payload.reply_desc = 'Insufficient funds';
+  const result = await postWebhook(app, await endpointFor(t.workspaceId), payload).expect(200);
+
+  const own = (await request(app)
+    .get(`/workspaces/${t.workspaceId}/payments?status=failed&q=insufficient`)
+    .set(account.ownerHeaders).expect(200)).body.items;
+  assert.equal(own.length, 1);
+  assert.equal(own[0].id, result.body.paymentId);
+  assert.equal(own[0].declineCode, '100.051');
+  assert.equal(own[0].declineReason, 'Insufficient funds');
+  assert.equal(own[0].declineCodeSource, 'mantapay_webhook_signed');
+  assert.equal(own[0].declineReasonSource, 'mantapay_webhook');
+
+  const other = (await request(app)
+    .get(`/workspaces/${t.workspaceId}/payments?status=failed&q=insufficient`)
+    .set(otherAccount.ownerHeaders).expect(200)).body.items;
+  assert.equal(other.length, 0);
+});
+
+test('pending and abandoned MantaPay replies do not create failed payments', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+
+  for (const replyCode of ['001', '600']) {
+    const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+      .send({ accountId: account.id, type: 'single_use', amount: 30, currency: 'EUR' }).expect(201)).body;
+    const response = await postWebhook(app, await endpointFor(t.workspaceId), buildPaidPayload({
+      reference: link.referenceId,
+      transId: newTransId(),
+      amount: 30,
+      replyCode,
+    })).expect(200);
+    assert.equal(response.body.ignored, 'non_final_status');
+  }
+
+  const payments = (await request(app).get(`/workspaces/${t.workspaceId}/payments?status=failed`)
+    .set(t.authHeaders).expect(200)).body.items;
+  assert.equal(payments.length, 0);
+});
+
 test('payment filters use ranges and only expose values in the caller scope', async () => {
   const t = await createTenant(app);
   const account = await createAccount(app, t);

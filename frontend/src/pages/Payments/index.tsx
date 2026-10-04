@@ -19,8 +19,8 @@ import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import { formatMoney } from '../../lib/format';
 import {
   isReversed, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, paymentStatusLabel, getPaymentExportColumns,
-  PROVIDER_FEE_SOURCE_LABELS,
-  paymentsApi, type Payment, type PaymentFlow, type PaymentStatus, type PaymentSort, type ListPaymentsQuery,
+  PROVIDER_FEE_SOURCE_LABELS, declineReasonLabel,
+  paymentsApi, type Payment, type PaymentFlow, type PaymentStatus, type PaymentSort, type ListPaymentsQuery, type MantaPayDeclineSource,
 } from '../../api/endpoints';
 import { usePaymentsData, type ExportInput } from './usePaymentsData';
 
@@ -411,6 +411,14 @@ export default function PaymentsPage() {
                 : '—'}
             </DetailRow>
             <DetailRow label="MantaPay transaction ID">{detail.providerTransactionId ?? '—'}</DetailRow>
+            {detail.status === 'failed' && (
+              <>
+                <DetailRow label="MantaPay decline reason">{declineReasonLabel(detail.declineReason)}</DetailRow>
+                <DetailRow label="MantaPay decline code">{detail.declineCode ?? '—'}</DetailRow>
+                <DetailRow label="MantaPay code source">{declineSourceLabel(detail.declineCodeSource)}</DetailRow>
+                <p className="sub">The reason is MantaPay display text; the signed reply code is the payment outcome.</p>
+              </>
+            )}
             <DetailRow label="Customer">{detail.customer ?? '—'}{detail.customerTelegram ? <span className="sub inline"> · {detail.customerTelegram}</span> : null}</DetailRow>
             <DetailRow label="Category">{detail.category ?? '—'}</DetailRow>
             {canReverse && !isReversed(detail.status) && !detail.reviewRequired ? (
@@ -615,6 +623,15 @@ function paymentFlowError(error: unknown): string {
     }
   }
   return "Couldn't load the payment flow. Try again.";
+}
+
+function declineSourceLabel(source: MantaPayDeclineSource | null | undefined): string {
+  switch (source) {
+    case 'mantapay_webhook_signed': return 'Signed MantaPay webhook';
+    case 'mantapay_status': return 'MantaPay status lookup';
+    case 'stored_raw_payload': return 'Stored MantaPay payload';
+    default: return '—';
+  }
 }
 
 function PaymentFlowContent({ flow, labels }: {

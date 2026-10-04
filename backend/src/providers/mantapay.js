@@ -20,6 +20,7 @@ const status = require('./mantapay-status');
 const search = require('./mantapay-search');
 const auth = require('./mantapay-auth');
 const apm = require('./mantapay-apm');
+const reply = require('./mantapay-reply');
 
 // MantaPay signs notifications in the body, not a header — but the routes read a
 // header name, so expose the field name they use. verifyWebhookSignature below
@@ -103,7 +104,7 @@ function parseWebhook(raw) {
     };
   }
 
-  const code = p.reply_code != null ? p.reply_code : p.replyCode;
+  const code = reply.readReplyCode(p);
   const mapped = sig.mapReplyCode(code);
   return {
     kind: 'payment',
@@ -113,12 +114,10 @@ function parseWebhook(raw) {
     // confirmed that mapping. See MANTAPAY.md §10.
     referenceId: p.trans_order || null,
     merchantId: p.merchant_id || null,
-    replyCode: code != null ? String(code) : null,
-    replyDesc: p.reply_desc || null,
+    replyCode: code,
+    replyDesc: reply.readReplyDescription(p),
     // approved | declined | pending | abandoned | unknown
-    status: mapped === 'approved' ? 'approved'
-          : (mapped === 'declined' || mapped === 'abandoned') ? 'declined'
-          : mapped,
+    status: mapped,
     // `gross` is the name the routes read; `grossAmount` kept as an alias.
     // Whether trans_amount is content or customer total during the fee-mode
     // cutover is unconfirmed. Both signed values are validated downstream.

@@ -19,6 +19,16 @@ export function paymentStatusLabel(payment: { status: PaymentStatus; needsDetail
   return payment.needsDetails ? 'Waiting to fill details' : PAYMENT_STATUS_LABELS[payment.status];
 }
 
+export type MantaPayDeclineSource =
+  | 'mantapay_webhook_signed'
+  | 'mantapay_webhook'
+  | 'mantapay_status'
+  | 'stored_raw_payload';
+
+export function declineReasonLabel(reason: string | null | undefined): string {
+  return reason || 'Unknown';
+}
+
 /** Money that was returned after a successful sale. */
 export function isReversed(status: PaymentStatus): boolean {
   return status === 'refunded';
@@ -48,6 +58,11 @@ export interface Payment {
   linkType: LinkType | null;
   reviewRequired: boolean;
   reviewReason: 'duplicate_single_use_charge' | null;
+  /** Present only on failed MantaPay attempts. */
+  declineCode?: string | null;
+  declineReason?: string | null;
+  declineCodeSource?: MantaPayDeclineSource | null;
+  declineReasonSource?: MantaPayDeclineSource | null;
   archivedAt: string | null;
   /** Paid, but the agent has not yet said who paid and what for. */
   needsDetails: boolean;

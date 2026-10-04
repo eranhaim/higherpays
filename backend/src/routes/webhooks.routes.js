@@ -4,6 +4,7 @@ const express = require('express');
 const { query, withTransaction } = require('../db');
 const { asyncHandler } = require('../lib/http');
 const provider = require('../providers/mantapay');
+const { DECLINE_SOURCE } = require('../providers/mantapay-reply');
 const paymentsService = require('../services/payments.service');
 const {
   enqueueLifecycleEventForReference,
@@ -100,6 +101,10 @@ router.post('/payment/:endpoint', asyncHandler(async (req, res) => {
             currency: ev.currency,
             linkReference: ev.referenceId,
             paymentMethod: ev.paymentDetails,
+            declineCode: ev.replyCode,
+            declineReason: ev.replyDesc,
+            declineCodeSource: DECLINE_SOURCE.webhookSigned,
+            declineReasonSource: DECLINE_SOURCE.webhook,
             rawPayload: ev.fields,
           });
       if (ev.kind === 'chargeback' && (outcome.notFound || outcome.noSale)) {

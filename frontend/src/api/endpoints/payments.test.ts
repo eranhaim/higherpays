@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, paymentStatusLabel, getPaymentExportColumns, PROVIDER_FEE_SOURCE_LABELS,
+  PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, paymentStatusLabel, getPaymentExportColumns, PROVIDER_FEE_SOURCE_LABELS, declineReasonLabel,
 } from './payments';
 
 describe('payment outcome labels', () => {
@@ -9,6 +9,8 @@ describe('payment outcome labels', () => {
     expect(PAYMENT_STATUS_LABELS.pending).toBe('Waiting for payment');
     expect(PAYMENT_STATUS_LABELS.paid).toBe('Completed');
     expect(paymentStatusLabel({ status: 'paid', needsDetails: true })).toBe('Waiting to fill details');
+    expect(declineReasonLabel('Insufficient funds')).toBe('Insufficient funds');
+    expect(declineReasonLabel(null)).toBe('Unknown');
     expect(PROVIDER_FEE_SOURCE_LABELS.estimated).toBe('Estimated');
     expect(PROVIDER_FEE_SOURCE_LABELS.actual).toBe('Actual');
     const columns = getPaymentExportColumns({

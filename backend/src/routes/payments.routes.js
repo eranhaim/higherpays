@@ -26,7 +26,8 @@ const SELECT = `
   SELECT p.*, a.name AS account, cu.name AS customer, cu.telegram_name AS customer_telegram,
          ca.name AS category, u.full_name AS agent, pl.reference_id AS link_reference, pl.type AS link_type,
          t.provider_transaction_id, t.fee AS provider_fee, t.surcharge,
-         t.status AS provider_status,
+         t.status AS provider_status, t.provider_decline_code, t.provider_decline_reason,
+         t.provider_decline_code_source, t.provider_decline_reason_source,
          (SELECT platform_fee FROM revenue_entries re WHERE re.transaction_id = t.id AND re.entry_type = 'sale') AS platform_fee,
          (SELECT distributable FROM revenue_entries re WHERE re.transaction_id = t.id AND re.entry_type = 'sale') AS distributable
     FROM payments p
@@ -54,6 +55,12 @@ function publicPayment(p, { seesFees }) {
     reviewReason: p.review_reason,
     archivedAt: p.archived_at,
     needsDetails: p.status === 'paid' && p.review_reason == null && p.category_id == null,
+    ...(p.status === 'failed' ? {
+      declineCode: p.provider_decline_code,
+      declineReason: p.provider_decline_reason,
+      declineCodeSource: p.provider_decline_code_source,
+      declineReasonSource: p.provider_decline_reason_source,
+    } : {}),
     // Agents need to see the actual amount the agency received, not the
     // customer-facing content price. We expose the final ledger result, never
     // recalculate fees in the HTTP layer.
@@ -110,6 +117,8 @@ const PAYMENT_FILTERS = `
   AND ($10::timestamptz IS NULL OR p.occurred_at <= $10::timestamptz)
   AND ($11::text IS NULL OR lower(COALESCE(pl.reference_id, '')) LIKE $11::text
        OR lower(COALESCE(t.provider_transaction_id, '')) LIKE $11::text
+       OR lower(COALESCE(t.provider_decline_code, '')) LIKE $11::text
+       OR lower(COALESCE(t.provider_decline_reason, '')) LIKE $11::text
        OR lower(COALESCE(p.provider_payment_id, '')) LIKE $11::text
        OR lower(COALESCE(cu.name, '')) LIKE $11::text
        OR lower(COALESCE(cu.telegram_name, '')) LIKE $11::text
