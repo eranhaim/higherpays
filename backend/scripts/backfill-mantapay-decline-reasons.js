@@ -80,10 +80,10 @@ async function applyUpdates(updates) {
         `INSERT INTO audit_log (workspace_id, action, entity_type, entity_id, metadata)
          VALUES ($1, 'mantapay.decline_reason_backfill', 'transaction', $2,
                  jsonb_build_object(
-                   'codeSource', $3,
-                   'reasonSource', $4,
-                   'hasCode', $5,
-                   'hasReason', $6
+                   'codeSource', $3::text,
+                   'reasonSource', $4::text,
+                   'hasCode', $5::boolean,
+                   'hasReason', $6::boolean
                  ))`,
         [update.workspace_id, update.id, update.details.codeSource, update.details.reasonSource,
           Boolean(update.details.code), Boolean(update.details.reason)],
