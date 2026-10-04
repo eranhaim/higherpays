@@ -223,7 +223,9 @@ export default function PaymentsPage() {
       key: 'status', header: 'Status', sortKey: 'status', render: (p) => <StatusPill payment={p} />,
     },
     {
-      key: 'date', header: 'Date', sortKey: 'date', render: (p) => <DateCell ts={p.occurredAt} />,
+      key: 'date', header: 'Date', sortKey: 'date', render: (p) => (
+        <span className="payment-date"><DateCell ts={p.occurredAt} /></span>
+      ),
     },
   ];
 

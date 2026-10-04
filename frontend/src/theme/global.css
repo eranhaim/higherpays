@@ -504,6 +504,8 @@ tbody tr.clickable:focus-visible {
 /* Subordinate to the date above it by size, not opacity: --muted is already
    near the contrast floor, so dimming it further drops below the threshold. */
 .time-sub { font-size: var(--text-xs); }
+.payment-date .time { color: var(--text); }
+.payment-date .time-sub { color: var(--muted); }
 .person { display: flex; align-items: center; gap: 10px; }
 .avatar {
   width: 32px; height: 32px; border-radius: 50%;
