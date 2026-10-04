@@ -216,11 +216,9 @@ async function applyCleanup(client, groups) {
 async function buildReport(client, mode, lock = false) {
   const rows = await loadRows(client, lock);
   const { repairGroups, skippedGroups } = groupRows(rows);
-  const [invalidRows, readStates, backup] = await Promise.all([
-    loadInvalidRows(client),
-    loadReadStates(client, repairGroups),
-    loadBackup(client, repairGroups),
-  ]);
+  const invalidRows = await loadInvalidRows(client);
+  const readStates = await loadReadStates(client, repairGroups);
+  const backup = await loadBackup(client, repairGroups);
   return {
     generatedAt: new Date().toISOString(),
     mode,
