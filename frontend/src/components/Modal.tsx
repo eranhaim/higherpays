@@ -68,9 +68,14 @@ export default function Modal({ open, onClose, title, subtitle, children }: Moda
   return createPortal(
     <div className="overlay" role="presentation">
       <div ref={dialogRef} className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
-        <h3 id={titleId}>{title}</h3>
-        {subtitle ? <p className="sub">{subtitle}</p> : null}
-        {children}
+        <div className="modal-header">
+          <div>
+            <h3 id={titleId}>{title}</h3>
+            {subtitle ? <p className="sub">{subtitle}</p> : null}
+          </div>
+          <button className="modal-close" type="button" onClick={onClose} aria-label={`Close ${title}`}>×</button>
+        </div>
+        <div className="modal-body">{children}</div>
       </div>
     </div>,
     document.body,

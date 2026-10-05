@@ -593,21 +593,36 @@ label.setrow { cursor: pointer; }
 .modal {
   background: var(--surface); border: 1px solid var(--rule);
   border-radius: 16px; padding: 24px;
-  width: 100%; max-width: 440px;
-  /* Matches the overlay's 20px padding, so a tall dialog scrolls itself
-     rather than running off the top and bottom of the viewport. */
-  max-height: calc(100vh - 40px); overflow-y: auto;
+  width: min(440px, 100%); min-width: 0;
+  /* The header and the action strip stay available while the content scrolls. */
+  max-height: calc(100vh - 40px); max-height: calc(100dvh - 40px);
+  display: grid; grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
 }
+.modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding-bottom: 18px; }
 .modal h3 { font-size: 19.8px; font-weight: 750; margin-bottom: 4px; }
-.modal > p.sub { margin-bottom: 18px; }
+.modal-header > div { min-width: 0; }
+.modal-header .sub { margin: 0; }
+.modal-close {
+  flex: 0 0 auto; width: 32px; min-height: 32px; padding: 0;
+  color: var(--muted); background: transparent; border: 1px solid var(--rule);
+  border-radius: 50%; font-size: 24px; line-height: 1; cursor: pointer;
+}
+.modal-close:hover { color: var(--text); border-color: var(--muted); }
+.modal-body { min-width: 0; overflow-y: auto; overscroll-behavior: contain; }
 .modal .field { margin-bottom: 14px; }
 .modal-topline { display: flex; justify-content: space-between; align-items: center; margin: 2px 0 16px; }
 /* The detail view is where the full id is read, so nothing is clipped here. */
 .modal .ref, .modal .cname, .modal .cemail {
   max-width: none; white-space: normal; overflow: visible; overflow-wrap: anywhere;
 }
-.modal-actions { display: flex; gap: 10px; justify-content: flex-end; align-items: center; margin-top: 20px; }
+.modal-actions {
+  display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; align-items: center;
+  position: sticky; bottom: 0; z-index: 1; margin: 20px -1px -1px; padding: 14px 1px 1px;
+  background: linear-gradient(to bottom, transparent, var(--surface) 14px);
+}
+.modal-actions .spacer { flex: 1 1 24px; }
 .tfa-qr {
   display: flex; flex-direction: column; align-items: center; gap: 10px;
   margin-bottom: 18px;
@@ -898,6 +913,9 @@ label.setrow { cursor: pointer; }
     border-radius: 16px; padding: 22px 20px 20px;
   }
   .modal::before { display: none; }
+  .modal-actions { align-items: stretch; }
+  .modal-actions .spacer { display: none; }
+  .modal-actions .btn, .modal-actions a.btn { flex: 1 1 140px; text-align: center; }
   /* Agency is a directory on phones, not a shrunken desktop dashboard. */
   .agency-page .pagehead { margin-bottom: 12px; }
   .agency-page .pagehead p { display: none; }
