@@ -411,7 +411,7 @@ export default function PaymentsPage() {
         }
       />
 
-      <Modal open={!!detail && !reversing && !completing} onClose={() => setDetail(null)} title="Payment">
+      <Modal className="payment-detail-modal" open={!!detail && !reversing && !completing} onClose={() => setDetail(null)} title="Payment">
         {detail && (
           <>
             <div className="modal-topline">

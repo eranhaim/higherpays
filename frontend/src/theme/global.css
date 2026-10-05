@@ -610,7 +610,10 @@ label.setrow { cursor: pointer; }
   border-radius: 50%; font-size: 24px; line-height: 1; cursor: pointer;
 }
 .modal-close:hover { color: var(--text); border-color: var(--muted); }
-.modal-body { min-width: 0; overflow-y: auto; overscroll-behavior: contain; }
+.modal-body { min-width: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+@media (min-width: 901px) {
+  .modal.payment-detail-modal { width: min(680px, 100%); }
+}
 .modal .field { margin-bottom: 14px; }
 .modal-topline { display: flex; justify-content: space-between; align-items: center; margin: 2px 0 16px; }
 /* The detail view is where the full id is read, so nothing is clipped here. */

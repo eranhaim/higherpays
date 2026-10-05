@@ -7,6 +7,7 @@ interface ModalProps {
   /** Heading of the dialog, and the name screen readers announce for it. */
   title: string;
   subtitle?: string;
+  className?: string;
   children: ReactNode;
 }
 
@@ -24,7 +25,7 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), selec
  * Rendered into document.body. Left inline it would sit inside <main>, which
  * is the app's scroll container, and the page would scroll behind the dialog.
  */
-export default function Modal({ open, onClose, title, subtitle, children }: ModalProps) {
+export default function Modal({ open, onClose, title, subtitle, className, children }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
 
@@ -67,7 +68,7 @@ export default function Modal({ open, onClose, title, subtitle, children }: Moda
 
   return createPortal(
     <div className="overlay" role="presentation">
-      <div ref={dialogRef} className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
+      <div ref={dialogRef} className={`modal${className ? ` ${className}` : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
         <div className="modal-header">
           <div>
             <h3 id={titleId}>{title}</h3>
