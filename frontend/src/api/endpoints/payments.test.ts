@@ -11,6 +11,7 @@ describe('payment outcome labels', () => {
     expect(paymentStatusLabel({ status: 'paid', needsDetails: true })).toBe('Waiting to fill details');
     expect(declineReasonLabel('Insufficient funds')).toBe('Insufficient funds');
     expect(declineReasonLabel(null)).toBe('Unknown');
+    expect(declineReasonLabel(undefined)).toBe('Unknown');
     expect(PROVIDER_FEE_SOURCE_LABELS.estimated).toBe('Estimated');
     expect(PROVIDER_FEE_SOURCE_LABELS.actual).toBe('Actual');
     const columns = getPaymentExportColumns({

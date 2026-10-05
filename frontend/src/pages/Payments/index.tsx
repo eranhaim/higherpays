@@ -36,6 +36,18 @@ function StatusPill({ payment }: { payment: Payment }) {
   return <Pill tone={payment.needsDetails ? 'warn' : STATUS_TONE[payment.status]}>{paymentStatusLabel(payment)}</Pill>;
 }
 
+function PaymentStatus({ payment }: { payment: Payment }) {
+  if (payment.status !== 'failed') return <StatusPill payment={payment} />;
+  const reason = declineReasonLabel(payment.declineReason);
+  const code = payment.declineCode ? ` (${payment.declineCode})` : '';
+  return (
+    <div>
+      <StatusPill payment={payment} />
+      <div className="sub" title={`${reason}${code}`}>{reason}{code}</div>
+    </div>
+  );
+}
+
 interface Filters {
   status: '' | PaymentStatus;
   accountId: string;
@@ -220,7 +232,7 @@ export default function PaymentsPage() {
       render: (p: Payment) => p.platformFee == null ? '—' : <Money amount={p.platformFee} direction="out" />,
     }] : []),
     {
-      key: 'status', header: 'Status', sortKey: 'status', render: (p) => <StatusPill payment={p} />,
+      key: 'status', header: 'Status', sortKey: 'status', render: (p) => <PaymentStatus payment={p} />,
     },
     {
       key: 'date', header: 'Date', sortKey: 'date', render: (p) => (
@@ -403,7 +415,7 @@ export default function PaymentsPage() {
         {detail && (
           <>
             <div className="modal-topline">
-              <StatusPill payment={detail} />
+              <PaymentStatus payment={detail} />
             </div>
             <DetailRow label="HigherPays Order">
               {detail.linkReference
@@ -414,8 +426,9 @@ export default function PaymentsPage() {
             {detail.status === 'failed' && (
               <>
                 <DetailRow label="MantaPay decline reason">{declineReasonLabel(detail.declineReason)}</DetailRow>
-                <DetailRow label="MantaPay decline code">{detail.declineCode ?? '—'}</DetailRow>
+                <DetailRow label="MantaPay decline code">{detail.declineCode ?? 'Unknown'}</DetailRow>
                 <DetailRow label="MantaPay code source">{declineSourceLabel(detail.declineCodeSource)}</DetailRow>
+                <DetailRow label="MantaPay reason source">{declineSourceLabel(detail.declineReasonSource)}</DetailRow>
                 <p className="sub">The reason is MantaPay display text; the signed reply code is the payment outcome.</p>
               </>
             )}
@@ -628,9 +641,10 @@ function paymentFlowError(error: unknown): string {
 function declineSourceLabel(source: MantaPayDeclineSource | null | undefined): string {
   switch (source) {
     case 'mantapay_webhook_signed': return 'Signed MantaPay webhook';
+    case 'mantapay_webhook': return 'MantaPay webhook';
     case 'mantapay_status': return 'MantaPay status lookup';
     case 'stored_raw_payload': return 'Stored MantaPay payload';
-    default: return '—';
+    default: return 'Unknown';
   }
 }
 

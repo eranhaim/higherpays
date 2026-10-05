@@ -97,6 +97,8 @@ test('failed payment decline details are searchable and respect the payment scop
   const t = await createTenant(app);
   const account = await createAccount(app, t);
   const otherAccount = await createAccount(app, t);
+  const agent = await createAgent(app, t);
+  await assignAgent(app, t, account.id, agent.id);
   const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
     .send({ accountId: account.id, type: 'single_use', amount: 30, currency: 'EUR' }).expect(201)).body;
   const payload = buildPaidPayload({
@@ -118,10 +120,42 @@ test('failed payment decline details are searchable and respect the payment scop
   assert.equal(own[0].declineCodeSource, 'mantapay_webhook_signed');
   assert.equal(own[0].declineReasonSource, 'mantapay_webhook');
 
+  const agentLink = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(agent.headers)
+    .send({ accountId: account.id, type: 'single_use', amount: 30, currency: 'EUR' }).expect(201)).body;
+  const agentPayload = buildPaidPayload({
+    reference: agentLink.referenceId,
+    transId: newTransId(),
+    amount: 30,
+    replyCode: '100.051',
+  });
+  agentPayload.reply_desc = 'Insufficient funds';
+  const agentFailure = await postWebhook(app, await endpointFor(t.workspaceId), agentPayload).expect(200);
+
+  const agentPayments = (await request(app)
+    .get(`/workspaces/${t.workspaceId}/payments?status=failed&q=insufficient`)
+    .set(agent.headers).expect(200)).body.items;
+  assert.equal(agentPayments.length, 1);
+  assert.equal(agentPayments[0].id, agentFailure.body.paymentId);
+  assert.equal(agentPayments[0].declineCode, '100.051');
+  assert.equal(agentPayments[0].declineReason, 'Insufficient funds');
+  assert.equal(agentPayments[0].declineCodeSource, 'mantapay_webhook_signed');
+  assert.equal(agentPayments[0].declineReasonSource, 'mantapay_webhook');
+  assert.equal(agentPayments[0].platformFee, undefined);
+
+  const adminPayment = (await request(app)
+    .get(`/workspaces/${t.workspaceId}/payments/${agentFailure.body.paymentId}`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(adminPayment.declineReason, 'Insufficient funds');
+
   const other = (await request(app)
     .get(`/workspaces/${t.workspaceId}/payments?status=failed&q=insufficient`)
     .set(otherAccount.ownerHeaders).expect(200)).body.items;
   assert.equal(other.length, 0);
+
+  const outside = await createTenant(app);
+  await request(app).get(`/workspaces/${t.workspaceId}/payments/${agentFailure.body.paymentId}`)
+    .set({ Authorization: outside.authHeaders.Authorization, 'X-Workspace-Id': t.workspaceId })
+    .expect(403);
 });
 
 test('pending and abandoned MantaPay replies do not create failed payments', async () => {
