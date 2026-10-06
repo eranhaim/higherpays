@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { type LinkLimits, type WorkspaceSettings } from '../../api/endpoints';
+import { type LinkLimits, type PlatformWorkspaceDetail, type WorkspaceSettings } from '../../api/endpoints';
 import { feeBreakdown, type RateCard } from '../../business/feeBreakdown';
 import { useCan } from '../../hooks/usePermission';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
@@ -7,7 +7,7 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useRateCard } from '../../hooks/useRateCard';
 import { toast } from '../../lib/toast';
 import { CopyButton, ErrorCard, LoadingCard, Money } from '../../components/ui';
-import { useGeneralSettings, usePlatformFees, type FeeAmounts } from './useSettingsData';
+import { useGeneralSettings, usePlatformFees, type RateCardInput } from './useSettingsData';
 
 export function WorkspacePane() {
   const can = useCan();
@@ -26,8 +26,12 @@ export function WorkspacePane() {
           so switching workspace must give them a fresh mount. */}
       <WorkspaceCard key={`ws-${activeWorkspaceId}`} editable={editable} workspace={workspace.data}
         onSave={(input) => update.mutateAsync(input)} />
-      <FeesCard key={`fees-${activeWorkspaceId}`} rateCard={rateCard}
-        editable={platformFees.canEdit && platformFees.detail.isSuccess}
+      {/* Also keyed by the rate version: the operator's rate card arrives after
+          this pane renders, and a save writes a new version, so the form has to
+          be re-seeded both times. */}
+      <FeesCard key={`fees-${activeWorkspaceId}-${platformFees.detail.data?.feeHistory[0]?.effectiveFrom ?? 'none'}`}
+        rateCard={rateCard} editable={platformFees.canEdit && platformFees.detail.isSuccess}
+        detail={platformFees.detail.data ?? null} currencies={platformFees.currencies}
         onSave={(input) => platformFees.save.mutateAsync(input)} />
       <LinkLimitsCard key={`lim-${activeWorkspaceId}`} editable={editable} limits={linkLimits.data} rateCard={rateCard}
         onSave={(input) => saveLinkLimits.mutateAsync(input)} />
@@ -167,28 +171,58 @@ function WorkspaceCard({ editable, workspace, onSave }: {
   );
 }
 
-function FeesCard({ rateCard, editable, onSave }: {
+function FeesCard({ rateCard, editable, detail, currencies, onSave }: {
   rateCard: RateCard;
   /** Only a HigherPays platform admin may change what an agency is charged. */
   editable: boolean;
-  onSave: (input: FeeAmounts) => Promise<unknown>;
+  /**
+   * The operator's own read of the rate card, from the platform-admin-only
+   * `/platform/workspaces/:id`. Null for agency staff, who get the read-only
+   * rows below instead — the rate composition and the margin are not theirs
+   * to edit.
+   */
+  detail: PlatformWorkspaceDetail | null;
+  currencies: string[];
+  onSave: (input: RateCardInput) => Promise<unknown>;
 }) {
+  const rate = detail?.feeHistory[0];
+  const settlement = detail?.settlementFee;
   const saved = {
-    fixed: String(rateCard.fixed),
-    refund: String(rateCard.refundFee ?? 0),
-    chargeback: String(rateCard.chargebackFee ?? 0),
-    decline: String(rateCard.declineFee ?? 0),
+    pspRate: String(rate?.pspRatePct ?? 0),
+    settlementPct: String(rate?.settlementPct ?? 0),
+    margin: String(rate?.marginRatePct ?? 0),
+    fixed: String(rate?.pspFixedFee ?? rateCard.fixed),
+    checkout: String(rate?.checkoutFee ?? rateCard.checkoutFee),
+    refund: String(settlement?.refundFee ?? rateCard.refundFee ?? 0),
+    chargeback: String(settlement?.chargebackFee ?? rateCard.chargebackFee ?? 0),
+    decline: String(settlement?.declineFee ?? rateCard.declineFee ?? 0),
+    currency: detail?.currency ?? '',
   };
+  const [pspRate, setPspRate] = useState(saved.pspRate);
+  const [settlementPct, setSettlementPct] = useState(saved.settlementPct);
+  const [margin, setMargin] = useState(saved.margin);
   const [fixed, setFixed] = useState(saved.fixed);
+  const [checkout, setCheckout] = useState(saved.checkout);
   const [refund, setRefund] = useState(saved.refund);
   const [chargeback, setChargeback] = useState(saved.chargeback);
   const [decline, setDecline] = useState(saved.decline);
+  const [currency, setCurrency] = useState(saved.currency);
   const [isSaving, setIsSaving] = useState(false);
 
-  const amounts = [fixed, refund, chargeback, decline].map(Number);
-  const valid = amounts.every((v) => Number.isFinite(v) && v >= 0);
-  const dirty = fixed !== saved.fixed || refund !== saved.refund || chargeback !== saved.chargeback || decline !== saved.decline;
+  const percentages = [pspRate, settlementPct, margin].map(Number);
+  const amounts = [fixed, checkout, refund, chargeback, decline].map(Number);
+  const valid = amounts.every((v) => Number.isFinite(v) && v >= 0)
+    && percentages.every((v) => Number.isFinite(v) && v >= 0 && v <= 100);
+  const dirty = pspRate !== saved.pspRate || settlementPct !== saved.settlementPct || margin !== saved.margin
+    || fixed !== saved.fixed || checkout !== saved.checkout || refund !== saved.refund
+    || chargeback !== saved.chargeback || decline !== saved.decline || currency !== saved.currency;
   useUnsavedChanges('platform-fees', editable && dirty);
+  // Editing the three percentages changes the blended rate before it is saved,
+  // so the row has to follow the form rather than the stored value. Rounded
+  // because adding three decimals in binary shows 13.149999999999999.
+  const blended = editable && valid
+    ? Number((Number(pspRate) + Number(settlementPct) + Number(margin)).toFixed(2))
+    : rateCard.blended;
 
   // The reversal fees and the reserve are the agency's treasury: the server
   // sends them only to callers who see the whole workspace. Rendering a
@@ -198,10 +232,15 @@ function FeesCard({ rateCard, editable, onSave }: {
     : rateCard.reservePct > 0 ? `${rateCard.reservePct}% · released after ${rateCard.reserveReleaseDays ?? 0} days` : 'none';
 
   const save = async () => {
-    if (!valid) { toast('Every fee must be an amount of 0 or more.'); return; }
+    if (!valid) { toast('Percentages must be 0–100 and every fee an amount of 0 or more.'); return; }
     setIsSaving(true);
     try {
-      await onSave({ fixedFee: Number(fixed), refundFee: Number(refund), chargebackFee: Number(chargeback), declineFee: Number(decline) });
+      await onSave({
+        pspRatePct: Number(pspRate), settlementPct: Number(settlementPct), marginRatePct: Number(margin),
+        fixedFee: Number(fixed), checkoutFee: Number(checkout),
+        refundFee: Number(refund), chargebackFee: Number(chargeback), declineFee: Number(decline),
+        currency,
+      });
       toast('Fees saved.');
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not save the fees.');
@@ -222,6 +261,23 @@ function FeesCard({ rateCard, editable, onSave }: {
     </div>
   );
 
+  // The three parts of the blended rate. Only an operator sees them as rows of
+  // their own; agency staff get the blended total and nothing underneath it.
+  const pctRow = (id: string, label: string, hint: string, value: string, set: (v: string) => void) => (
+    <div className="setrow">
+      <div>
+        <div className="k"><label htmlFor={id}>{label}</label></div>
+        <div className="d">{hint}</div>
+      </div>
+      <div className="controls">
+        <div className="pct-input">
+          <input id={id} type="number" min={0} max={100} step={0.01} value={value} onChange={(e) => set(e.target.value)} />
+          <span className="sub">%</span>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="card">
       <div className="sechead">Fees</div>
@@ -230,11 +286,38 @@ function FeesCard({ rateCard, editable, onSave }: {
           ? 'What HigherPays charges this agency. A change applies to sales from now on; the history is kept.'
           : 'Set by HigherPays. Contact support to change them.'}
       </p>
+      {editable && (
+        <div className="setrow">
+          <div>
+            <div className="k"><label htmlFor="fee-currency">Workspace currency</label></div>
+            <div className="d">
+              {detail?.currencyChangeAllowed
+                ? 'The unit every amount below is in. Changeable only until the agency has links or money history.'
+                : 'Locked: this agency already has links or money history, so it cannot switch denomination.'}
+            </div>
+          </div>
+          <div className="controls">
+            <select id="fee-currency" value={currency} disabled={!detail?.currencyChangeAllowed}
+              onChange={(e) => setCurrency(e.target.value)}>
+              {currencies.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </div>
+        </div>
+      )}
       <div className="setrow">
         <div><div className="k">Blended rate</div><div className="d">Percentage taken from every successful payment.</div></div>
-        <span className="mono-val">{rateCard.blended}%</span>
+        <span className="mono-val">{blended}%</span>
       </div>
+      {editable && (
+        <>
+          {pctRow('fee-mdr', 'MDR rate', 'Taken by the provider from the price plus the checkout fee.', pspRate, setPspRate)}
+          {pctRow('fee-settlement', 'Settlement fee', 'Applied after the MDR and the fixed fee.', settlementPct, setSettlementPct)}
+          {pctRow('fee-margin', 'HigherPays margin', 'Our own cut, taken from the price alone.', margin, setMargin)}
+        </>
+      )}
       {feeRow('fee-fixed', 'Fixed fee', 'Charged on every transaction, on top of the blended rate.', fixed, setFixed, rateCard.fixed)}
+      {editable && feeRow('fee-checkout', 'Checkout fee',
+        'Added to the price and paid by the customer, so it never enters the agency’s gross.', checkout, setCheckout, rateCard.checkoutFee)}
       {(editable || rateCard.refundFee !== undefined) &&
         feeRow('fee-refund', 'Refund fee', 'Charged when a payment is refunded.', refund, setRefund, rateCard.refundFee ?? 0)}
       {(editable || rateCard.chargebackFee !== undefined) &&

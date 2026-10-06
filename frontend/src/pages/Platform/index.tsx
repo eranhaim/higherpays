@@ -5,7 +5,7 @@ import {
   PageHeader, Pill, DataTable, Money, DateCell, EmptyState, LoadingCard, ErrorCard, StatCard, StatGrid,
   Select, type Column,
 } from '../../components/ui';
-import { platformApi, type PlatformWorkspace, type OnboardAgencyInput, type PlatformFeeRate, type PlatformUser } from '../../api/endpoints';
+import { platformApi, type PlatformWorkspace, type OnboardAgencyInput, type PlatformUser } from '../../api/endpoints';
 import Modal from '../../components/Modal';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useSessionStore } from '../../store/session';
@@ -32,10 +32,9 @@ function parseAmount(text: string): number {
 export default function PlatformPage() {
   const {
     isPlatformAdmin, requiresTwoFactor, overview, workspaces, supportedCurrencies, isLoading, isError,
-    onboardAgency, setStatus, setCurrency, setPlatformFee,
+    onboardAgency, setStatus,
   } = usePlatformData();
   const [onboardOpen, setOnboardOpen] = useState(false);
-  const [editingFee, setEditingFee] = useState<PlatformWorkspace | null>(null);
   const [suspending, setSuspending] = useState<PlatformWorkspace | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const queryClient = useQueryClient();
@@ -73,7 +72,7 @@ export default function PlatformPage() {
     setActiveWorkspaceId(w.id);
     // Every cached query is scoped to the agency that was active until now.
     queryClient.clear();
-    navigate('/settings');
+    navigate('/settings?tab=workspace');
   };
 
   const columns: Column<PlatformWorkspace>[] = [
@@ -91,7 +90,6 @@ export default function PlatformPage() {
       render: (w) => (
         <div className="cell-actions">
           <button className="btn small" onClick={() => openWorkspaceSettings(w)}>Edit settings</button>
-          <button className="btn small" onClick={() => setEditingFee(w)}>Rates</button>
           {w.status === 'active'
             ? <button className="btn danger small" onClick={() => setSuspending(w)}>Suspend</button>
             : <button className="btn small" disabled={isBusy} onClick={() => changeStatus(w, 'active')}>Reactivate</button>}
@@ -175,20 +173,6 @@ export default function PlatformPage() {
             setOnboardOpen(false);
             toast(`${input.name} created. Invite sent to ${input.adminEmail}.`);
             return created;
-          }}
-        />
-      )}
-
-      {editingFee && (
-        <RatesModal
-          workspace={editingFee}
-          currencies={supportedCurrencies}
-          onClose={() => setEditingFee(null)}
-          onSubmit={async (input, currency) => {
-            if (currency !== editingFee.currency) await setCurrency(editingFee.id, currency);
-            await setPlatformFee(editingFee.id, input);
-            setEditingFee(null);
-            toast(`Rates updated for ${editingFee.name}.`);
           }}
         />
       )}
@@ -300,142 +284,6 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
           <button type="submit" className="btn" disabled={isSaving}>{isSaving ? 'Creating…' : 'Create agency'}</button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-/** A new versioned rate row for one agency. */
-function RatesModal({ workspace, currencies, onClose, onSubmit }: {
-  workspace: PlatformWorkspace;
-  currencies: string[];
-  onClose: () => void;
-  onSubmit: (input: PlatformFeeRate, currency: string) => Promise<void>;
-}) {
-  const detail = useQuery({
-    queryKey: ['platform-workspace', workspace.id],
-    queryFn: () => platformApi.getWorkspace(workspace.id),
-  });
-  const current = detail.data?.feeHistory[0];
-
-  if (detail.isLoading) {
-    return (
-      <Modal open onClose={onClose} title={`Rates for ${workspace.name}`}>
-        <p className="sub">Loading current rates…</p>
-      </Modal>
-    );
-  }
-  if (!current) {
-    return (
-      <Modal open onClose={onClose} title={`Rates for ${workspace.name}`}>
-        <p className="sub">This agency has no rate card yet.</p>
-      </Modal>
-    );
-  }
-
-  return (
-    <RatesForm
-      key={current.effectiveFrom}
-      workspace={{
-        ...workspace,
-        pspRatePct: current.pspRatePct,
-        settlementPct: current.settlementPct ?? 0,
-        marginRatePct: current.marginRatePct,
-        pspFixedFee: current.pspFixedFee,
-        checkoutFee: current.checkoutFee,
-      }}
-      currencies={currencies}
-      currencyChangeAllowed={detail.data?.currencyChangeAllowed ?? false}
-      onClose={onClose}
-      onSubmit={onSubmit}
-    />
-  );
-}
-
-function RatesForm({ workspace, currencies, currencyChangeAllowed, onClose, onSubmit }: {
-  workspace: PlatformWorkspace;
-  currencies: string[];
-  currencyChangeAllowed: boolean;
-  onClose: () => void;
-  onSubmit: (input: PlatformFeeRate, currency: string) => Promise<void>;
-}) {
-  const [currency, setCurrency] = useState(workspace.currency);
-  const [pspRate, setPspRate] = useState(String(workspace.pspRatePct));
-  const [settlementPct, setSettlementPct] = useState(String(workspace.settlementPct));
-  const [margin, setMargin] = useState(String(workspace.marginRatePct));
-  const [fixedFee, setFixedFee] = useState(String(workspace.pspFixedFee));
-  const [checkoutFee, setCheckoutFee] = useState(String(workspace.checkoutFee));
-  const [isSaving, setIsSaving] = useState(false);
-  const psp = parsePct(pspRate);
-  const settlement = parsePct(settlementPct);
-  const mrg = parsePct(margin);
-  const fixed = parseAmount(fixedFee);
-  const checkout = parseAmount(checkoutFee);
-  const valid = !Number.isNaN(psp) && !Number.isNaN(settlement) && !Number.isNaN(mrg)
-    && !Number.isNaN(fixed) && !Number.isNaN(checkout);
-
-  const submit = async () => {
-    if (!valid) { toast('Enter valid rates and fees.'); return; }
-    setIsSaving(true);
-    try { await onSubmit({ pspRatePct: psp, settlementPct: settlement, marginRatePct: mrg, pspFixedFee: fixed, checkoutFee: checkout }, currency); }
-    catch (err) { toast(err instanceof Error ? err.message : 'Could not save the rates.'); }
-    finally { setIsSaving(false); }
-  };
-
-  return (
-    <Modal open onClose={onClose} title={`Rates for ${workspace.name}`}
-      subtitle={`Currently ${workspace.blendedRatePct}% blended. A new rate applies to sales from now on; the history is kept.`}>
-      <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-        <Select id="rates-currency" label="Workspace currency" value={currency} onChange={setCurrency}
-          disabled={!currencyChangeAllowed}>
-          {currencies.map((item) => <option key={item} value={item}>{item}</option>)}
-        </Select>
-        <p className="sub">
-          {currencyChangeAllowed
-            ? 'Currency can change only before the workspace has links or any money history.'
-            : 'Currency is locked because this workspace already has links or money history. Historical workspaces cannot switch currency.'}
-        </p>
-        <div className="form-row">
-          <div className="field">
-            <label htmlFor="rates-psp">MDR rate</label>
-            <div className="pct-input">
-              <input id="rates-psp" type="number" min={0} max={100} step={0.01} value={pspRate} onChange={(e) => setPspRate(e.target.value)} />
-              <span className="sub">%</span>
-            </div>
-          </div>
-          <div className="field">
-            <label htmlFor="rates-settlement">Settlement fee</label>
-            <div className="pct-input">
-              <input id="rates-settlement" type="number" min={0} max={100} step={0.01} value={settlementPct} onChange={(e) => setSettlementPct(e.target.value)} />
-              <span className="sub">%</span>
-            </div>
-          </div>
-          <div className="field">
-            <label htmlFor="rates-margin">HigherPays margin</label>
-            <div className="pct-input">
-              <input id="rates-margin" type="number" min={0} max={100} step={0.01} value={margin} onChange={(e) => setMargin(e.target.value)} />
-              <span className="sub">%</span>
-            </div>
-          </div>
-        </div>
-        <div className="form-row">
-          <div className="field">
-            <label htmlFor="rates-fixed">Transaction fee</label>
-            <input id="rates-fixed" type="number" min={0} step={0.01} value={fixedFee} onChange={(e) => setFixedFee(e.target.value)} />
-          </div>
-          <div className="field">
-            <label htmlFor="rates-checkout">Checkout fee</label>
-            <input id="rates-checkout" type="number" min={0} step={0.01} value={checkoutFee} onChange={(e) => setCheckoutFee(e.target.value)} />
-          </div>
-        </div>
-        <p className="sub">
-          New blended rate: {valid ? `${psp + settlement + mrg}%` : '—'}. The checkout fee is added to what the customer pays
-          and does not appear in the agency's own figures.
-        </p>
-        <div className="modal-actions">
-          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn" disabled={isSaving || !valid}>{isSaving ? 'Saving…' : 'Save rates'}</button>
         </div>
       </form>
     </Modal>
