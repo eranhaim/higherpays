@@ -248,10 +248,19 @@ test('concurrent approvals of one single-use link post exactly one sale', async 
   const platformSummary = (await request(app).get(`/workspaces/${t.workspaceId}/payments/summary`)
     .set({ ...platform.headers, 'X-Workspace-Id': t.workspaceId }).expect(200)).body;
   assert.equal(platformSummary.checkoutFeeRevenue, 2);
+  // One sale, so one successful payment. The duplicate is an approved charge
+  // held for review and never posted to the ledger, so it is an attempt on the
+  // payments screen but not revenue here. Counting it as a second successful
+  // payment beside a single payment's worth of money is what used to make this
+  // screen disagree with Analytics, which counts the ledger.
   const linksSummary = (await request(app).get(`/workspaces/${t.workspaceId}/links/summary`)
     .set(t.authHeaders).expect(200)).body;
-  assert.equal(linksSummary.successfulPayments, 2);
+  assert.equal(linksSummary.successfulPayments, 1);
   assert.equal(linksSummary.grossSales, 25);
+  const analytics = (await request(app).get(`/workspaces/${t.workspaceId}/analytics`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(analytics.headline.paidCount, linksSummary.successfulPayments);
+  assert.equal(analytics.headline.gross, linksSummary.grossSales);
 });
 
 test('a signed chargeback webhook uses the idempotent reversal path', async () => {
