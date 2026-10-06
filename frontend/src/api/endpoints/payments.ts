@@ -120,8 +120,9 @@ export interface PaymentFlow {
 }
 
 export interface PaymentsSummary {
-  grossContent: number;
-  /** Sent to limited-scope users: the agency's actual receipt after all fees. */
+  /** Only sent to callers with workspace-wide data access. */
+  grossContent?: number;
+  /** Sent to limited-scope users instead of gross: the net revenue after all fees. */
   afterFees?: number;
   /** Only sent to callers with workspace-wide data access. */
   platformFees?: number;

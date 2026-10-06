@@ -87,7 +87,7 @@ function buildCSV(report: AnalyticsReport, workspaceName: string, filters: Analy
   push('');
   push('SUMMARY');
   push('Metric', 'Value');
-  push('Gross', h.gross);
+  if (seesAgencyFigures) push('Gross', h.gross);
   push('Net', h.net);
   push('Avg order', h.aov);
   push('Paid sales', h.paidCount);
@@ -102,8 +102,13 @@ function buildCSV(report: AnalyticsReport, workspaceName: string, filters: Analy
   push('Reversal rate %', report.reversals.ratePct);
   push('');
   push('REVENUE OVER TIME');
-  push('Date', 'Gross', 'Net');
-  report.timeseries.forEach((t) => push(t.d, t.gross, t.net));
+  if (seesAgencyFigures) {
+    push('Date', 'Gross', 'Net');
+    report.timeseries.forEach((t) => push(t.d, t.gross, t.net));
+  } else {
+    push('Date', 'Net');
+    report.timeseries.forEach((t) => push(t.d, t.net));
+  }
 
   if (seesAgencyFigures) {
     push('');
@@ -194,7 +199,7 @@ export default function AnalyticsPage() {
   const rv = report.reversals;
   const p = previous?.headline;
 
-  const grossDelta = deltaText(h.gross, p?.gross);
+  const grossDelta = deltaText(h.gross ?? 0, p?.gross);
   const netDelta = deltaText(h.net, p?.net);
   const takeDelta = deltaText(h.takeRatePct ?? 0, p?.takeRatePct);
   const aovDelta = deltaText(h.aov, p?.aov);
@@ -221,8 +226,13 @@ export default function AnalyticsPage() {
       {header}
 
       <StatGrid>
-        <StatCard label="Gross" value={<Money amount={h.gross} direction="in" />} sub={grossDelta?.text} trend={grossDelta?.trend} />
-        <StatCard label="Net after fees" value={<Money amount={h.net} direction="in" emphasis />} sub={netDelta?.text} trend={netDelta?.trend} />
+        {/* An agent or creator reads net only. Gross beside it would give away
+            the platform fee by subtraction. */}
+        {h.gross !== undefined && (
+          <StatCard label="Gross" value={<Money amount={h.gross} direction="in" />} sub={grossDelta?.text} trend={grossDelta?.trend} />
+        )}
+        <StatCard label="Net revenue" value={<Money amount={h.net} direction="in" emphasis />}
+          sub={netDelta?.text ?? 'Revenue after all fees'} trend={netDelta?.trend} />
         {h.takeRatePct !== undefined && <StatCard label="Take rate" value={pct(h.takeRatePct)} sub={takeDelta?.text} trend={takeDelta?.trend} />}
         <StatCard label="Avg order" value={<Money amount={h.aov} />} sub={aovDelta?.text} trend={aovDelta?.trend} />
         <StatCard label="Paid sales" value={h.paidCount} sub={paidDelta?.text} trend={paidDelta?.trend} />
@@ -233,10 +243,14 @@ export default function AnalyticsPage() {
         <div className="card">
           <div className="sechead row">
             <span>Revenue over time</span>
-            <button className={`btn ghost tgl${metric === 'gross' ? ' active' : ''}`} onClick={() => setMetric('gross')}>Gross</button>
-            <button className={`btn ghost tgl${metric === 'net' ? ' active' : ''}`} onClick={() => setMetric('net')}>Net</button>
+            {canScope && (
+              <>
+                <button className={`btn ghost tgl${metric === 'gross' ? ' active' : ''}`} onClick={() => setMetric('gross')}>Gross</button>
+                <button className={`btn ghost tgl${metric === 'net' ? ' active' : ''}`} onClick={() => setMetric('net')}>Net</button>
+              </>
+            )}
           </div>
-          <BarChart points={dailyBars(report.timeseries, dateWindow, metric)} currency={currency} />
+          <BarChart points={dailyBars(report.timeseries, dateWindow, canScope ? metric : 'net')} currency={currency} />
         </div>
 
         <div className={parts.length ? 'grid2' : undefined}>
@@ -322,7 +336,7 @@ export default function AnalyticsPage() {
           <StatGrid>
             <StatCard label="Rate by count" value={pct(rv.ratePct)} />
             <StatCard label="Rate by value" value={pct(rv.rateValuePct)} />
-            <StatCard label="Fee cost" value={<Money amount={rv.feeCost} direction="out" />} />
+            {rv.feeCost !== undefined && <StatCard label="Fee cost" value={<Money amount={rv.feeCost} direction="out" />} />}
             <StatCard label="Reversed value" value={<Money amount={rv.valueReversed} direction="out" />} />
           </StatGrid>
           {byBearer && (

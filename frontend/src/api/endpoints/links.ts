@@ -98,7 +98,8 @@ export interface LinksSummary {
   totalLinks: number;
   paidLinks: number;
   successfulPayments: number;
-  grossSales: number;
+  /** Only sent to callers with workspace-wide data access. */
+  grossSales?: number;
   netAfterFees: number;
   /** Non-overlapping bands: min inclusive, max exclusive. */
   priceBands: Array<{ min: number; max: number | null; count: number }>;
