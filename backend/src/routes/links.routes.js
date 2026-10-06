@@ -90,21 +90,35 @@ function linkFilterParams(req, scope, includeArchived = null) {
   ];
 }
 
-const LINK_FILTERS = `
+// Everything that selects a link other than the date range. Split out because
+// /summary dates its money by the payment rather than by the link, so it needs
+// these predicates without the range.
+const LINK_FILTERS_UNDATED = `
   ($2::uuid IS NULL OR pl.created_by_agent_id = $2::uuid)
   AND ($3::uuid IS NULL OR pl.account_id = $3::uuid)
   AND ($4::text IS NULL OR pl.effective_status = $4::text)
   AND ($5::text IS NULL OR pl.type = $5::text)
   AND ($6::numeric IS NULL OR pl.amount >= $6::numeric)
   AND ($7::numeric IS NULL OR pl.amount <= $7::numeric)
-  AND ($8::timestamptz IS NULL OR pl.created_at >= $8::timestamptz)
-  AND ($9::timestamptz IS NULL OR pl.created_at <= $9::timestamptz)
   AND ($10::uuid IS NULL OR pl.account_id = $10::uuid)
   AND ($11::text IS NULL OR lower(pl.reference_id) LIKE $11::text
        OR lower(COALESCE(pl.provider_transaction_id, '')) LIKE $11::text
        OR lower(COALESCE(u.full_name, '')) LIKE $11::text)
   AND ($12::text IS NULL OR pl.provider_status = $12::text)
   AND ($13::boolean OR pl.archived_at IS NULL)`;
+
+// A link belongs to the window when it was created in it.
+const LINK_CREATED_IN_RANGE = `
+  ($8::timestamptz IS NULL OR pl.created_at >= $8::timestamptz)
+  AND ($9::timestamptz IS NULL OR pl.created_at <= $9::timestamptz)`;
+
+const LINK_FILTERS = `${LINK_FILTERS_UNDATED} AND ${LINK_CREATED_IN_RANGE}`;
+
+// A payment belongs to the window when it was taken in it. Same column and
+// same bounds as GET /analytics, so the two screens total the same rows.
+const PAYMENT_OCCURRED_IN_RANGE = `
+  ($8::timestamptz IS NULL OR t.occurred_at >= $8::timestamptz)
+  AND ($9::timestamptz IS NULL OR t.occurred_at <= $9::timestamptz)`;
 
 // The public endpoint starts MantaPay's APM page and redirects the payer to
 // the returned CentroBill URL. No card data touches this server.
@@ -167,6 +181,14 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
 }));
 
 // GET /summary — every matching link and successful payment, before pagination.
+//
+// Two date axes, deliberately. How many links there are, and how many of them
+// converted, is a property of the links created in the window, so those count
+// on pl.created_at. Money is a property of the payments taken in the window,
+// so it counts on transactions.occurred_at over the ledger rows GET /analytics
+// reads. Dating revenue by the link's creation instead made this screen
+// under-report whenever a link was paid on a later day, which is what put it
+// at odds with Analytics.
 router.get('/summary', requirePermission('links.view'), asyncHandler(async (req, res) => {
   const min = numberFilter(req.query.min), max = numberFilter(req.query.max);
   if (min != null && max != null && max < min) return badRequest(res, 'max must be >= min', ['min', 'max']);
@@ -182,39 +204,48 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
           WHERE pl.workspace_id = $1
        ),
        matching_links AS (
-         SELECT pl.id, pl.amount
+         SELECT pl.id, pl.amount, pl.created_at
            FROM effective pl
            JOIN accounts a ON a.id = pl.account_id
            LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
            LEFT JOIN users u ON u.id = ag.user_id
-          WHERE ${LINK_FILTERS}
+          WHERE ${LINK_FILTERS_UNDATED}
        ),
-       successful AS (
-         SELECT p.payment_link_id,
-                COUNT(*)::int AS payment_count,
-                COALESCE(SUM(t.gross) FILTER (WHERE p.review_reason IS NULL), 0) AS gross,
-                COALESCE(SUM(t.gross - COALESCE(re.platform_fee, 0))
-                  FILTER (WHERE p.review_reason IS NULL), 0) AS net
-           FROM payments p
+       links_in_range AS (
+         SELECT pl.id, pl.amount,
+                EXISTS (
+                  SELECT 1 FROM payments p
+                   JOIN transactions t ON t.payment_id = p.id
+                        AND t.type = 'payment' AND t.status = 'approved'
+                  WHERE p.payment_link_id = pl.id AND p.archived_at IS NULL
+                ) AS is_paid
+           FROM matching_links pl
+          WHERE ${LINK_CREATED_IN_RANGE}
+       ),
+       link_counts AS (
+         SELECT COUNT(*)::int AS total_links,
+                COUNT(*) FILTER (WHERE is_paid)::int AS paid_links,
+                COUNT(*) FILTER (WHERE amount >= 0 AND amount < 50)::int AS band_0_50,
+                COUNT(*) FILTER (WHERE amount >= 50 AND amount < 100)::int AS band_50_100,
+                COUNT(*) FILTER (WHERE amount >= 100 AND amount < 200)::int AS band_100_200,
+                COUNT(*) FILTER (WHERE amount >= 200 AND amount < 500)::int AS band_200_500,
+                COUNT(*) FILTER (WHERE amount >= 500)::int AS band_500_plus
+           FROM links_in_range
+       ),
+       revenue AS (
+         SELECT COUNT(*) FILTER (WHERE re.entry_type = 'sale')::int AS successful_payments,
+                COALESCE(SUM(re.gross) FILTER (WHERE re.entry_type = 'sale'), 0) AS gross_sales,
+                COALESCE(SUM(re.distributable), 0) AS net_after_fees
+           FROM revenue_entries re
+           JOIN transactions t ON t.id = re.transaction_id
+           JOIN payments p ON p.id = t.payment_id
            JOIN matching_links ml ON ml.id = p.payment_link_id
-           JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment' AND t.status = 'approved'
-             AND p.archived_at IS NULL
-           LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
-          GROUP BY p.payment_link_id
+          WHERE re.workspace_id = $1 AND p.archived_at IS NULL
+            AND ${PAYMENT_OCCURRED_IN_RANGE}
        )
-       SELECT COUNT(*)::int AS total_links,
-              COUNT(*) FILTER (WHERE successful.payment_count > 0)::int AS paid_links,
-              COALESCE(SUM(successful.payment_count), 0)::int AS successful_payments,
-              COALESCE(SUM(successful.gross), 0) AS gross_sales,
-              COALESCE(SUM(successful.net), 0) AS net_after_fees,
-              COUNT(*) FILTER (WHERE matching_links.amount >= 0 AND matching_links.amount < 50)::int AS band_0_50,
-              COUNT(*) FILTER (WHERE matching_links.amount >= 50 AND matching_links.amount < 100)::int AS band_50_100,
-              COUNT(*) FILTER (WHERE matching_links.amount >= 100 AND matching_links.amount < 200)::int AS band_100_200,
-              COUNT(*) FILTER (WHERE matching_links.amount >= 200 AND matching_links.amount < 500)::int AS band_200_500,
-              COUNT(*) FILTER (WHERE matching_links.amount >= 500)::int AS band_500_plus,
+       SELECT link_counts.*, revenue.*,
               (SELECT currency FROM workspaces WHERE id = $1) AS currency
-         FROM matching_links
-         LEFT JOIN successful ON successful.payment_link_id = matching_links.id`,
+         FROM link_counts, revenue`,
       linkFilterParams(req, scope, false))).rows[0];
   });
   res.json({

@@ -10,7 +10,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { analyticsApi, accountsApi, agentsApi } from '../../api/endpoints';
-import { DAY_MS } from '../../lib/format';
+import { DAY_MS, startOfLocalDay, endOfLocalDay } from '../../lib/format';
 
 export interface AnalyticsFilters {
   /** Date-input values, `YYYY-MM-DD` in local time. */
@@ -40,13 +40,6 @@ export function defaultFilters(): AnalyticsFilters {
   return { from: toLocalDateInput(now - 30 * DAY_MS), to: toLocalDateInput(now), accountId: '', agentId: '' };
 }
 
-function parseLocalDate(input: string, endOfDay: boolean): number | null {
-  const [y, m, d] = input.split('-').map(Number);
-  if (!y || !m || !d) return null;
-  const date = endOfDay ? new Date(y, m - 1, d, 23, 59, 59, 999) : new Date(y, m - 1, d);
-  return date.getTime();
-}
-
 /**
  * Start of the `from` day to end of the `to` day, local time.
  *
@@ -57,9 +50,9 @@ function parseLocalDate(input: string, endOfDay: boolean): number | null {
  */
 export function toDateWindow(filters: AnalyticsFilters): DateWindow | null {
   const to = filters.to || toLocalDateInput(Date.now());
-  const from = filters.from || toLocalDateInput((parseLocalDate(to, false) ?? Date.now()) - 29 * DAY_MS);
-  const fromMs = parseLocalDate(from, false);
-  const toMs = parseLocalDate(to, true);
+  const from = filters.from || toLocalDateInput((startOfLocalDay(to) ?? Date.now()) - 29 * DAY_MS);
+  const fromMs = startOfLocalDay(from);
+  const toMs = endOfLocalDay(to);
   if (fromMs === null || toMs === null || toMs < fromMs) return null;
   return { fromMs, toMs, days: Math.round((toMs - fromMs) / DAY_MS) };
 }

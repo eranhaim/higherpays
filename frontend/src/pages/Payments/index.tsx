@@ -16,7 +16,7 @@ import {
   type Column, type DateRange, type SortState,
 } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
-import { formatMoney } from '../../lib/format';
+import { formatMoney, toInstantRange } from '../../lib/format';
 import {
   isReversed, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, paymentStatusLabel, getPaymentExportColumns,
   PROVIDER_FEE_SOURCE_LABELS, declineReasonLabel,
@@ -102,8 +102,7 @@ export default function PaymentsPage() {
     agentId: filters.agentId || undefined,
     customerId: filters.customerId || undefined,
     categoryId: filters.categoryId || undefined,
-    from: filters.from || undefined,
-    to: filters.to || undefined,
+    ...toInstantRange({ from: filters.from, to: filters.to }),
     q: search.trim() || undefined,
     needsDetails: filters.needsDetails || undefined,
     minAmount: filters.minAmount || undefined,
@@ -762,7 +761,8 @@ function ExportModal({ range, loadedCount, canSeeFees, labels, onClose, onSubmit
   const submit = async () => {
     if (selected.length === 0) { toast('Pick at least one column.'); return; }
     setIsExporting(true);
-    try { await onSubmit({ from: dates.from, to: dates.to, columns: selected, limit: scope === 'loaded' ? loadedCount : undefined }); }
+    const range = toInstantRange(dates);
+    try { await onSubmit({ from: range.from ?? '', to: range.to ?? '', columns: selected, limit: scope === 'loaded' ? loadedCount : undefined }); }
     catch (err) { toast(err instanceof Error ? err.message : 'Export failed.'); }
     finally { setIsExporting(false); }
   };
