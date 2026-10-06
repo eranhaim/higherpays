@@ -429,7 +429,7 @@ export default function PaymentsPage() {
                 <DetailRow label="MantaPay decline code">{detail.declineCode ?? 'Unknown'}</DetailRow>
                 <DetailRow label="MantaPay code source">{declineSourceLabel(detail.declineCodeSource)}</DetailRow>
                 <DetailRow label="MantaPay reason source">{declineSourceLabel(detail.declineReasonSource)}</DetailRow>
-                <p className="sub">The reason is MantaPay display text; the signed reply code is the payment outcome.</p>
+                <p className="sub">The reason is MantaPay display text, or our own wording where MantaPay sent none; the signed reply code is the payment outcome.</p>
               </>
             )}
             <DetailRow label="Customer">{detail.customer ?? '—'}{detail.customerTelegram ? <span className="sub inline"> · {detail.customerTelegram}</span> : null}</DetailRow>
@@ -644,6 +644,7 @@ function declineSourceLabel(source: MantaPayDeclineSource | null | undefined): s
     case 'mantapay_webhook': return 'MantaPay webhook';
     case 'mantapay_status': return 'MantaPay status lookup';
     case 'stored_raw_payload': return 'Stored MantaPay payload';
+    case 'derived_no_provider_text': return 'No reason from MantaPay';
     default: return 'Unknown';
   }
 }

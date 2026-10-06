@@ -106,6 +106,44 @@ test('webhook and status response aliases retain the MantaPay decline fields', (
   assert.equal(reply.readReplyDescription({ ReplyDescription: 'Do not honor' }), 'Do not honor');
 });
 
+// MantaPay sends `017` with `reply_desc: ""` — 45 production declines showed a
+// bare code where staff expected a sentence.
+test('a decline always carries a readable reason, even when MantaPay sends none', () => {
+  for (const blank of [undefined, null, '', '   ']) {
+    const fields = reply.declineFields('declined', {
+      code: '017',
+      reason: blank,
+      codeSource: reply.DECLINE_SOURCE.webhookSigned,
+      reasonSource: reply.DECLINE_SOURCE.webhook,
+    });
+    assert.equal(fields.code, '017');
+    assert.equal(fields.reason, reply.UNSPECIFIED_DECLINE_REASON);
+    assert.match(fields.reason, /[a-z]{3}/, 'reads as words, not a code');
+    assert.equal(fields.reasonSource, 'derived_no_provider_text',
+      'derived wording must not claim to be provider text');
+    assert.equal(fields.codeSource, reply.DECLINE_SOURCE.webhookSigned);
+  }
+});
+
+test('provider decline text is preferred over our derived wording', () => {
+  const fields = reply.declineFields('declined', {
+    code: '5051',
+    reason: 'Insufficient Funds',
+    codeSource: reply.DECLINE_SOURCE.webhookSigned,
+    reasonSource: reply.DECLINE_SOURCE.webhook,
+  });
+  assert.equal(fields.reason, 'Insufficient Funds');
+  assert.equal(fields.reasonSource, reply.DECLINE_SOURCE.webhook);
+});
+
+test('an approved or pending attempt gets no decline reason', () => {
+  for (const status of ['approved', 'pending']) {
+    assert.deepEqual(reply.declineFields(status, { code: '000', reason: 'SUCCESS' }), {
+      code: null, reason: null, codeSource: null, reasonSource: null,
+    });
+  }
+});
+
 test('pending and abandoned webhooks do not become decline events', () => {
   const pending = provider.parseWebhook('reply_code=001&trans_id=1');
   const abandoned = provider.parseWebhook('reply_code=600&trans_id=2');

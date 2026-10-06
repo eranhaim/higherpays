@@ -37,11 +37,16 @@ async function readStatusDecline(row) {
 }
 
 function mergeDecline(current, candidate) {
+  // A derived reason only records that MantaPay gave none, so provider text
+  // from any source replaces it — the same precedence the upsert applies.
+  const storedReason = current.provider_decline_reason_source === reply.DECLINE_SOURCE.derivedNoProviderText
+    ? null
+    : current.provider_decline_reason;
   return {
     code: current.provider_decline_code || candidate.code,
-    reason: current.provider_decline_reason || candidate.reason,
+    reason: storedReason || candidate.reason,
     codeSource: current.provider_decline_code_source || candidate.codeSource,
-    reasonSource: current.provider_decline_reason_source || candidate.reasonSource,
+    reasonSource: storedReason ? current.provider_decline_reason_source : candidate.reasonSource,
   };
 }
 
@@ -67,11 +72,14 @@ async function applyUpdates(updates) {
   await withTransaction(async (client) => {
     for (const update of updates) {
       await client.query(
+        // mergeDecline has already kept whatever the row should keep, so these
+        // values are assigned rather than coalesced — otherwise a derived
+        // reason could never be upgraded to real provider text.
         `UPDATE transactions
-            SET provider_decline_code = COALESCE(provider_decline_code, $2),
-                provider_decline_reason = COALESCE(provider_decline_reason, $3),
-                provider_decline_code_source = COALESCE(provider_decline_code_source, $4),
-                provider_decline_reason_source = COALESCE(provider_decline_reason_source, $5)
+            SET provider_decline_code = $2,
+                provider_decline_reason = $3,
+                provider_decline_code_source = $4,
+                provider_decline_reason_source = $5
           WHERE id = $1`,
         [update.id, update.details.code, update.details.reason,
           update.details.codeSource, update.details.reasonSource],
@@ -99,7 +107,7 @@ async function backfill({ apply = false } = {}) {
     rawPayloadMatched: 0,
     statusLookups: 0,
     statusMatched: 0,
-    codeOnly: 0,
+    derivedReason: 0,
     noProviderDetails: 0,
     lookupErrors: 0,
     updated: 0,
@@ -130,16 +138,22 @@ async function backfill({ apply = false } = {}) {
     }
 
     const details = mergeDecline(row, candidate);
+    if (!details.code && !details.reason) {
+      report.noProviderDetails++;
+      continue;
+    }
+    // MantaPay gave this code no description on any of its surfaces.
+    if (!details.reason) {
+      details.reason = reply.UNSPECIFIED_DECLINE_REASON;
+      details.reasonSource = reply.DECLINE_SOURCE.derivedNoProviderText;
+      report.derivedReason++;
+    }
+
     const changed = details.code !== row.provider_decline_code
       || details.reason !== row.provider_decline_reason
       || details.codeSource !== row.provider_decline_code_source
       || details.reasonSource !== row.provider_decline_reason_source;
     if (!changed) continue;
-    if (!details.code && !details.reason) {
-      report.noProviderDetails++;
-      continue;
-    }
-    if (!details.reason) report.codeOnly++;
     updates.push({ id: row.id, workspace_id: row.workspace_id, details });
   }
 
