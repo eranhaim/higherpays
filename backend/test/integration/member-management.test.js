@@ -123,6 +123,46 @@ test('customer-paid sales include checkout surcharge and reversals', async () =>
   assert.equal(team.find((member) => member.userId === agent.userId).totalCustomerPaid, 0);
 });
 
+test('the member list withholds sales and pay terms from a scoped seat', async () => {
+  const tenant = await createTenant(app);
+  const account = await createAccount(app, tenant);
+  const agent = await createAgent(app, tenant);
+  await assignAgent(app, tenant, account.id, agent.id);
+  await paySale(app, tenant, account, 100, { headers: agent.headers });
+
+  // team.view is a per-seat permission, so an agent can be granted the member
+  // list without ever gaining workspace-wide or revenue visibility.
+  await request(app).patch(`/workspaces/${tenant.workspaceId}/team/${agent.userId}`)
+    .set(tenant.authHeaders)
+    .send({ permissions: [...ROLE_PERMISSIONS.agent, 'team.view'] })
+    .expect(200);
+
+  const scoped = (await request(app).get(`/workspaces/${tenant.workspaceId}/team`)
+    .set(agent.headers).expect(200)).body.members;
+  assert.ok(scoped.length > 0);
+  for (const member of scoped) {
+    for (const field of [
+      'totalCustomerPaid', 'assignedCount', 'isPlatformAdmin',
+      'payModel', 'revenueSplitPct', 'salaryAmount', 'commissionPct',
+    ]) {
+      assert.equal(field in member, false, `${field} reached a scoped seat`);
+    }
+  }
+
+  // The same request from the owner carries all of it, so the assertions above
+  // are a gate and not an empty response.
+  const full = (await request(app).get(`/workspaces/${tenant.workspaceId}/team`)
+    .set(tenant.authHeaders).expect(200)).body.members;
+  const creatorRow = full.find((member) => member.userId === account.ownerUserId);
+  assert.equal(creatorRow.totalCustomerPaid, 100);
+  assert.equal(creatorRow.payModel, 'share');
+  assert.equal(typeof creatorRow.revenueSplitPct, 'number');
+  const agentRow = full.find((member) => member.userId === agent.userId);
+  assert.equal(typeof agentRow.commissionPct, 'number');
+  assert.equal(agentRow.assignedCount, 1);
+  assert.equal(agentRow.isPlatformAdmin, false);
+});
+
 test('owner and self-protection reject unsafe member edits', async () => {
   const tenant = await createTenant(app);
   const ownHeaders = headers(tenant, tenant.workspaceId);
