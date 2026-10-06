@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   PageHeader, Pill, DataTable, Money, DateCell, EmptyState, LoadingCard, ErrorCard, StatCard, StatGrid,
   Select, type Column,
 } from '../../components/ui';
 import { platformApi, type PlatformWorkspace, type OnboardAgencyInput, type PlatformFeeRate, type PlatformUser } from '../../api/endpoints';
 import Modal from '../../components/Modal';
+import { useCurrentSession } from '../../hooks/useCurrentSession';
+import { useSessionStore } from '../../store/session';
 import { toast } from '../../lib/toast';
 import { usePlatformData } from './usePlatformData';
 
@@ -37,6 +39,9 @@ export default function PlatformPage() {
   const [suspending, setSuspending] = useState<PlatformWorkspace | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const setActiveWorkspaceId = useSessionStore((s) => s.setActiveWorkspaceId);
+  const { workspaces: memberships } = useCurrentSession();
   const users = useQuery({ queryKey: ['platform-users'], queryFn: () => platformApi.listUsers(), enabled: isPlatformAdmin && !requiresTwoFactor });
   const platformAdmin = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => platformApi.setPlatformAdmin(id, enabled),
@@ -56,6 +61,21 @@ export default function PlatformPage() {
     }
   };
 
+  // `/settings` is workspace-scoped, so the row's agency has to become the
+  // active one first. This table also lists suspended and archived agencies,
+  // which `/auth/me` leaves out: selecting one would send its id as
+  // X-Workspace-Id while the console labelled itself from another agency.
+  const openWorkspaceSettings = (w: PlatformWorkspace) => {
+    if (!memberships.some((m) => m.id === w.id)) {
+      toast(`${w.name} has to be active before its settings can be opened.`);
+      return;
+    }
+    setActiveWorkspaceId(w.id);
+    // Every cached query is scoped to the agency that was active until now.
+    queryClient.clear();
+    navigate('/settings');
+  };
+
   const columns: Column<PlatformWorkspace>[] = [
     { key: 'name', header: 'Agency', render: (w) => <span className="cname">{w.name}</span> },
     { key: 'status', header: 'Status', render: (w) => <Pill tone={w.status === 'active' ? 'ok' : 'muted'}>{w.status}</Pill> },
@@ -70,10 +90,11 @@ export default function PlatformPage() {
       key: 'actions', header: 'Actions', hideHeader: true, align: 'right',
       render: (w) => (
         <div className="cell-actions">
-          <button className="btn ghost small" onClick={() => setEditingFee(w)}>Rates</button>
+          <button className="btn small" onClick={() => openWorkspaceSettings(w)}>Edit settings</button>
+          <button className="btn small" onClick={() => setEditingFee(w)}>Rates</button>
           {w.status === 'active'
-            ? <button className="btn ghost small" onClick={() => setSuspending(w)}>Suspend</button>
-            : <button className="btn ghost small" disabled={isBusy} onClick={() => changeStatus(w, 'active')}>Reactivate</button>}
+            ? <button className="btn danger small" onClick={() => setSuspending(w)}>Suspend</button>
+            : <button className="btn small" disabled={isBusy} onClick={() => changeStatus(w, 'active')}>Reactivate</button>}
         </div>
       ),
     },
