@@ -460,7 +460,8 @@ const Transaction = entity('transactions', {
       'mantapay_webhook_signed', 'mantapay_status', 'stored_raw_payload'
     )`,
     `provider_decline_reason_source IS NULL OR provider_decline_reason_source IN (
-      'mantapay_webhook', 'mantapay_status', 'stored_raw_payload'
+      'mantapay_webhook', 'mantapay_status', 'stored_raw_payload',
+      'derived_no_provider_text'
     )`,
   ],
   unique: [['workspaceId', 'providerTransactionId']],

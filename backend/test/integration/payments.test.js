@@ -158,6 +158,42 @@ test('failed payment decline details are searchable and respect the payment scop
     .expect(403);
 });
 
+// MantaPay sends reply code 017 with an empty reply_desc, which left 45
+// production declines showing a bare number to every role that can read them.
+test('a decline with no MantaPay description still reads as a sentence for every payment role', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const agent = await createAgent(app, t);
+  await assignAgent(app, t, account.id, agent.id);
+  const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(agent.headers)
+    .send({ accountId: account.id, type: 'single_use', amount: 30, currency: 'EUR' }).expect(201)).body;
+  const payload = buildPaidPayload({
+    reference: link.referenceId,
+    transId: newTransId(),
+    amount: 30,
+    replyCode: '017',
+  });
+  payload.reply_desc = '';
+  const failure = await postWebhook(app, await endpointFor(t.workspaceId), payload).expect(200);
+
+  for (const [role, headers, scoped] of [
+    ['admin', t.authHeaders, false],
+    ['agent', agent.headers, true],
+    ['account owner', account.ownerHeaders, true],
+  ]) {
+    const payment = (await request(app)
+      .get(`/workspaces/${t.workspaceId}/payments/${failure.body.paymentId}`)
+      .set(headers).expect(200)).body;
+    assert.equal(payment.declineCode, '017', role);
+    assert.ok(payment.declineReason, `${role} must get a reason, not null`);
+    assert.notEqual(payment.declineReason, '017', `${role} must not get the bare code`);
+    assert.match(payment.declineReason, /\s/, `${role} must get words, not an identifier`);
+    assert.equal(payment.declineReasonSource, 'derived_no_provider_text', role);
+    // Decline details reach limited scopes, so they must carry no fee figure.
+    if (scoped) assert.equal(payment.platformFee, undefined, role);
+  }
+});
+
 test('pending and abandoned MantaPay replies do not create failed payments', async () => {
   const t = await createTenant(app);
   const account = await createAccount(app, t);

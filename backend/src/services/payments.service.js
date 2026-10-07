@@ -154,11 +154,21 @@ async function recordPaymentOutcome(client, workspaceId, params) {
              WHEN EXCLUDED.provider_decline_reason_source = 'mantapay_webhook'
                AND EXCLUDED.provider_decline_reason IS NOT NULL
                THEN EXCLUDED.provider_decline_reason
+             -- A derived reason only says the provider gave none, so any later
+             -- provider text replaces it.
+             WHEN transactions.provider_decline_reason_source = 'derived_no_provider_text'
+               AND EXCLUDED.provider_decline_reason_source IS DISTINCT FROM 'derived_no_provider_text'
+               AND EXCLUDED.provider_decline_reason IS NOT NULL
+               THEN EXCLUDED.provider_decline_reason
              ELSE COALESCE(transactions.provider_decline_reason, EXCLUDED.provider_decline_reason)
            END,
            provider_decline_reason_source = CASE
              WHEN EXCLUDED.status <> 'declined' THEN transactions.provider_decline_reason_source
              WHEN EXCLUDED.provider_decline_reason_source = 'mantapay_webhook'
+               AND EXCLUDED.provider_decline_reason IS NOT NULL
+               THEN EXCLUDED.provider_decline_reason_source
+             WHEN transactions.provider_decline_reason_source = 'derived_no_provider_text'
+               AND EXCLUDED.provider_decline_reason_source IS DISTINCT FROM 'derived_no_provider_text'
                AND EXCLUDED.provider_decline_reason IS NOT NULL
                THEN EXCLUDED.provider_decline_reason_source
              WHEN transactions.provider_decline_reason IS NOT NULL

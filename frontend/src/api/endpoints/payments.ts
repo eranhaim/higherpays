@@ -23,7 +23,8 @@ export type MantaPayDeclineSource =
   | 'mantapay_webhook_signed'
   | 'mantapay_webhook'
   | 'mantapay_status'
-  | 'stored_raw_payload';
+  | 'stored_raw_payload'
+  | 'derived_no_provider_text';
 
 export function declineReasonLabel(reason: string | null | undefined): string {
   return reason || 'Unknown';
