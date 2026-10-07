@@ -73,6 +73,13 @@ function isExpired(invite: Invite): boolean {
 
 const TYPE_ORDER: Record<MemberType, number> = { owner: 0, admin: 1, member: 2, creator: 3, agent: 4 };
 
+const SORT_VALUES: SortValues<Member> = {
+  name: (member) => member.name,
+  type: (member) => TYPE_ORDER[memberType(member)],
+  state: (member) => memberState(member),
+  sales: (member) => member.totalCustomerPaid ?? null,
+};
+
 export default function AgencyPage() {
   const can = useCan();
   const { labels, role: currentRole, user } = useCurrentSession();
@@ -80,9 +87,9 @@ export default function AgencyPage() {
   const canManageCreators = can('accounts.manage');
   const canManageAgents = can('agents.manage');
   const canEditPay = can('revenue.manage');
-  // Only the owner may hand the agency over, and only a HigherPays operator
-  // may create another one. The server enforces both; this keeps the controls
-  // out of everyone else's way.
+  // Handing the agency over is the owner's alone, and making someone a
+  // HigherPays operator belongs to an existing operator. Both are refused by
+  // the server; hiding them only keeps the controls out of everyone's way.
   const canTransferOwner = currentRole === 'workspace_owner';
   const isPlatformAdmin = Boolean(user?.isPlatformAdmin);
 
@@ -202,21 +209,13 @@ export default function AgencyPage() {
     .filter((member) => !query
       || `${member.name} ${member.email} ${member.accountName ?? ''}`.toLowerCase().includes(query));
 
-  const SORT_VALUES: SortValues<Member> = {
-    name: (member) => member.name,
-    type: (member) => TYPE_ORDER[memberType(member)],
-    state: (member) => memberState(member),
-    sales: (member) => member.totalCustomerPaid ?? null,
-    joined: (member) => member.joinedAt,
-  };
   // The server returns the whole workspace at once, so the order is decided
   // here. Invites lead: a pending one is work waiting on somebody.
-  const rows: Row[] = useMemo(() => [
+  const rows: Row[] = [
     ...inviteRows,
     ...sortRows(matchingMembers, sort, SORT_VALUES)
       .map((member): Row => ({ kind: 'member', key: member.userId, member })),
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [inviteRows, matchingMembers, sort]);
+  ];
 
   const memberColumn: Column<Row> = {
     key: 'member',
@@ -545,7 +544,17 @@ export default function AgencyPage() {
         />
       )}
 
-      {editing && editingType === 'agent' && (
+      {/* The editor seeds every field from the agent record, so it is mounted
+          only once that record is in hand. */}
+      {editing && editingType === 'agent' && !editingAgent && (
+        <Modal open onClose={() => setEditing(null)} title={`Edit ${editing.name}`}>
+          <p className="sub">
+            {isLoading ? 'Loading…' : `Couldn't load this ${labels.agent.toLowerCase()}.`}
+          </p>
+        </Modal>
+      )}
+
+      {editing && editingType === 'agent' && editingAgent && (
         <AgentEditorModal
           member={editing}
           agent={editingAgent}
@@ -562,7 +571,7 @@ export default function AgencyPage() {
             });
             await data.setAssignedAccounts(
               target.agentId as string,
-              editingAgent?.accounts.map((account) => account.id) ?? [],
+              editingAgent.accounts.map((account) => account.id),
               accountIds,
             );
             if (canManageMembers) await applyAccess(target, access);
