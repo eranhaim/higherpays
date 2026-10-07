@@ -61,3 +61,35 @@ export function toIsoDate(ts: number): string {
   const day = String(d.getUTCDate()).padStart(2, '0');
   return `${y}-${mo}-${day}`;
 }
+
+/**
+ * The first and last instant of a yyyy-mm-dd day, in local time.
+ *
+ * A date picker holds a calendar day, but every date filter in the API
+ * compares an instant. Postgres reads a bare `2026-10-06` as midnight UTC,
+ * which drops the whole of the `to` day and shifts the `from` bound by the
+ * UTC offset — so a range has to be widened to instants before it is sent.
+ * Null for anything that is not a date.
+ */
+export function startOfLocalDay(day: string): number | null {
+  const [y, m, d] = day.split('-').map(Number);
+  return !y || !m || !d ? null : new Date(y, m - 1, d).getTime();
+}
+
+export function endOfLocalDay(day: string): number | null {
+  const [y, m, d] = day.split('-').map(Number);
+  return !y || !m || !d ? null : new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+}
+
+/**
+ * A picker range as the ISO instants the API filters on. An open bound stays
+ * open: undefined means "no limit", not "the beginning of time".
+ */
+export function toInstantRange(range: { from?: string; to?: string }): { from?: string; to?: string } {
+  const from = range.from ? startOfLocalDay(range.from) : null;
+  const to = range.to ? endOfLocalDay(range.to) : null;
+  return {
+    from: from === null ? undefined : new Date(from).toISOString(),
+    to: to === null ? undefined : new Date(to).toISOString(),
+  };
+}

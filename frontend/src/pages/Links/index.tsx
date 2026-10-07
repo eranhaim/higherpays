@@ -5,7 +5,7 @@ import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useRateCard } from '../../hooks/useRateCard';
 import { feeBreakdown } from '../../business/feeBreakdown';
-import { formatMoney } from '../../lib/format';
+import { formatMoney, toInstantRange } from '../../lib/format';
 import Modal from '../../components/Modal';
 import ReassignFields from '../../components/ReassignFields';
 import { toast } from '../../lib/toast';
@@ -85,8 +85,7 @@ export default function LinksPage() {
     type: filters.type || undefined,
     min: min || undefined,
     max: max || undefined,
-    from: filters.from || undefined,
-    to: filters.to || undefined,
+    ...toInstantRange({ from: filters.from, to: filters.to }),
     q: search.trim() || undefined,
     accountId: filters.accountId || undefined,
     showArchived: filters.showArchived || undefined,

@@ -6,7 +6,7 @@ import {
   type ReassignInput, type PaymentsSummary,
 } from '../../api/endpoints';
 
-/** What the export dialog collects. Range strings are yyyy-mm-dd, '' for open. */
+/** What the export dialog collects. Range bounds are ISO instants, '' for open. */
 export interface ExportInput {
   from: string;
   to: string;

@@ -73,6 +73,32 @@ test('an account owner cannot also be made an agent in the same workspace', asyn
   assert.match(res.body.detail, /already a account_owner/);
 });
 
+test('two live creators cannot share a name, by creation or by rename', async () => {
+  const t = await createTenant(app);
+  const first = await createAccount(app, t, { name: 'Bohema' });
+
+  // A second creator under the same name is the mistake: the console lists
+  // creators by name, so nobody would see the duplicate afterwards.
+  const clash = await request(app).post(`/workspaces/${t.workspaceId}/accounts`).set(t.authHeaders)
+    .send({ email: `dup+${tag()}@test.local`, fullName: 'Someone Else', name: 'bohema', revenueSplitPct: 10 })
+    .expect(400);
+  assert.deepEqual(clash.body.fields, ['name']);
+
+  // Renaming into the name is the same mistake by another route.
+  const other = await createAccount(app, t, { name: `Dina ${tag()}` });
+  const renamed = await request(app).patch(`/workspaces/${t.workspaceId}/accounts/${other.id}`)
+    .set(t.authHeaders).send({ name: 'Bohema' }).expect(400);
+  assert.deepEqual(renamed.body.fields, ['name']);
+
+  // A creator may keep its own name, and an archived name frees up again.
+  await request(app).patch(`/workspaces/${t.workspaceId}/accounts/${first.id}`)
+    .set(t.authHeaders).send({ name: 'Bohema', handle: 'bohema' }).expect(200);
+  await request(app).patch(`/workspaces/${t.workspaceId}/accounts/${first.id}`)
+    .set(t.authHeaders).send({ status: 'archived' }).expect(200);
+  await request(app).patch(`/workspaces/${t.workspaceId}/accounts/${other.id}`)
+    .set(t.authHeaders).send({ name: 'Bohema' }).expect(200);
+});
+
 test('a new login needs a password; an existing user is attached without one', async () => {
   const t = await createTenant(app);
   const email = `nopw+${tag()}@test.local`;
