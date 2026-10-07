@@ -94,6 +94,25 @@ router.get('/:id', requirePermission('accounts.view'), asyncHandler(async (req, 
   res.json(data);
 }));
 
+/**
+ * Is another live creator already called this?
+ *
+ * Two creators under one name in one agency is always a mistake: the console
+ * lists them by name, so the duplicate is invisible afterwards, and every
+ * payment taken against the wrong one scores on the wrong split. OnlyElite
+ * carried a duplicate for three weeks before anyone noticed.
+ *
+ * Archived records are excluded, so a retired name can be reused and so a
+ * merged-away duplicate never blocks its own survivor.
+ */
+async function nameIsTaken(client, workspaceId, name, exceptAccountId) {
+  return (await client.query(
+    `SELECT 1 FROM accounts
+      WHERE workspace_id = $1 AND lower(name) = lower($2)
+        AND status <> 'archived' AND ($3::uuid IS NULL OR id <> $3::uuid)`,
+    [workspaceId, name.trim(), exceptAccountId])).rowCount > 0;
+}
+
 // POST /  { email, fullName, name, handle?, country?, revenueSplitPct? }
 // Creates the owner's login, their access, and the account in one go. A login
 // that did not exist is created without a password and invited: the owner sets
@@ -121,6 +140,9 @@ router.post('/', requirePermission('accounts.manage'), asyncHandler(async (req, 
     if (grant.err) return { err: `this person is already a ${grant.role} here`, fields: ['email'] };
     const existing = (await c.query('SELECT 1 FROM accounts WHERE workspace_id=$1 AND user_id=$2', [wid(req), grant.userId])).rows[0];
     if (existing) return { err: 'this person already owns an account here', fields: ['email'] };
+    if (await nameIsTaken(c, wid(req), name, null)) {
+      return { err: 'a creator with this name already exists here', fields: ['name'] };
+    }
     const row = (await c.query(
       `INSERT INTO accounts (workspace_id, user_id, name, handle, country, revenue_split_pct, pay_model, salary_amount)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
@@ -177,6 +199,11 @@ router.patch('/:id', requirePermission('accounts.manage'), asyncHandler(async (r
       const problem = await splitTooHigh(c, wid(req), newSplit);
       if (problem) return { err: problem };
     }
+    // Renaming into an existing name would recreate the duplicate the create
+    // path refuses.
+    if ('name' in body && await nameIsTaken(c, wid(req), body.name, req.params.id)) {
+      return { err: 'a creator with this name already exists here', fields: ['name'] };
+    }
     const row = (await c.query(
       `UPDATE accounts SET ${sets.join(', ')} WHERE workspace_id = $${vals.length - 1} AND id = $${vals.length} RETURNING *`, vals)).rows[0];
     if (!row) return { notFound: true };
@@ -184,7 +211,7 @@ router.patch('/:id', requirePermission('accounts.manage'), asyncHandler(async (r
     return { row: { ...row, owner_name: owner.full_name, owner_email: owner.email } };
   });
   if (out.notFound) return res.status(404).json({ error: 'not_found' });
-  if (out.err) return badRequest(res, out.err, ['revenueSplitPct']);
+  if (out.err) return badRequest(res, out.err, out.fields || ['revenueSplitPct']);
   await audit({
     workspaceId: wid(req), actorUserId: uid(req),
     action: body.status === 'archived' ? 'account.archive' : 'account.update',
