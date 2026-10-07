@@ -5,11 +5,15 @@ import { workspacePath } from '../workspacePath';
 export interface AnalyticsReport {
   range: { from: string; to: string; days: number };
   scope: 'agency' | 'agent' | 'account';
-  timeseries: Array<{ d: string; gross: number; net: number }>;
+  timeseries: Array<{ d: string; gross?: number; net: number }>;
   // The agency-side figures below are omitted for a scoped caller (an agent or
   // an account owner): how the agency's cut is divided is not theirs to see.
+  // Gross and every fee figure go with them — a scoped caller reads net only,
+  // because gross beside net gives away the platform fee by subtraction. For
+  // them every money figure here, `aov` and `revenuePerLink` included, is on a
+  // net basis.
   headline: {
-    gross: number;
+    gross?: number;
     net: number;
     platformFee?: number;
     accountPayout?: number;
@@ -23,7 +27,7 @@ export interface AnalyticsReport {
   reversals: {
     count: number;
     valueReversed: number;
-    feeCost: number;
+    feeCost?: number;
     ratePct: number;
     rateValuePct: number;
     byBearer?: { account: number; agency: number };
@@ -58,7 +62,7 @@ export interface AnalyticsReport {
     categories: Array<{ category: string; revenue: number }>;
     newVsReturning: { newRev: number; retRev: number };
   };
-  /** 7 rows (Sunday first) × 24 hours of gross revenue. */
+  /** 7 rows (Sunday first) × 24 hours of revenue, on the caller's basis. */
   heatmap: number[][];
 }
 

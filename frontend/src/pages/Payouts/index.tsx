@@ -56,20 +56,45 @@ function MyEarnings() {
   if (isError || !earnings) return <div>{header}<ErrorCard message="Couldn't load your earnings." /></div>;
 
   const { period, balance } = earnings;
+  const onSalary = earnings.payModel === 'salary';
+  // Net revenue is the pot; your pay is your slice of it. Naming both "earnings"
+  // is what made creators read the pot as their own money.
+  const shareLabel = earnings.role === 'agent' ? 'Your commission' : 'Your share';
   return (
     <div>
       {header}
       <StatGrid>
-        <StatCard label="Sales after fees" value={<Money amount={period.afterFees} direction="in" emphasis />} sub={`${period.sales} paid sales · what reached the agency`} />
-        <StatCard label="Your commission" value={<Money amount={period.earned} direction="in" />} sub={`${period.yourRatePct}% of after-fee sales`} />
-        <StatCard label="Still owed to you" value={<Money amount={balance.owed} direction="in" />} sub="Across all periods, not yet paid out" />
-        <StatCard label="Paid to date" value={<Money amount={balance.paidToDate} />} sub="Everything already paid out" />
-        <StatCard label="Your rate" value={`${period.yourRatePct}%`} sub="Of the amount left after fees" />
+        <StatCard label="Net revenue" value={<Money amount={period.netRevenue} direction="in" emphasis />}
+          sub={`${period.sales} paid sales · revenue after all fees`} />
+        {onSalary ? (
+          <StatCard label="Your salary" value={<Money amount={earnings.salaryAmount ?? 0} direction="in" />}
+            sub="Fixed amount for each payout period" />
+        ) : (
+          <>
+            <StatCard label={shareLabel} value={<Money amount={period.earned} direction="in" />}
+              sub={`${period.yourRatePct}% of net revenue`} />
+            <StatCard label="Still owed to you" value={<Money amount={balance.owed} direction="in" />}
+              sub="Across all periods, not yet paid out" />
+            <StatCard label="Paid to date" value={<Money amount={balance.paidToDate} />}
+              sub="Everything already paid out" />
+          </>
+        )}
       </StatGrid>
       <div className="card">
-        <div className="sechead">How this period adds up</div>
-        <DetailRow label="Agency received after fees"><Money amount={period.afterFees} direction="in" /></DetailRow>
-        <DetailRow label={`Your ${period.yourRatePct}%`}><Money amount={period.earned} direction="in" emphasis /></DetailRow>
+        <div className="sechead">How your pay is worked out</div>
+        {onSalary ? (
+          <>
+            <DetailRow label="Net revenue in this period"><Money amount={period.netRevenue} direction="in" /></DetailRow>
+            <DetailRow label="Your salary each payout period"><Money amount={earnings.salaryAmount ?? 0} direction="in" emphasis /></DetailRow>
+            <p className="sub">You are paid a fixed salary, so your pay does not rise or fall with net revenue.</p>
+          </>
+        ) : (
+          <>
+            <DetailRow label="Net revenue — what is left after all fees"><Money amount={period.netRevenue} direction="in" /></DetailRow>
+            <DetailRow label={`${shareLabel} — ${period.yourRatePct}% of net revenue`}><Money amount={period.earned} direction="in" emphasis /></DetailRow>
+            <p className="sub">Your pay is worked out from net revenue, not from the price the customer paid.</p>
+          </>
+        )}
       </div>
     </div>
   );

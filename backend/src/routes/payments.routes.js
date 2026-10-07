@@ -41,6 +41,13 @@ const SELECT = `
 
 // Whether the platform fee is shown depends on who asks: an agent or an owner
 // sees the payment, not what the agency was charged for it.
+//
+// No fee figure of any kind reaches a scoped caller — not the platform fee,
+// not its margin or PSP parts, and not a combined total.
+//
+// `amount` is the sale price and stays for everyone: an agent sets it when
+// they create the link and quotes it to the customer, and an unsettled
+// payment has no net figure to show instead.
 function publicPayment(p, { seesFees }) {
   return {
     id: p.id, amount: Number(p.amount), currency: p.currency, status: p.status,
@@ -210,9 +217,9 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
   const afterFees = Number(out.row.after_fees);
   const seesFees = hasPermission(req.access, 'data.view_all');
   res.json({
-    grossContent,
-    ...(seesFees ? { platformFees, netProfit: grossContent - platformFees } : {}),
-    ...(!seesFees ? { afterFees } : {}),
+    // An agent or creator gets the net figure only. Pairing it with gross
+    // would hand them the platform fee by subtraction.
+    ...(seesFees ? { grossContent, platformFees, netProfit: grossContent - platformFees } : { afterFees }),
     approvedPayments: out.row.approved_payments,
     attempts: out.row.attempts,
     approvalRate: out.row.attempts ? Math.round((out.row.approved_payments / out.row.attempts) * 100) : 0,

@@ -2,8 +2,11 @@
 // "What am I owed?" — self-scoped earnings for the signed-in person.
 //
 // An agent sees ONLY their own commission, an account owner ONLY their own
-// share. Neither sees the other's cut, the agency's margin, or the itemised
-// fee breakdown.
+// share. Neither sees the other's cut, the agency's margin, or any fee figure.
+//
+// Net revenue is the only revenue figure these roles get. Gross and the fee
+// total are deliberately absent: either one alongside net gives away the
+// platform fee by subtraction.
 const express = require('express');
 const { withTransaction } = require('../db');
 const { requirePermission } = require('../middleware');
@@ -29,14 +32,20 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
     const scopeCol = isAccount ? 're.account_id' : 're.agent_id';
     const scopeVal = isAccount ? scope.accountId : scope.agentId;
 
-    const rate = isAccount
-      ? (await c.query('SELECT revenue_split_pct AS pct FROM accounts WHERE id = $1', [scopeVal])).rows[0]
-      : (await c.query('SELECT commission_pct AS pct FROM agents WHERE id = $1', [scopeVal])).rows[0];
+    // A salaried creator scores 0 on every sale, exactly as fn_post_sale
+    // computes it. Reporting their revenue_split_pct here would promise a
+    // share of net revenue that the ledger never pays them.
+    const profile = isAccount
+      ? (await c.query(
+        `SELECT CASE WHEN pay_model = 'salary' THEN 0 ELSE COALESCE(revenue_split_pct, 0) END AS pct,
+                pay_model, salary_amount
+           FROM accounts WHERE id = $1`, [scopeVal])).rows[0]
+      : (await c.query(
+        'SELECT commission_pct AS pct, NULL AS pay_model, NULL AS salary_amount FROM agents WHERE id = $1',
+        [scopeVal])).rows[0];
 
     const period = (await c.query(
       `SELECT COUNT(*) FILTER (WHERE re.entry_type='sale')                          AS sales,
-              COALESCE(SUM(re.gross)         FILTER (WHERE re.entry_type='sale'),0) AS gross,
-              COALESCE(SUM(re.platform_fee)  FILTER (WHERE re.entry_type='sale'),0) AS deductions,
               COALESCE(SUM(re.distributable) FILTER (WHERE re.entry_type='sale'),0) AS distributable,
               COALESCE(SUM(${amountCol}),0)                                         AS earned
          FROM revenue_entries re
@@ -54,21 +63,24 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
          JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
         WHERE ${scopeCol} = $1`, [scopeVal])).rows[0];
 
-    return { isAccount, rate: n(rate && rate.pct), period, balance };
+    return { isAccount, profile, period, balance };
   });
 
   if (!data) return res.status(404).json({ error: 'no_profile' });
 
-  const { isAccount, rate, period, balance } = data;
+  const { isAccount, profile, period, balance } = data;
+  const onSalary = isAccount && profile.pay_model === 'salary';
   res.json({
     range: { from: F, to: T },
     role: isAccount ? 'account_owner' : 'agent',
+    payModel: isAccount ? profile.pay_model : null,
+    // A salaried creator is owed a fixed amount per payout period, not a cut
+    // of net revenue, so their terms are the salary rather than a rate.
+    salaryAmount: onSalary ? r2(n(profile.salary_amount)) : null,
     period: {
       sales: n(period.sales),
-      gross: r2(n(period.gross)),
-      deductions: r2(period.deductions),      // processing + platform, aggregated
-      afterFees: r2(period.distributable),    // the base the rate is applied to
-      yourRatePct: rate,
+      netRevenue: r2(period.distributable),   // the base the rate is applied to
+      yourRatePct: n(profile.pct),
       earned: r2(period.earned),
     },
     balance: { owed: r2(balance.unpaid), paidToDate: r2(balance.paid) },

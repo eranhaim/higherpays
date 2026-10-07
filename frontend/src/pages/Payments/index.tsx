@@ -146,7 +146,7 @@ export default function PaymentsPage() {
       key: 'gross', label: 'Gross',
       card: canScope
         ? <StatCard isUnknown={statsUnknown} label="Gross revenue" value={<Money amount={summary?.grossContent ?? 0} currency={summary?.currency} direction="in" />} sub="Before fees" />
-        : <StatCard isUnknown={statsUnknown} label="After fees" value={<Money amount={summary?.afterFees ?? 0} currency={summary?.currency} direction="in" />} sub="What reached the agency after all fees" />,
+        : <StatCard isUnknown={statsUnknown} label="Net revenue" value={<Money amount={summary?.afterFees ?? 0} currency={summary?.currency} direction="in" />} sub="Revenue after all fees — your pay is based on this" />,
     },
     ...(canScope ? [{
       key: 'fees', label: 'Platform fees',
@@ -223,7 +223,7 @@ export default function PaymentsPage() {
     },
     { key: 'category', header: 'Category', render: (p) => p.category ?? '—' },
     {
-      key: 'amount', header: canScope ? 'Amount' : 'After fees', sortKey: 'amount',
+      key: 'amount', header: canScope ? 'Amount' : 'Net revenue', sortKey: 'amount',
       render: (p) => <Money amount={canScope ? p.amount : (p.amountAfterFees ?? p.amount)} currency={p.currency}
         direction={isReversed(p.status) ? 'out' : p.status === 'paid' && !p.reviewRequired ? 'in' : undefined} />,
     },
@@ -454,7 +454,7 @@ export default function PaymentsPage() {
                 <DetailRow label={labels.agent}>{detail.agent ?? '—'}</DetailRow>
               </>
             )}
-            <DetailRow label={detail.amountAfterFees != null ? 'After fees' : 'Amount'}><Money amount={detail.amountAfterFees ?? detail.amount} currency={detail.currency}
+            <DetailRow label={detail.amountAfterFees != null ? 'Net revenue' : 'Amount'}><Money amount={detail.amountAfterFees ?? detail.amount} currency={detail.currency}
               direction={detail.reviewRequired ? undefined : 'in'} /></DetailRow>
             {detail.platformFee != null && (
               <>

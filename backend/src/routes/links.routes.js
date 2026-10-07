@@ -7,6 +7,7 @@ const { audit } = require('../util/audit');
 const { badRequest } = require('../util/validate');
 const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const { resolveDataScope, scopeParams } = require('../auth/dataScope');
+const { hasPermission } = require('../auth/permissions');
 const { status: vocab } = require('../schema/entities');
 const config = require('../config');
 const linksService = require('../services/links.service');
@@ -221,7 +222,9 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
     totalLinks: row.total_links,
     paidLinks: row.paid_links,
     successfulPayments: row.successful_payments,
-    grossSales: Number(row.gross_sales),
+    // An agent or creator gets the net figure only. Reporting gross beside it
+    // hands them the platform fee by subtraction.
+    ...(hasPermission(req.access, 'data.view_all') ? { grossSales: Number(row.gross_sales) } : {}),
     netAfterFees: Number(row.net_after_fees),
     priceBands: [
       { min: 0, max: 50, count: row.band_0_50 },

@@ -48,7 +48,11 @@ test('an account owner sees their own analytics and none of the agency figures; 
 
   const own = (await request(app).get(`/workspaces/${t.workspaceId}/analytics`).set(mine.ownerHeaders).expect(200)).body;
   assert.equal(own.scope, 'account');
-  assert.equal(own.headline.gross, 50);
+  // Net revenue is the only revenue figure a creator gets. Gross used to sit
+  // beside it here, which handed over the platform fee by subtraction.
+  assert.equal(own.headline.gross, undefined);
+  assert.ok(own.headline.net > 0 && own.headline.net < 50, 'net is the after-fee figure for the 50 sale');
+  assert.equal(own.headline.platformFee, undefined);
   assert.equal(own.headline.agencyKeep, undefined);
   assert.deepEqual(own.agents, []);
 
