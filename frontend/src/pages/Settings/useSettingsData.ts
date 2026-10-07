@@ -44,17 +44,30 @@ export function useGeneralSettings() {
   return { workspace, linkLimits, update, saveLinkLimits };
 }
 
-export interface FeeAmounts {
+/** Everything a HigherPays operator may change about what an agency is charged. */
+export interface RateCardInput {
+  pspRatePct: number;
+  settlementPct: number;
+  marginRatePct: number;
   fixedFee: number;
+  checkoutFee: number;
   refundFee: number;
   chargebackFee: number;
   declineFee: number;
+  currency: string;
 }
 
 /**
  * The fees HigherPays charges this agency. Only a platform admin may change
  * them, and both writes are versioned rows, so each one carries the values it
  * does not touch — sending zeros would silently drop the margin or the reserve.
+ *
+ * Every call here is under `/platform`, which the server gates on
+ * `requirePlatformAdmin`. That is deliberate: the margin and the rate
+ * composition are HigherPays' own numbers, so an agency role must get a 403
+ * rather than a hidden control. Never source these values from the
+ * workspace-scoped `/platform-fee` route, which answers any `payments.view`
+ * caller.
  */
 export function usePlatformFees() {
   const { user, activeWorkspaceId } = useCurrentSession();
@@ -66,19 +79,34 @@ export function usePlatformFees() {
     queryFn: () => platformApi.getWorkspace(activeWorkspaceId as string),
     enabled: canEdit,
   });
+  const overview = useQuery({
+    queryKey: ['platform-overview'],
+    queryFn: () => platformApi.overview(),
+    enabled: canEdit,
+  });
 
   const save = useMutation({
-    mutationFn: async (input: FeeAmounts) => {
+    mutationFn: async (input: RateCardInput) => {
       const id = activeWorkspaceId as string;
       const rate = detail.data?.feeHistory[0];
       if (!rate) throw new Error('This agency has no rate card yet.');
       const settlement = detail.data?.settlementFee;
 
-      if (input.fixedFee !== rate.pspFixedFee) {
+      // Denomination first: a rate row priced in the old currency would be
+      // written and then reinterpreted by the change.
+      if (input.currency !== detail.data?.currency) {
+        await platformApi.setCurrency(id, input.currency);
+      }
+      const rateChanged = input.pspRatePct !== rate.pspRatePct
+        || input.settlementPct !== (rate.settlementPct ?? 0)
+        || input.marginRatePct !== rate.marginRatePct
+        || input.fixedFee !== rate.pspFixedFee
+        || input.checkoutFee !== rate.checkoutFee;
+      if (rateChanged) {
         await platformApi.setPlatformFee(id, {
-          pspRatePct: rate.pspRatePct, settlementPct: rate.settlementPct ?? 0,
-          marginRatePct: rate.marginRatePct, pspFixedFee: input.fixedFee,
-          checkoutFee: rate.checkoutFee,
+          pspRatePct: input.pspRatePct, settlementPct: input.settlementPct,
+          marginRatePct: input.marginRatePct, pspFixedFee: input.fixedFee,
+          checkoutFee: input.checkoutFee,
         });
       }
       const reversalsChanged = !settlement
@@ -98,10 +126,19 @@ export function usePlatformFees() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['platform-workspace', activeWorkspaceId] });
       qc.invalidateQueries({ queryKey: ['platform-fee', activeWorkspaceId] });
+      // A currency change renames the unit every amount on screen is drawn in,
+      // and the sidebar reads it from the session rather than from a query.
+      qc.invalidateQueries({ queryKey: ['workspace', activeWorkspaceId] });
+      qc.invalidateQueries({ queryKey: ['auth-me'] });
     },
   });
 
-  return { canEdit, detail, save };
+  // Until the operator's currency list lands, the only safe option is the one
+  // the agency already uses.
+  const currencies = overview.data?.supportedCurrencies
+    ?? (detail.data ? [detail.data.currency] : []);
+
+  return { canEdit, detail, currencies, save };
 }
 
 export function useCategories() {

@@ -65,6 +65,52 @@ test('only an unused workspace can change currency and links must match it', asy
     .set(platform.headers).send({ currency: 'GBP' }).expect(409);
 });
 
+// The rate card is edited from the agency's own Settings page, so the gate is
+// no longer "a page only operators can open". A workspace_owner and a
+// workspace_admin hold every workspace permission there is; only
+// requirePlatformAdmin keeps them away from HigherPays' margin and from the
+// rates the agency is billed at.
+test('the rate card is closed to the agency it bills, for reads and writes', async () => {
+  const tenant = await createTenant(app, { pspRatePct: 8, settlementPct: 0, marginRatePct: 5 });
+  const agencyAdmin = await addMember(app, tenant, 'workspace_admin');
+  const platform = await getPlatformAdmin(app);
+
+  for (const headers of [tenant.authHeaders, agencyAdmin.headers]) {
+    const read = await request(app)
+      .get(`/platform/workspaces/${tenant.workspaceId}`).set(headers).expect(403);
+    assert.equal(read.body.error, 'not_platform_admin');
+    assert.equal(read.body.marginRatePct, undefined);
+    assert.equal(read.body.feeHistory, undefined);
+
+    const rates = await request(app)
+      .put(`/platform/workspaces/${tenant.workspaceId}/platform-fee`).set(headers)
+      .send({ pspRatePct: 1, settlementPct: 0, marginRatePct: 0, pspFixedFee: 0, checkoutFee: 0, feeModel: 'flat' })
+      .expect(403);
+    assert.equal(rates.body.error, 'not_platform_admin');
+
+    const reversals = await request(app)
+      .put(`/platform/workspaces/${tenant.workspaceId}/settlement-fee`).set(headers)
+      .send({ chargebackFee: 0, refundFee: 0, declineFee: 0, settlementFeePct: 0, settlementFeeFlat: 0, reservePct: 0, reserveReleaseDays: 0 })
+      .expect(403);
+    assert.equal(reversals.body.error, 'not_platform_admin');
+
+    const currency = await request(app)
+      .patch(`/platform/workspaces/${tenant.workspaceId}/currency`).set(headers)
+      .send({ currency: 'USD' }).expect(403);
+    assert.equal(currency.body.error, 'not_platform_admin');
+  }
+
+  // Every rejected write left the rate card exactly as onboarding set it.
+  const detail = (await request(app)
+    .get(`/platform/workspaces/${tenant.workspaceId}`).set(platform.headers).expect(200)).body;
+  assert.equal(detail.currency, 'EUR');
+  assert.equal(detail.feeHistory.length, 1);
+  assert.equal(detail.feeHistory[0].pspRatePct, 8);
+  assert.equal(detail.feeHistory[0].marginRatePct, 5);
+  assert.equal(detail.settlementFee.refundFee, 15);
+  assert.equal(detail.settlementFee.chargebackFee, 60);
+});
+
 test('link creation validates currency after acquiring the workspace lock', async () => {
   const tenant = await createTenant(app);
   const account = await createAccount(app, tenant);

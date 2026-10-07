@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { platformApi, type PlatformWorkspace, type PlatformOverview, type OnboardAgencyInput, type PlatformFeeRate } from '../../api/endpoints';
+import { platformApi, type PlatformWorkspace, type PlatformOverview, type OnboardAgencyInput } from '../../api/endpoints';
 import { useAuthStore } from '../../store/auth';
 
 export interface UsePlatformDataResult {
@@ -12,8 +12,6 @@ export interface UsePlatformDataResult {
   isError: boolean;
   onboardAgency: (input: OnboardAgencyInput) => Promise<{ workspaceId: string; webhookEndpointId: string }>;
   setStatus: (id: string, status: 'active' | 'suspended') => Promise<unknown>;
-  setCurrency: (id: string, currency: string) => Promise<unknown>;
-  setPlatformFee: (id: string, input: PlatformFeeRate) => Promise<unknown>;
 }
 
 export function usePlatformData(): UsePlatformDataResult {
@@ -39,14 +37,6 @@ export function usePlatformData(): UsePlatformDataResult {
       invalidate();
     },
   });
-  const fee = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: PlatformFeeRate }) => platformApi.setPlatformFee(id, input),
-    onSuccess: invalidate,
-  });
-  const currency = useMutation({
-    mutationFn: ({ id, currency }: { id: string; currency: string }) => platformApi.setCurrency(id, currency),
-    onSuccess: invalidate,
-  });
 
   return {
     isPlatformAdmin,
@@ -58,7 +48,5 @@ export function usePlatformData(): UsePlatformDataResult {
     isError: workspaces.isError,
     onboardAgency: (input) => onboard.mutateAsync(input),
     setStatus: (id, s) => status.mutateAsync({ id, status: s }),
-    setCurrency: (id, nextCurrency) => currency.mutateAsync({ id, currency: nextCurrency }),
-    setPlatformFee: (id, input) => fee.mutateAsync({ id, input }),
   };
 }
