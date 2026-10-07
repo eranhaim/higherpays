@@ -1,8 +1,9 @@
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
-  linksApi, accountsApi, workspacesApi,
+  linksApi, accountsApi, workspacesApi, paymentsApi,
   type ListLinksQuery, type PaymentLink, type PaymentLinkDetail, type LinksSummary, type Account, type LinkLimits, type LinkType, type ReassignInput,
+  type Payment,
 } from '../../api/endpoints';
 
 export interface CreateLinkFormInput {
@@ -116,6 +117,18 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     setArchived: async (id, archived) => { await archive.mutateAsync({ id, archived }); },
     reassignLink: async (id, input) => { await reassign.mutateAsync({ id, input }); },
   };
+}
+
+/**
+ * The payment that is waiting for its details on a paid link.
+ *
+ * The link payload carries no payment id, so it is found by its reference —
+ * the same lookup the page used to do by navigating to Payments with a search
+ * term. A `pending` link has exactly one such payment.
+ */
+export async function findPaymentNeedingDetails(referenceId: string): Promise<Payment | null> {
+  const page = await paymentsApi.list(null, { q: referenceId, needsDetails: true });
+  return page.items[0] ?? null;
 }
 
 export function useLinkDetail(id: string | null) {

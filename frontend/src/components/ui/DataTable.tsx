@@ -16,12 +16,6 @@ export interface Column<T> {
   filter?: ReactNode;
   /** Marks the header while its filter is narrowing the list. */
   isFiltered?: boolean;
-  /**
-   * Kept out of the phone card's expanded field list. For a leading row
-   * control (e.g. a View button) that already shows in the card summary and
-   * would otherwise repeat as a labelled field.
-   */
-  hideInMobileDetails?: boolean;
 }
 
 export interface SortState {
@@ -44,11 +38,15 @@ interface DataTableProps<T> {
   /** Given a column's `sortKey`. The page decides the new direction. */
   onSort?: (sortKey: string) => void;
   /**
-   * Optional compact phone layout. Its summary is always shown; the shared
-   * table fields are revealed only after the caller's expand control is used.
+   * Optional compact phone layout. A page with a detail dialog renders only
+   * the summary and lets the dialog hold the full record; a page without one
+   * can use `state` to expand the remaining fields in place.
    */
   mobileSummary?: (row: T, state: { expanded: boolean; toggle: () => void }) => ReactNode;
 }
+
+/** Enough placeholder rows to hold the table's height while it loads. */
+const SKELETON_ROWS = [0, 1, 2, 3, 4, 5];
 
 /**
  * Type-safe wrapper around the shared `.tablewrap > table` styles. Handles
@@ -105,9 +103,13 @@ export function DataTable<T>(props: DataTableProps<T>) {
           </thead>
           <tbody>
             {isLoading ? (
-              <tr>
-                <td colSpan={columns.length} className="table-note">Loading…</td>
-              </tr>
+              // A cell per column rather than one colSpan note, so the table
+              // keeps its column widths and height while it loads.
+              SKELETON_ROWS.map((n) => (
+                <tr key={n} aria-busy="true">
+                  {columns.map((c) => <td key={c.key}><span className="skeleton" /></td>)}
+                </tr>
+              ))
             ) : rows.length === 0 ? (
               <tr>
                 <td colSpan={columns.length}>
@@ -119,20 +121,14 @@ export function DataTable<T>(props: DataTableProps<T>) {
                 <tr
                   key={keyFor(row, index)}
                   className={onRowClick ? 'clickable' : undefined}
-                  // A row is only reachable by keyboard if it says it is one.
-                  // Without this the detail modals behind onRowClick are
-                  // mouse-only.
-                  tabIndex={onRowClick ? 0 : undefined}
-                  role={onRowClick ? 'button' : undefined}
+                  // A mouse shortcut only. The row is not role="button" and not
+                  // in the tab order: claiming that breaks the table's row and
+                  // cell semantics, and every clickable list has an explicit
+                  // View control in its first column for the keyboard path.
                   // A button or link inside the row is its own action; clicking
                   // it must not also open the row.
                   onClick={onRowClick ? (e) => {
                     if ((e.target as HTMLElement).closest('button, a, input, select, label')) return;
-                    onRowClick(row);
-                  } : undefined}
-                  onKeyDown={onRowClick ? (e) => {
-                    if (e.key !== 'Enter' && e.key !== ' ') return;
-                    e.preventDefault();
                     onRowClick(row);
                   } : undefined}
                 >
@@ -148,36 +144,27 @@ export function DataTable<T>(props: DataTableProps<T>) {
       {mobileSummary && (
         <div className="mobile-card-list">
           {isLoading ? (
-            <div className="mobile-card-note">Loading…</div>
+            SKELETON_ROWS.map((n) => (
+              <div className="mobile-data-card" key={n} aria-busy="true">
+                <span className="skeleton" />
+                <span className="skeleton" />
+              </div>
+            ))
           ) : rows.length === 0 ? (
             <EmptyState title={emptyTitle} hint={emptyHint} action={emptyAction} />
           ) : rows.map((row, index) => {
             const key = keyFor(row, index);
             const expanded = expandedMobileRows.has(key);
             return (
-              <div
-                className={`mobile-data-card${onRowClick ? ' clickable' : ''}`}
-                key={key}
-                // Mirrors the desktop <tr>: the card opens the detail modal. The
-                // expand chevron and any button/link/field inside it are their
-                // own actions, so a tap on one must not also open the modal.
-                role={onRowClick ? 'button' : undefined}
-                tabIndex={onRowClick ? 0 : undefined}
-                onClick={onRowClick ? (e) => {
-                  if ((e.target as HTMLElement).closest('button, a, input, select, label')) return;
-                  onRowClick(row);
-                } : undefined}
-                onKeyDown={onRowClick ? (e) => {
-                  if (e.key !== 'Enter' && e.key !== ' ') return;
-                  if ((e.target as HTMLElement).closest('button, a, input, select, label')) return;
-                  e.preventDefault();
-                  onRowClick(row);
-                } : undefined}
-              >
+              // Deliberately not clickable as a whole. A phone card already
+              // holds two or three real buttons, so making the card a fourth
+              // target meant guessing what a tap would do; the summary's own
+              // View control is the way in.
+              <div className="mobile-data-card" key={key}>
                 {mobileSummary(row, { expanded, toggle: () => toggleMobileRow(key) })}
                 {expanded && (
                   <div className="mobile-data-card-details">
-                    {columns.filter((column) => !column.hideInMobileDetails).map((column) => (
+                    {columns.map((column) => (
                       <div className="mobile-data-field" key={column.key}>
                         <span>{column.header}</span>
                         <div>{column.render(row)}</div>
@@ -247,7 +234,7 @@ function HeaderFilter({ label, isActive, children }: { label: string; isActive?:
         ▾
       </button>
       {at && createPortal(
-        <div ref={popRef} className="viewpop th-filter-pop" style={{ position: 'fixed', top: at.top, left: at.left }} role="dialog" aria-modal="true" aria-label={`Filter by ${label}`}>
+        <div ref={popRef} className="viewpop th-filter-pop" style={{ position: 'fixed', top: at.top, left: at.left }} role="group" aria-label={`Filter by ${label}`}>
           {children}
           <div className="viewpop-actions">
             <span className="sub">{label}</span>
