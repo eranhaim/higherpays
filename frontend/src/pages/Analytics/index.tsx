@@ -20,6 +20,13 @@ import {
 
 const pct = (v: number) => `${v.toFixed(1)}%`;
 
+type TabId = 'revenue' | 'customers';
+
+const TABS: { id: TabId; label: string }[] = [
+  { id: 'revenue', label: 'Revenue' },
+  { id: 'customers', label: 'Customers & risk' },
+];
+
 function share(part: number, total: number): number {
   return total > 0 ? (part / total) * 100 : 0;
 }
@@ -136,6 +143,7 @@ export default function AnalyticsPage() {
 
   const [filters, setFilters] = useState<AnalyticsFilters>(defaultFilters);
   const [metric, setMetric] = useState<'gross' | 'net'>('gross');
+  const [tab, setTab] = useState<TabId>('revenue');
 
   const { dateWindow, report, previous, isLoading, isError, accounts, agents } = useAnalyticsData(filters, canScope);
 
@@ -191,7 +199,7 @@ export default function AnalyticsPage() {
 
   if (!dateWindow) return <div>{header}<ErrorCard message="Choose a valid date range." /></div>;
   if (isLoading) return <div>{header}<LoadingCard /></div>;
-  if (isError || !report) return <div>{header}<ErrorCard message="Could not load analytics." /></div>;
+  if (isError || !report) return <div>{header}<ErrorCard message="Couldn't load analytics." /></div>;
 
   const h = report.headline;
   const f = report.funnel;
@@ -239,9 +247,20 @@ export default function AnalyticsPage() {
         <StatCard label="Unique buyers" value={h.uniqueBuyers} sub={buyersDelta?.text} trend={buyersDelta?.trend} />
       </StatGrid>
 
-      <div className="stack">
+      {/* Thirteen sections on one scroll was the page nobody read to the end
+          of. Two tabs on the same route: the money, and who it came from. */}
+      <div className="tabbar" role="tablist" aria-label="Analytics sections">
+        {TABS.map((t) => (
+          <button key={t.id} type="button" role="tab" aria-selected={tab === t.id}
+            className={`btn ghost tgl${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'revenue' && <div className="stack">
         <div className="card">
-          <div className="sechead row">
+          <h2 className="sechead row">
             <span>Revenue over time</span>
             {canScope && (
               <>
@@ -249,14 +268,14 @@ export default function AnalyticsPage() {
                 <button className={`btn ghost tgl${metric === 'net' ? ' active' : ''}`} onClick={() => setMetric('net')}>Net</button>
               </>
             )}
-          </div>
+          </h2>
           <BarChart points={dailyBars(report.timeseries, dateWindow, canScope ? metric : 'net')} currency={currency} />
         </div>
 
         <div className={parts.length ? 'grid2' : undefined}>
           {parts.length > 0 && (
             <div className="card">
-              <div className="sechead">Where the money goes</div>
+              <h2 className="sechead">Where the money goes</h2>
               <div className="wf-bar">
                 {parts.map((part) => <span key={part.label} className={part.tone} style={{ width: `${share(part.amount, distributed)}%` }} />)}
               </div>
@@ -268,7 +287,7 @@ export default function AnalyticsPage() {
           )}
 
           <div className="card">
-            <div className="sechead">Link funnel</div>
+            <h2 className="sechead">Link funnel</h2>
             <div className="funnel-step">
               <span className="flbl">Created</span>
               <div className="fbar" style={{ width: '100%' }}>{f.created}</div>
@@ -291,36 +310,36 @@ export default function AnalyticsPage() {
         {canScope && (
           <>
             <section>
-              <div className="sechead">{labels.agent} leaderboard</div>
+              <h2 className="sechead">{labels.agent} leaderboard</h2>
               <DataTable columns={agentColumns} rows={report.agents.map((r, i) => ({ ...r, rank: i + 1 }))} rowKey={(_, i) => String(i)} emptyTitle="No sales in this period." />
             </section>
             <section>
-              <div className="sechead">{labels.account} performance</div>
+              <h2 className="sechead">{labels.account} performance</h2>
               <DataTable columns={accountColumns} rows={report.accounts} rowKey={(_, i) => String(i)} emptyTitle="No sales in this period." />
             </section>
           </>
         )}
+      </div>}
 
+      {tab === 'customers' && <div className="stack">
         <div className="grid2">
           <div className="card">
-            <div className="sechead">Customer value</div>
-            <StatGrid>
-              <StatCard label="Repeat rate" value={pct(cu.repeatRatePct)} />
-              <StatCard label="Buys per customer" value={cu.freq.toFixed(1)} />
-            </StatGrid>
-            <div className="sechead">Revenue concentration</div>
+            <h2 className="sechead">Customer value</h2>
+            <DetailRow label="Repeat rate">{pct(cu.repeatRatePct)}</DetailRow>
+            <DetailRow label="Buys per customer">{cu.freq.toFixed(1)}</DetailRow>
+            <h2 className="sechead">Revenue concentration</h2>
             <MetricRow label="Top 1% of customers" sharePct={cu.concentration.top1} value={`${pct(cu.concentration.top1)} of revenue`} />
             <MetricRow label="Top 5% of customers" sharePct={cu.concentration.top5} value={`${pct(cu.concentration.top5)} of revenue`} />
             <MetricRow label="Top 10% of customers" sharePct={cu.concentration.top10} value={`${pct(cu.concentration.top10)} of revenue`} />
           </div>
 
           <div className="card">
-            <div className="sechead">Revenue by category</div>
+            <h2 className="sechead">Revenue by category</h2>
             {cu.categories.length === 0 && <p className="sub">No completed sales in this period.</p>}
             {cu.categories.map((s) => (
               <MetricRow key={s.category} label={s.category} sharePct={share(s.revenue, categoryMax)} value={<Money amount={s.revenue} direction="in" />} />
             ))}
-            <div className="sechead">New vs returning</div>
+            <h2 className="sechead">New vs returning</h2>
             <MetricRow label="New customers" sharePct={share(cu.newVsReturning.newRev, newVsReturningTotal)}
               value={<><Money amount={cu.newVsReturning.newRev} direction="in" /> · {pct(share(cu.newVsReturning.newRev, newVsReturningTotal))}</>} />
             <MetricRow label="Returning customers" sharePct={share(cu.newVsReturning.retRev, newVsReturningTotal)}
@@ -329,19 +348,19 @@ export default function AnalyticsPage() {
         </div>
 
         <div className="card">
-          <div className="sechead">Reversal risk</div>
+          <h2 className="sechead">Reversal risk</h2>
           {rv.ratePct > 1 && (
             <div className="warnbar">Reversal rate is {pct(rv.ratePct)} — above the 1% threshold card networks monitor.</div>
           )}
-          <StatGrid>
-            <StatCard label="Rate by count" value={pct(rv.ratePct)} />
-            <StatCard label="Rate by value" value={pct(rv.rateValuePct)} />
-            {rv.feeCost !== undefined && <StatCard label="Fee cost" value={<Money amount={rv.feeCost} direction="out" />} />}
-            <StatCard label="Reversed value" value={<Money amount={rv.valueReversed} direction="out" />} />
-          </StatGrid>
+          <DetailRow label="Rate by count">{pct(rv.ratePct)}</DetailRow>
+          <DetailRow label="Rate by value">{pct(rv.rateValuePct)}</DetailRow>
+          {rv.feeCost !== undefined && (
+            <DetailRow label="Fee cost"><Money amount={rv.feeCost} direction="out" /></DetailRow>
+          )}
+          <DetailRow label="Reversed value"><Money amount={rv.valueReversed} direction="out" /></DetailRow>
           {byBearer && (
             <>
-              <div className="sechead">Who absorbs the loss</div>
+              <h2 className="sechead">Who absorbs the loss</h2>
               <MetricRow label={labels.accounts} sharePct={share(byBearer.account, lossTotal)} value={<Money amount={byBearer.account} direction="out" />} />
               <MetricRow label="Agency" sharePct={share(byBearer.agency, lossTotal)} value={<Money amount={byBearer.agency} direction="out" />} />
             </>
@@ -349,12 +368,12 @@ export default function AnalyticsPage() {
         </div>
 
         <div className="card">
-          <div className="sechead">When customers buy — day × hour</div>
+          <h2 className="sechead">When customers buy — day × hour</h2>
           <div className="tablewrap">
             <Heatmap grid={report.heatmap} currency={currency} />
           </div>
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

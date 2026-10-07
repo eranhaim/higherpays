@@ -10,7 +10,7 @@ export function PageHeader({ title, subtitle, actions }: PageHeaderProps) {
   return (
     <div className="pagehead">
       <div>
-        <h2>{title}</h2>
+        <h1>{title}</h1>
         {subtitle ? <p>{subtitle}</p> : null}
       </div>
       {actions ? <div className="pagehead-actions">{actions}</div> : null}

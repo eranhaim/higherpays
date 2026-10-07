@@ -46,11 +46,11 @@ function MyEarnings() {
   const [range, setRange] = useThisMonth();
   const { earnings, isLoading, isError } = useEarnings(range);
 
+  // The period is the only control on this page, so it belongs beside the
+  // title rather than in a filter bar of its own.
   const header = (
-    <>
-      <PageHeader title="Earnings" subtitle="What you earned in the selected period, and what you are still owed." />
-      <FilterBar><DateRangePicker value={range} onChange={setRange} /></FilterBar>
-    </>
+    <PageHeader title="Earnings" subtitle="What you earned in the selected period, and what you are still owed."
+      actions={<DateRangePicker value={range} onChange={setRange} />} />
   );
   if (isLoading) return <div>{header}<LoadingCard label="Loading your earnings…" /></div>;
   if (isError || !earnings) return <div>{header}<ErrorCard message="Couldn't load your earnings." /></div>;
@@ -81,7 +81,7 @@ function MyEarnings() {
         )}
       </StatGrid>
       <div className="card">
-        <div className="sechead">How your pay is worked out</div>
+        <h2 className="sechead">How your pay is worked out</h2>
         {onSalary ? (
           <>
             <DetailRow label="Net revenue in this period"><Money amount={period.netRevenue} direction="in" /></DetailRow>
@@ -121,14 +121,8 @@ function AgencyPayouts() {
   const canPay = can('revenue.manage');
 
   const header = (
-    <>
-      <PageHeader
-        title="Payouts"
-      />
-      <FilterBar>
-        <DateRangePicker value={range} onChange={setRange} />
-      </FilterBar>
-    </>
+    <PageHeader title="Payouts" subtitle="What the agency owes for the selected period, and what has already been settled."
+      actions={<DateRangePicker value={range} onChange={setRange} />} />
   );
 
   if (isLoading) return <div>{header}<LoadingCard label="Loading payout breakdown…" /></div>;
@@ -173,14 +167,13 @@ function AgencyPayouts() {
       <StatGrid>
         <StatCard label="Gross sales" value={<Money amount={data.summary.grossSales} direction="in" />} sub={`${data.summary.successfulSales} successful sales`} />
         <StatCard label="Net after platform fees" value={<Money amount={data.summary.distributable} direction="in" emphasis />} sub="Available to distribute" />
-        <StatCard label="Successful sales" value={data.summary.successfulSales} sub="Selected period" />
         <StatCard label="Currently owed" value={<Money amount={data.summary.currentlyOwed} direction="out" />} sub="Selected period, not yet settled" />
         <StatCard label="Paid to date" value={<Money amount={data.summary.paidToDate} />} sub="Recorded payouts across all periods" />
       </StatGrid>
 
       {(owedTotal > 0 || cash.heldInReserve > 0) && (
         <div className="card section">
-          <div className="sechead">Cash position</div>
+          <h2 className="sechead">Cash position</h2>
           <p className="sub">What reached you this period after fees, less the reserve MantaPay holds back, is what is available to settle today.</p>
           <div className="metric-row">
             <span className="ml wide">Received after fees</span>
@@ -188,7 +181,9 @@ function AgencyPayouts() {
             <span className="mv">{formatMoney(cash.received)}</span>
           </div>
           <div className="metric-row">
-            <span className="ml wide">Held in reserve</span>
+            {/* Named for its holder: the agency's own rolling reserve is a
+                separate, still-unbuilt line, and the two must not read alike. */}
+            <span className="ml wide">Held in reserve by MantaPay</span>
             <span className="mt"><span className="tone-accent" style={{ width: `${(cash.heldInReserve / cashScale) * 100}%` }} /></span>
             <span className="mv">{formatMoney(cash.heldInReserve)}</span>
           </div>
@@ -207,14 +202,14 @@ function AgencyPayouts() {
       )}
 
       <div className="card section">
-        <div className="sechead row">
+        <h2 className="sechead row">
           <span>{labels.account} payouts</span>
           {canPay && accountsOwed > 0 && (
             <button className="btn ghost small" onClick={() => setPending({ payeeType: 'account', label: `all ${labels.accounts.toLowerCase()}`, amount: accountsOwed, payeeCount: accountsWithBalance })}>
-              Mark all as settled
+              Record all payouts
             </button>
           )}
-        </div>
+        </h2>
         <div className="tablewrap flush mobile-cards">
           <table>
             <thead>
@@ -242,14 +237,14 @@ function AgencyPayouts() {
       </div>
 
       <div className="card section">
-        <div className="sechead row">
+        <h2 className="sechead row">
           <span>{labels.agent} payouts</span>
           {canPay && agentsOwed > 0 && (
             <button className="btn ghost small" onClick={() => setPending({ payeeType: 'agent', label: `all ${labels.agents.toLowerCase()}`, amount: agentsOwed, payeeCount: agentsWithBalance })}>
-              Mark all as settled
+              Record all payouts
             </button>
           )}
-        </div>
+        </h2>
         <div className="tablewrap flush mobile-cards">
           <table>
             <thead>
@@ -278,7 +273,7 @@ function AgencyPayouts() {
       </div>
 
       <div className="section">
-        <div className="sechead">Payout history</div>
+        <h2 className="sechead">Payout history</h2>
         <FilterBar>
           <input type="search" className="search-input" aria-label="Search payout payees" placeholder="Search payee"
             value={historySearch} onChange={(event) => setHistorySearch(event.target.value)} />

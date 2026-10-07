@@ -10,7 +10,7 @@ import { useCurrentSession } from './useCurrentSession';
  * While that request is in flight the built-in matrix stands in so the
  * sidebar does not flash empty; if it FAILS we grant nothing.
  */
-export function useCan(): (perm: Permission) => boolean {
+export function useCan(): (perm: Permission | Permission[]) => boolean {
   const { role, activeWorkspaceId } = useCurrentSession();
 
   const query = useQuery({
@@ -26,7 +26,11 @@ export function useCan(): (perm: Permission) => boolean {
     perms = ROLE_PERMISSIONS[role as keyof typeof ROLE_PERMISSIONS];
   }
 
-  return (perm) => perms.includes(perm);
+  // An array means "any of these" — a page can be worth opening for more than
+  // one reason. See the `/links` entry in rbac/nav.ts.
+  return (perm) => Array.isArray(perm)
+    ? perm.some((p) => perms.includes(p))
+    : perms.includes(perm);
 }
 
 /** True while the real permission set is still unknown. */

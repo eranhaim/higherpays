@@ -23,7 +23,8 @@ export interface NavItem {
    * payouts page is "Earnings" to the person being paid.
    */
   scopedLabel?: string;
-  perm: Permission;
+  /** What opens the page. A list means any one of them is enough. */
+  perm: Permission | Permission[];
   icon: NavIconName;
 }
 export interface NavGroup { label: string; items: NavItem[] }
@@ -33,7 +34,12 @@ export const NAV: NavGroup[] = [
     label: 'Operate',
     items: [
       { path: '/payments', label: 'Payments', perm: 'payments.view', icon: 'payments' },
-      { path: '/links', label: 'Payment links', perm: 'links.view', icon: 'links' },
+      // Seeing links is not a reason to open this page: every control on it —
+      // create, cancel, fill in details — needs links.create, so an
+      // account_owner got a read-only list with nothing to do. Reviewing the
+      // whole workspace (data.view_all) is the other reason it is worth
+      // opening, which is what an analyst has instead of links.create.
+      { path: '/links', label: 'Payment links', perm: ['links.create', 'data.view_all'], icon: 'links' },
       { path: '/analytics', label: 'Analytics', perm: 'analytics.view', icon: 'analytics' },
       { path: '/payouts', label: 'Payouts', scopedLabel: 'Earnings', perm: 'analytics.view', icon: 'payouts' },
     ],
@@ -60,7 +66,7 @@ export const NAV: NavGroup[] = [
 
 export const NAV_ITEMS: NavItem[] = NAV.flatMap((g) => g.items);
 
-export const ROUTE_PERMISSION: Record<string, Permission> =
+export const ROUTE_PERMISSION: Record<string, Permission | Permission[]> =
   {
     ...Object.fromEntries(NAV_ITEMS.map((i) => [i.path, i.perm])),
     // Existing bookmarks redirect to Agency, so they are gated on what Agency

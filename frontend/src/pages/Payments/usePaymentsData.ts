@@ -1,8 +1,8 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import {
-  paymentsApi, categoriesApi, customersApi, accountsApi, agentsApi,
-  type Payment, type ListPaymentsQuery, type CompletePaymentInput, type Category, type Customer, type Account, type Agent, type PaymentFilterOptions,
+  paymentsApi, accountsApi, agentsApi,
+  type Payment, type ListPaymentsQuery, type Account, type Agent, type PaymentFilterOptions,
   type ReassignInput, type PaymentsSummary,
 } from '../../api/endpoints';
 
@@ -17,14 +17,9 @@ export interface ExportInput {
 export interface UsePaymentsDataResult {
   payments: Payment[];
   summary: PaymentsSummary | null;
-  categories: Category[];
-  customers: Customer[];
   accounts: Account[];
   agents: Agent[];
   filterOptions: PaymentFilterOptions | null;
-  areCustomersLoading: boolean;
-  hasCustomersError: boolean;
-  retryCustomers: () => void;
   isLoading: boolean;
   isError: boolean;
   isSummaryLoading: boolean;
@@ -32,7 +27,6 @@ export interface UsePaymentsDataResult {
   hasMore: boolean;
   isLoadingMore: boolean;
   loadMore: () => void;
-  complete: (id: string, input: CompletePaymentInput) => Promise<Payment>;
   /** Records a reversal already issued in the provider dashboard. */
   recordReversal: (id: string, kind: 'refund' | 'chargeback') => Promise<void>;
   /** Moves one payment to another creator or agent. */
@@ -66,17 +60,6 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     enabled,
     staleTime: 5 * 60_000,
   });
-  const categories = useQuery({
-    queryKey: ['categories', activeWorkspaceId],
-    queryFn: () => categoriesApi.list(),
-    enabled,
-    staleTime: 5 * 60_000,
-  });
-  const customers = useQuery({
-    queryKey: ['customers', activeWorkspaceId, 'picker'],
-    queryFn: () => customersApi.list({ limit: 200 }),
-    enabled,
-  });
   const accounts = useQuery({
     queryKey: ['accounts', activeWorkspaceId],
     queryFn: () => accountsApi.list(),
@@ -99,10 +82,6 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     queryClient.invalidateQueries({ queryKey: ['analytics', activeWorkspaceId] });
   };
 
-  const complete = useMutation({
-    mutationFn: ({ id, input }: { id: string; input: CompletePaymentInput }) => paymentsApi.complete(id, input),
-    onSuccess: invalidate,
-  });
   const reassign = useMutation({
     mutationFn: ({ id, input }: { id: string; input: ReassignInput }) => paymentsApi.reassign(id, input),
     onSuccess: invalidate,
@@ -120,14 +99,9 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
   return {
     payments: payments.data?.pages.flatMap((p) => p.items) ?? [],
     summary: summary.data ?? null,
-    categories: categories.data ?? [],
-    customers: customers.data ?? [],
     accounts: accounts.data ?? [],
     agents: agents.data ?? [],
     filterOptions: filterOptions.data ?? null,
-    areCustomersLoading: customers.isLoading,
-    hasCustomersError: customers.isError,
-    retryCustomers: () => { void customers.refetch(); },
     isLoading: payments.isLoading,
     isError: payments.isError,
     isSummaryLoading: summary.isPending,
@@ -135,7 +109,6 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     hasMore: payments.hasNextPage,
     isLoadingMore: payments.isFetchingNextPage,
     loadMore: () => { void payments.fetchNextPage(); },
-    complete: (id, input) => complete.mutateAsync({ id, input }),
     recordReversal: async (id, kind) => { await reverse.mutateAsync({ id, kind }); },
     reassign: async (id, input) => { await reassign.mutateAsync({ id, input }); },
     archivePayment: (id) => archive.mutateAsync(id).then(() => undefined),

@@ -71,7 +71,7 @@ export default function Modal({ open, onClose, title, subtitle, className, child
       <div ref={dialogRef} className={`modal${className ? ` ${className}` : ''}`} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
         <div className="modal-header">
           <div>
-            <h3 id={titleId}>{title}</h3>
+            <h2 id={titleId}>{title}</h2>
             {subtitle ? <p className="sub">{subtitle}</p> : null}
           </div>
           <button className="modal-close" type="button" onClick={onClose} aria-label={`Close ${title}`}>×</button>
