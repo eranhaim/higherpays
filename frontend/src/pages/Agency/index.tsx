@@ -431,7 +431,7 @@ export default function AgencyPage() {
         </Select>
         <button className="btn ghost" onClick={() => { setSearch(''); setTypeFilter(''); setStateFilter(''); }}>Clear filters</button>
         <span className="sub">{rows.length} of {members.length + pendingInvites.length}</span>
-        <ViewPicker label="Edit columns" view={columnsView} />
+        <ViewPicker label="Edit columns" sections={[{ view: columnsView }]} />
       </FilterBar>
 
       <DataTable

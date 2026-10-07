@@ -9,13 +9,7 @@ export interface ViewSection {
 
 interface ViewPickerProps {
   label: string;
-  sections?: ViewSection[];
-  /**
-   * Temporary: `Accounts` and `Agents` are being replaced by the consolidated
-   * members list, so they still pass one layout directly. Delete this prop and
-   * its branch once that page lands and those two are gone.
-   */
-  view?: ViewLayoutState;
+  sections: ViewSection[];
 }
 
 /**
@@ -23,10 +17,9 @@ interface ViewPickerProps {
  * its stat cards and its table columns. They were two separate pickers in two
  * separate places, which is why nobody could find either.
  */
-export function ViewPicker({ label, sections, view }: ViewPickerProps) {
+export function ViewPicker({ label, sections }: ViewPickerProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
-  const groups = sections ?? (view ? [{ view }] : []);
 
   // Without this the popover stays open over whatever the user clicks next.
   useEffect(() => {
@@ -64,7 +57,7 @@ export function ViewPicker({ label, sections, view }: ViewPickerProps) {
       </button>
       {open ? (
         <div className="viewpop right" role="group" aria-label={label}>
-          {groups.map((group) => (
+          {sections.map((group) => (
             <div key={group.label ?? 'only'}>
               {group.label ? <div className="viewpop-group">{group.label}</div> : null}
               {group.view.order.map((key, index) => {
@@ -94,7 +87,7 @@ export function ViewPicker({ label, sections, view }: ViewPickerProps) {
             </div>
           ))}
           <div className="viewpop-actions">
-            <button type="button" className="btn ghost small" onClick={() => groups.forEach((g) => g.view.reset())}>
+            <button type="button" className="btn ghost small" onClick={() => sections.forEach((g) => g.view.reset())}>
               Reset
             </button>
             <button type="button" className="btn small" onClick={() => setOpen(false)}>Done</button>
