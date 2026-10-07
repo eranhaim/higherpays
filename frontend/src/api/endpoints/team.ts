@@ -2,6 +2,7 @@ import { api } from '../http';
 import { workspacePath } from '../workspacePath';
 import type { WorkspaceRole } from '../types';
 import type { Permission } from '../../rbac/permissions';
+import type { PayModel } from './accounts';
 
 export type MemberStatus = 'active' | 'suspended' | 'removed';
 
@@ -18,9 +19,19 @@ export interface Member {
   accountId: string | null;
   accountName: string | null;
   accountStatus: 'active' | 'paused' | 'archived' | null;
-  totalCustomerPaid: number | null;
   isSelf: boolean;
   joinedAt: string;
+  /** Sent to a caller with team.manage: this seat refuses every edit. */
+  isPlatformAdmin?: boolean;
+  // Withheld by the server, not merely hidden: customer volume and the
+  // assignment roster need data.view_all, and the pay terms need
+  // revenue.view. Undefined means the caller may not see the figure.
+  totalCustomerPaid?: number | null;
+  assignedCount?: number | null;
+  payModel?: PayModel;
+  revenueSplitPct?: number;
+  salaryAmount?: number;
+  commissionPct?: number;
 }
 
 export const teamApi = {

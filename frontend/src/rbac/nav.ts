@@ -3,8 +3,8 @@
  * filters from it and the route guard gates from it, so a page can never be
  * hidden from the nav yet reachable by typing its URL.
  *
- * Agency management lives under one destination; its internal sections use
- * the workspace labels ("Creators", "Chatters") where appropriate.
+ * Agency management is one destination: a single members list covering
+ * creators, agents, admins and pending invites.
  */
 
 import type { Permission } from './permissions';
@@ -41,7 +41,9 @@ export const NAV: NavGroup[] = [
   {
     label: 'Manage',
     items: [
-      { path: '/agency', label: 'Agency', perm: 'accounts.view', icon: 'accounts' },
+      // The page is the member list, served by GET /team. Opening it on
+      // accounts.view alone would render an error instead of a page.
+      { path: '/agency', label: 'Agency', perm: 'team.view', icon: 'team' },
       { path: '/customers', label: 'Customers', perm: 'customers.view', icon: 'customers' },
     ],
   },
@@ -61,9 +63,10 @@ export const NAV_ITEMS: NavItem[] = NAV.flatMap((g) => g.items);
 export const ROUTE_PERMISSION: Record<string, Permission> =
   {
     ...Object.fromEntries(NAV_ITEMS.map((i) => [i.path, i.perm])),
-    // Keep existing bookmarks guarded while App redirects them to Agency.
-    '/accounts': 'accounts.view',
-    '/agents': 'agents.view',
+    // Existing bookmarks redirect to Agency, so they are gated on what Agency
+    // needs rather than on the permission their old page used.
+    '/accounts': 'team.view',
+    '/agents': 'team.view',
     '/team': 'team.view',
   };
 

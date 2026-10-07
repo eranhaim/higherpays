@@ -229,19 +229,6 @@ input.amount-input { width: 110px; }
 .tgl { font-size: var(--text-sm); }
 .tgl.active { background: var(--brand-fill); color: var(--text); border-color: rgba(21, 195, 175, 0.35); }
 .tabbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
-.agency-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 0 18px; }
-.agency-tab {
-  appearance: none; display: flex; min-width: 0; flex-direction: column; gap: 4px; padding: 14px 16px;
-  border: 1px solid var(--border); border-radius: 12px; color: var(--text); background: var(--surface);
-  text-align: left; cursor: pointer;
-}
-.agency-tab span { font-weight: 700; }
-.agency-tab small { color: var(--text-secondary); font-size: 12px; line-height: 1.35; }
-.agency-tab:hover, .agency-tab.active { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
-.agency-tab.active span { color: var(--accent); }
-.agency-panel { min-width: 0; }
-.page-inline-actions { display: flex; justify-content: flex-end; margin: 0 0 16px; }
-.agency-mobile-section { display: none; }
 
 /* ── Page header ────────────────────────────────────────────────────────── */
 .pagehead {
@@ -276,7 +263,9 @@ input.amount-input { width: 110px; }
   gap: 16px; padding: 14px 16px; border-bottom: 1px solid var(--rule);
 }
 .settings-row:last-child { border-bottom: 0; }
-.team-page .tablewrap { max-height: none; overflow: visible; }
+/* The members list has its own editors in dialogs, so the table never needs
+   to scroll inside a capped box. */
+.members-page .tablewrap { max-height: none; overflow: visible; }
 .callout {
   background: var(--surface-2); border: 1px solid var(--rule);
   border-radius: var(--radius-lg); padding: 12px 14px; margin-bottom: 14px;
@@ -518,7 +507,21 @@ tbody tr.clickable:focus-visible {
   background: var(--info-soft); color: var(--brand); border: 1px solid var(--info-edge);
 }
 .rolebadge.owner { background: var(--accent-soft); color: var(--accent); border-color: var(--accent-edge); }
+.rolebadge.creator { color: var(--member-creator); border-color: var(--rule); }
+.rolebadge.agent { color: var(--member-agent); border-color: var(--rule); }
+.rolebadge.plain { color: var(--muted); border-color: var(--rule); }
 .platform-role-short { display: none; }
+
+/* Member type, on the members list. The edge is the glance down a long
+   roster; the badge beside the name says the same thing in words, so colour
+   is never the only signal. Every row carries the 3px so none of them shift. */
+.memberrow th:first-child { border-left: 3px solid var(--muted); }
+.memberrow-owner th:first-child { border-left-color: var(--accent); }
+.memberrow-admin th:first-child { border-left-color: var(--brand); }
+.memberrow-creator th:first-child { border-left-color: var(--member-creator); }
+.memberrow-agent th:first-child { border-left-color: var(--member-agent); }
+/* Not a member yet: the edge is broken as well as quiet. */
+.memberrow-invited th:first-child { border-left: 3px dashed var(--rule); }
 
 /* Pills — status markers. */
 .pill {
@@ -920,21 +923,7 @@ label.setrow { cursor: pointer; }
   .modal-actions .spacer { display: none; }
   .modal-actions .btn, .modal-actions a.btn { flex: 1 1 140px; text-align: center; }
   /* Agency is a directory on phones, not a shrunken desktop dashboard. */
-  .agency-page .pagehead { margin-bottom: 12px; }
-  .agency-page .pagehead p { display: none; }
-  .agency-tabs {
-    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-    overflow: visible; margin: 0 0 10px; padding: 0; gap: 6px;
-  }
-  .agency-tab {
-    min-height: 48px; padding: 9px 6px; align-items: center; justify-content: center;
-    text-align: center; border-radius: 10px;
-  }
-  .agency-tab small { display: none; }
-  .agency-tab span { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .agency-mobile-section { display: block; margin: 0 2px 14px; color: var(--muted); font-size: var(--text-sm); }
-  .page-inline-actions { justify-content: stretch; }
-  .page-inline-actions .btn { width: 100%; }
+  .members-page .pagehead { margin-bottom: 12px; }
   .setrow > :first-child { flex: 1 1 100%; min-width: 0; }
   .setrow .controls { width: 100%; justify-content: flex-start; }
 
@@ -994,6 +983,13 @@ label.setrow { cursor: pointer; }
   .tableblock.has-mobile-cards > .tablewrap { display: none; }
   .mobile-card-list { display: grid; gap: 8px; padding: 8px; }
   .mobile-data-card { background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius); }
+  /* The members list keeps its type edge on the phone card. */
+  .mobile-data-card.memberrow { border-left: 3px solid var(--muted); }
+  .mobile-data-card.memberrow-owner { border-left-color: var(--accent); }
+  .mobile-data-card.memberrow-admin { border-left-color: var(--brand); }
+  .mobile-data-card.memberrow-creator { border-left-color: var(--member-creator); }
+  .mobile-data-card.memberrow-agent { border-left-color: var(--member-agent); }
+  .mobile-data-card.memberrow-invited { border-left: 3px dashed var(--rule); }
   .mobile-data-card.clickable { cursor: pointer; }
   .mobile-data-card.clickable:active { background: var(--brand-wash); }
   .mobile-data-card.clickable:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }

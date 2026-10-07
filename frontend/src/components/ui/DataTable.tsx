@@ -22,6 +22,12 @@ export interface Column<T> {
    * would otherwise repeat as a labelled field.
    */
   hideInMobileDetails?: boolean;
+  /**
+   * Renders as `<th scope="row">` instead of `<td>`: the cell that names the
+   * row, so a screen reader announces it with every other cell in the row.
+   * At most one column per table.
+   */
+  isRowHeader?: boolean;
 }
 
 export interface SortState {
@@ -43,6 +49,8 @@ interface DataTableProps<T> {
   sort?: SortState;
   /** Given a column's `sortKey`. The page decides the new direction. */
   onSort?: (sortKey: string) => void;
+  /** Extra classes on the row and its phone card, for a per-row marker. */
+  rowClassName?: (row: T) => string | undefined;
   /**
    * Optional compact phone layout. Its summary is always shown; the shared
    * table fields are revealed only after the caller's expand control is used.
@@ -60,6 +68,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
   const {
     columns, rows, rowKey, onRowClick, isLoading,
     emptyTitle = 'Nothing here yet.', emptyHint, emptyAction, footer, sort, onSort, mobileSummary,
+    rowClassName,
   } = props;
   const [expandedMobileRows, setExpandedMobileRows] = useState<Set<string>>(() => new Set());
   const keyFor = (row: T, index: number) => rowKey(row, index);
@@ -118,7 +127,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
               rows.map((row, index) => (
                 <tr
                   key={keyFor(row, index)}
-                  className={onRowClick ? 'clickable' : undefined}
+                  className={[onRowClick ? 'clickable' : null, rowClassName?.(row)].filter(Boolean).join(' ') || undefined}
                   // A row is only reachable by keyboard if it says it is one.
                   // Without this the detail modals behind onRowClick are
                   // mouse-only.
@@ -136,9 +145,11 @@ export function DataTable<T>(props: DataTableProps<T>) {
                     onRowClick(row);
                   } : undefined}
                 >
-                  {columns.map((c) => (
+                  {columns.map((c) => (c.isRowHeader ? (
+                    <th key={c.key} scope="row" data-label={c.header} style={{ textAlign: c.align }}>{c.render(row)}</th>
+                  ) : (
                     <td key={c.key} data-label={c.header} style={{ textAlign: c.align }}>{c.render(row)}</td>
-                  ))}
+                  )))}
                 </tr>
               ))
             )}
@@ -156,7 +167,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
             const expanded = expandedMobileRows.has(key);
             return (
               <div
-                className={`mobile-data-card${onRowClick ? ' clickable' : ''}`}
+                className={['mobile-data-card', onRowClick ? 'clickable' : null, rowClassName?.(row)].filter(Boolean).join(' ')}
                 key={key}
                 // Mirrors the desktop <tr>: the card opens the detail modal. The
                 // expand chevron and any button/link/field inside it are their

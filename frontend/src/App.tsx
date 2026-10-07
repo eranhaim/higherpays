@@ -49,10 +49,10 @@ export default function App() {
                 <Route path="/links" element={<LinksPage />} />
                 <Route path="/payouts" element={<PayoutsPage />} />
                 <Route path="/agency" element={<AgencyPage />} />
-                <Route path="/accounts" element={<Navigate to="/agency?tab=creators" replace />} />
-                <Route path="/agents" element={<Navigate to="/agency?tab=agents" replace />} />
+                <Route path="/accounts" element={<Navigate to="/agency" replace />} />
+                <Route path="/agents" element={<Navigate to="/agency" replace />} />
                 <Route path="/customers" element={<CustomersPage />} />
-                <Route path="/team" element={<Navigate to="/agency?tab=people" replace />} />
+                <Route path="/team" element={<Navigate to="/agency" replace />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/archive" element={<ArchivePage />} />

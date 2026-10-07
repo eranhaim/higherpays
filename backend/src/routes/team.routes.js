@@ -9,7 +9,7 @@ const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { revokeUserSessions } = require('../auth/sessions');
 const { hashPassword, validatePasswordStrength } = require('../auth/passwords');
-const { PERMISSIONS, ROLE_PERMISSIONS, validatePermissions } = require('../auth/permissions');
+const { PERMISSIONS, ROLE_PERMISSIONS, validatePermissions, hasPermission } = require('../auth/permissions');
 const { isStr, badRequest } = require('../util/validate');
 
 const router = express.Router({ mergeParams: true });
@@ -77,10 +77,26 @@ router.post('/', requirePermission('team.manage'), asyncHandler(async (req, res)
   res.status(201).json(out);
 }));
 
-// GET / — everyone with access, and the profile behind the role when there is one.
+// GET / — everyone with access, the profile behind the role when there is one,
+// and what that profile is paid. Two sets of fields are withheld rather than
+// merely hidden by the client:
+//
+//   - customer-paid volume and the assignment roster describe the whole
+//     workspace, so a seat narrowed to its own rows never receives them;
+//   - pay terms are revenue fields, gated like the share and the commission
+//     are everywhere else. Returning them here would hand a scoped seat the
+//     figures the rest of the API deliberately withholds.
+//
+// `team.view` is a per-seat permission, so an agent or account owner can hold
+// it; neither check can be inferred from the role.
 router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) => {
   const range = dateRange(req.query);
   if (!range) return res.status(400).json({ error: 'invalid_date_range' });
+  const seesWholeWorkspace = hasPermission(req.access, 'data.view_all');
+  const seesRevenue = hasPermission(req.access, 'revenue.view');
+  // A platform admin's seat refuses every edit below. Whoever manages the
+  // team is told which seats those are, rather than offered a 409.
+  const managesTeam = hasPermission(req.access, 'team.manage');
   const rows = (await query(
     `WITH customer_paid AS (
        SELECT p.agent_id,
@@ -105,10 +121,17 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
         GROUP BY p.agent_id, p.account_id
      )
      SELECT wu.user_id, wu.role, wu.permissions, wu.status, wu.created_at,
-            u.full_name AS name, u.email,
+            u.full_name AS name, u.email, u.is_platform_admin,
             w.account_label, w.agent_label,
             ag.id AS agent_id, ac.id AS account_id, ac.name AS account_name,
             ac.status AS account_status,
+            ac.pay_model, ac.revenue_split_pct, ac.salary_amount,
+            ag.commission_pct,
+            CASE
+              WHEN ac.id IS NOT NULL THEN (SELECT count(*) FROM account_agents aa WHERE aa.account_id = ac.id)
+              WHEN ag.id IS NOT NULL THEN (SELECT count(*) FROM account_agents aa WHERE aa.agent_id = ag.id)
+              ELSE NULL
+            END AS assigned_count,
             CASE
               WHEN ag.id IS NOT NULL THEN COALESCE(agent_sales.total, 0)
               WHEN ac.id IS NOT NULL THEN COALESCE(account_sales.total, 0)
@@ -128,8 +151,18 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
       userId: r.user_id, name: r.name, email: r.email, role: r.role,
       roleName: roleName(r.role, r), permissions: r.permissions || [], status: r.status,
       agentId: r.agent_id, accountId: r.account_id, accountName: r.account_name, accountStatus: r.account_status,
-      totalCustomerPaid: r.total_customer_paid == null ? null : Number(r.total_customer_paid),
       isSelf: r.user_id === uid(req), joinedAt: r.created_at,
+      ...(managesTeam ? { isPlatformAdmin: !!r.is_platform_admin } : {}),
+      ...(seesWholeWorkspace ? {
+        totalCustomerPaid: r.total_customer_paid == null ? null : Number(r.total_customer_paid),
+        assignedCount: r.assigned_count == null ? null : Number(r.assigned_count),
+      } : {}),
+      ...(seesRevenue && r.account_id ? {
+        payModel: r.pay_model,
+        revenueSplitPct: Number(r.revenue_split_pct),
+        salaryAmount: Number(r.salary_amount),
+      } : {}),
+      ...(seesRevenue && r.agent_id ? { commissionPct: Number(r.commission_pct) } : {}),
     })),
   });
 }));

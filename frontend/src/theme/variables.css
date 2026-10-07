@@ -40,6 +40,14 @@
   --info-soft:  #1A2740;
   --info-edge:  rgba(21, 195, 175, 0.2);
 
+  /* Member type — who someone is in the agency, not how they are doing.
+     The owner reuses --accent and an admin reuses --brand, but a roster is
+     read to tell a creator from an agent, and every remaining tone is spoken
+     for: mint and red carry money direction, amber carries attention. These
+     two hues are the type's own, and both clear 4.5:1 on --info-soft. */
+  --member-creator: #B98AF0;
+  --member-agent:   #6AA5F5;
+
   /* ── Typography ──────────────────────────────────────────────────── */
   --sans: 'Assistant', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --mono: ui-monospace, 'Cascadia Code', 'Roboto Mono', Menlo, monospace;
