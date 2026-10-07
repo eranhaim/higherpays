@@ -125,7 +125,10 @@ export default function Layout() {
 
   // Leaving the page throws away whatever the current form is holding, so ask
   // first. Registered by useUnsavedChanges in the forms themselves.
+  // Also closes the phone nav drawer, since following a link inside it is the
+  // one thing that always means "done with the menu".
   const guardNavigation = (e: MouseEvent, path: string) => {
+    setMobileNavOpen(false);
     if (path === pathname || !hasUnsavedChanges()) return;
     e.preventDefault();
     setPendingPath(path);
@@ -161,6 +164,9 @@ export default function Layout() {
 
   return (
     <div className={`app${originalSession ? ' is-impersonating' : ''}`}>
+      {/* The sidebar is 30-odd links long, and it is the same 30 links on every
+          page. A keyboard user should not have to walk them to reach the page. */}
+      <a className="skip-link" href="#main">Skip to content</a>
       {originalSession && (
         <div className="impersonation-banner">
           Viewing as {user?.fullName} · {roleName}
@@ -171,7 +177,9 @@ export default function Layout() {
         <div className="brand">
           <img className="brand-logo" src="/logo-mark.png" alt="" />
           <span className="brand-sep" aria-hidden="true" />
-          <h1>HigherPays</h1>
+          {/* Not a heading: the product name is the same on every page, so the
+              page's own title is the h1. */}
+          <span className="wordmark">HigherPays</span>
           <span className="brand-spacer" />
           <NotificationBell />
           <button
@@ -204,15 +212,14 @@ export default function Layout() {
           </div>
         )}
 
-        <nav className={mobileNavOpen ? 'mobile-open' : undefined} onClick={(event) => {
-          if ((event.target as HTMLElement).closest('a')) setMobileNavOpen(false);
-        }}>
+        <nav className={mobileNavOpen ? 'mobile-open' : undefined}>
           <button type="button" className="mobile-nav-close" onClick={() => setMobileNavOpen(false)}>Close menu</button>
           {NAV.map((g) => <NavSection key={g.label} group={g} onNavigate={guardNavigation} />)}
           {user?.isPlatformAdmin && (
             <div>
               <div className="nav-lbl">HigherPays</div>
-              <NavLink to="/platform" className={({ isActive }) => `navitem${isActive ? ' active' : ''}`}>
+              <NavLink to="/platform" className={({ isActive }) => `navitem${isActive ? ' active' : ''}`}
+                onClick={(e) => guardNavigation(e, '/platform')}>
                 <NavIcon name="settings" />
                 Platform
               </NavLink>
@@ -248,7 +255,7 @@ export default function Layout() {
       </aside>
       {mobileNavOpen && <button type="button" className="mobile-nav-scrim" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)} />}
 
-      <main ref={mainRef}>
+      <main id="main" ref={mainRef}>
         <Outlet />
       </main>
 

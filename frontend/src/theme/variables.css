@@ -45,13 +45,36 @@
   --mono: ui-monospace, 'Cascadia Code', 'Roboto Mono', Menlo, monospace;
 
   /* Type scale. Sizes are in px because the console's density depends on the
-     small end staying exactly where it is at any root font size. */
-  --text-micro: 11.6px;  /* uppercase section and field labels             */
+     small end staying exactly where it is at any root font size.
+     Below the body size the steps are deliberately tight (~1.04) so five
+     grades of metadata fit without the page growing. Above it they open out
+     on a steady 1.2, which is what makes one thing on a page outrank another.
+     Nothing outside this scale: a one-off size is a hierarchy nobody can read. */
+  --text-tick:  10px;    /* chart axis ticks — sized by the grid, not the scale */
+  --text-micro: 11.6px;  /* uppercase field labels and column headers      */
   --text-xs:    12.7px;  /* pills, badges, secondary metadata              */
   --text-sm:    13.2px;  /* table meta, fee lines, hints                   */
   --text-md:    13.8px;  /* sub-copy                                       */
   --text-base:  14.3px;  /* body, table cells, controls                    */
+  --text-lg:    15.4px;  /* just above body: names, keys, emphasised money */
+  --text-xl:    18.5px;  /* dialog titles, entity marks                    */
+  --text-2xl:   22.2px;  /* page title                                     */
+  /* The largest type in the console is a figure, not a title. This is a
+     payments console: the money is what the page is opened to read. */
+  --text-3xl:   26.6px;  /* the stat figure                                */
   --tracking-label: 0.05em;
+
+  /* ── Space ───────────────────────────────────────────────────────── */
+  /* Every margin, padding and gap comes from this 4px scale. --space-5 is
+     the table cell's horizontal padding, which the customer asked to be
+     widened to 20px (UI-FEEDBACK C7) — don't narrow it. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
 
   /* ── Shape ───────────────────────────────────────────────────────── */
   --radius:     9px;    /* buttons, inputs, nav items                    */
