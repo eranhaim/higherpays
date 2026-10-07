@@ -25,7 +25,7 @@ const { wid, uid } = require('../lib/scope');
 const SELECT = `
   SELECT p.*, a.name AS account, cu.name AS customer, cu.telegram_name AS customer_telegram,
          ca.name AS category, u.full_name AS agent, pl.reference_id AS link_reference, pl.type AS link_type,
-         t.provider_transaction_id, t.fee AS provider_fee, t.surcharge,
+         t.provider_transaction_id, t.fee AS provider_fee, t.surcharge, t.fee_is_estimate,
          t.status AS provider_status, t.provider_decline_code, t.provider_decline_reason,
          t.provider_decline_code_source, t.provider_decline_reason_source,
          (SELECT platform_fee FROM revenue_entries re WHERE re.transaction_id = t.id AND re.entry_type = 'sale') AS platform_fee,
@@ -65,7 +65,14 @@ function publicPayment(p, { seesFees }) {
     // customer-facing content price. We expose the final ledger result, never
     // recalculate fees in the HTTP layer.
     ...(!seesFees ? { amountAfterFees: p.distributable == null ? null : Number(p.distributable) } : {}),
-    ...(seesFees ? { platformFee: p.platform_fee == null ? null : Number(p.platform_fee) } : {}),
+    // MantaPay reports the actual per-transaction fee only through its Search
+    // API, long after the payment. Until it does, the provider's share of this
+    // fee is the rate card's expectation, and the caller must be told so rather
+    // than read the net it implies as settled fact.
+    ...(seesFees ? {
+      platformFee: p.platform_fee == null ? null : Number(p.platform_fee),
+      feeIsEstimate: p.fee_is_estimate !== false,
+    } : {}),
   };
 }
 
@@ -190,6 +197,9 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
               COUNT(*) FILTER (WHERE provider_status = 'approved')::int AS approved_payments,
               COUNT(*) FILTER (WHERE provider_status IN ('pending', 'approved', 'declined'))::int AS attempts,
               COUNT(*) FILTER (WHERE status = 'paid' AND review_reason IS NULL AND category_id IS NULL)::int AS details_needed,
+              COUNT(*) FILTER (
+                WHERE status = 'paid' AND review_reason IS NULL AND fee_is_estimate IS DISTINCT FROM false
+              )::int AS estimated_fee_sales,
               COUNT(*) FILTER (WHERE status = 'refunded')::int AS refunded_count,
               COALESCE(SUM(amount) FILTER (WHERE status = 'refunded'), 0) AS refunded_amount,
               COALESCE(SUM(surcharge) FILTER (
@@ -211,7 +221,11 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
   const seesFees = hasPermission(req.access, 'data.view_all');
   res.json({
     grossContent,
-    ...(seesFees ? { platformFees, netProfit: grossContent - platformFees } : {}),
+    ...(seesFees ? {
+      platformFees,
+      netProfit: grossContent - platformFees,
+      feesEstimated: out.row.estimated_fee_sales > 0,
+    } : {}),
     ...(!seesFees ? { afterFees } : {}),
     approvedPayments: out.row.approved_payments,
     attempts: out.row.attempts,

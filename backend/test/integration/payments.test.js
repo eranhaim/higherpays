@@ -231,6 +231,37 @@ test('an agent sees the after-fee receipt, not the customer-facing price', async
   assert.equal(list[0].platformFee, undefined, 'the fee breakdown remains private');
 });
 
+test('a fee MantaPay has not reported is marked as an estimate until it does', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const agent = await createAgent(app, t);
+  await assignAgent(app, t, account.id, agent.id);
+  const { paymentId } = await paySale(app, t, account, 40, { headers: agent.headers });
+
+  const estimated = (await request(app).get(`/workspaces/${t.workspaceId}/payments/${paymentId}`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.ok(estimated.platformFee > 0);
+  assert.equal(estimated.feeIsEstimate, true);
+  const estimatedSummary = (await request(app).get(`/workspaces/${t.workspaceId}/payments/summary`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(estimatedSummary.feesEstimated, true);
+
+  const scoped = (await request(app).get(`/workspaces/${t.workspaceId}/payments/${paymentId}`)
+    .set(agent.headers).expect(200)).body;
+  assert.equal(scoped.feeIsEstimate, undefined, 'the fee breakdown remains private');
+
+  await pool.query(
+    `UPDATE transactions SET fee = 1.5, fee_is_estimate = false, net = gross - 1.5
+      WHERE payment_id = $1 AND type = 'payment'`, [paymentId]);
+
+  const reported = (await request(app).get(`/workspaces/${t.workspaceId}/payments/${paymentId}`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(reported.feeIsEstimate, false);
+  const reportedSummary = (await request(app).get(`/workspaces/${t.workspaceId}/payments/summary`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(reportedSummary.feesEstimated, false);
+});
+
 test('payment summaries use all filtered rows and keep checkout-fee revenue platform-only', async () => {
   const t = await createTenant(app, { checkoutFee: 2 });
   const account = await createAccount(app, t);

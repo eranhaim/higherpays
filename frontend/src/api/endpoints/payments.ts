@@ -73,6 +73,11 @@ export interface Payment {
   amountAfterFees?: number | null;
   /** Only sent to callers who see the whole workspace. */
   platformFee?: number | null;
+  /**
+   * True while MantaPay has not reported the actual processing fee, so
+   * `platformFee` and any net derived from it are the rate card's expectation.
+   */
+  feeIsEstimate?: boolean;
 }
 
 export interface PaymentFlowParty {
@@ -127,6 +132,12 @@ export interface PaymentsSummary {
   platformFees?: number;
   /** Only sent to callers with workspace-wide data access. */
   netProfit?: number;
+  /**
+   * Workspace-wide access only. True when any matching sale still carries an
+   * estimated provider fee, which makes `platformFees` and `netProfit`
+   * estimates too.
+   */
+  feesEstimated?: boolean;
   approvedPayments: number;
   attempts: number;
   approvalRate: number;
