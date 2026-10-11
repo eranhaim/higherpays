@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useCan } from '../../hooks/usePermission';
 import type { AnalyticsReport } from '../../api/endpoints';
-import { toIsoDate, MONTHS_SHORT } from '../../lib/format';
+import { toIsoDate, toLocalDateInput, MONTHS_SHORT } from '../../lib/format';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, DataTable, DetailRow, LoadingCard, ErrorCard,
@@ -14,7 +14,7 @@ import {
 } from '../../components/ui';
 import { BarChart, Heatmap, MetricRow, type BarPoint } from './charts';
 import {
-  useAnalyticsData, defaultFilters, toLocalDateInput,
+  useAnalyticsData, defaultFilters,
   type AnalyticsFilters, type DateWindow,
 } from './useAnalyticsData';
 

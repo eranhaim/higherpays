@@ -1,5 +1,22 @@
 import { describe, it, expect } from 'vitest';
-import { startOfLocalDay, endOfLocalDay, toInstantRange } from './date';
+import { startOfLocalDay, endOfLocalDay, toInstantRange, toLocalDateInput } from './date';
+
+describe('toLocalDateInput', () => {
+  // Building a day with toISOString() instead shifted every preset range by
+  // the UTC offset: east of UTC the range started a day early and its upper
+  // bound could exclude today, west of UTC the reverse.
+  it('names the local calendar day at the start of it', () => {
+    expect(toLocalDateInput(new Date(2026, 9, 11).getTime())).toBe('2026-10-11');
+  });
+
+  it('names the local calendar day at the end of it', () => {
+    expect(toLocalDateInput(new Date(2026, 9, 11, 23, 30).getTime())).toBe('2026-10-11');
+  });
+
+  it('pads a single-digit month and day', () => {
+    expect(toLocalDateInput(new Date(2026, 0, 5).getTime())).toBe('2026-01-05');
+  });
+});
 
 describe('toInstantRange', () => {
   it('covers the whole of the last day', () => {
