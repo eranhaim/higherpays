@@ -25,6 +25,11 @@ import {
 } from '../../api/endpoints';
 import { usePaymentsData, type ExportInput } from './usePaymentsData';
 
+// MantaPay reports actual per-transaction fees only through its Search API.
+// Until a sale has one, the fee and the net shown for it are the rate card's
+// expectation, so every surface that shows them says so.
+const ESTIMATED_FEE_NOTE = 'Calculated from the configured MantaPay rates. Actual provider fees have not been reported.';
+
 const STATUS_TONE: Record<Exclude<PaymentStatus, 'pending'>, 'ok' | 'no'> = {
   paid: 'ok',
   failed: 'no',
@@ -152,12 +157,14 @@ export default function PaymentsPage() {
     },
     ...(canScope ? [{
       key: 'fees', label: 'Platform fees',
-      card: <StatCard isUnknown={statsUnknown} label="Platform fees" value={<Money amount={summary?.platformFees ?? 0} currency={summary?.currency} direction="out" />} sub={`${rateCard.blended.toFixed(1)}%`} />,
+      card: <StatCard isUnknown={statsUnknown} label="Platform fees" value={<Money amount={summary?.platformFees ?? 0} currency={summary?.currency} direction="out" />}
+        sub={`${rateCard.blended.toFixed(1)}%${summary?.feesEstimated ? ' · estimated' : ''}`} />,
     }] : []),
     ...(canScope ? [{
       key: 'netProfit', label: 'Net profit',
       card: <StatCard isUnknown={statsUnknown} label="Net profit"
-        value={<Money amount={summary?.netProfit ?? 0} currency={summary?.currency} direction="in" emphasis />} sub="Gross after platform fees" />,
+        value={<Money amount={summary?.netProfit ?? 0} currency={summary?.currency} direction="in" emphasis />}
+        sub={summary?.feesEstimated ? 'Gross after estimated platform fees' : 'Gross after platform fees'} />,
     }] : []),
     ...(canViewFlow ? [{
       key: 'checkoutFees', label: 'Checkout-fee revenue',
@@ -231,7 +238,12 @@ export default function PaymentsPage() {
     },
     ...(canScope ? [{
       key: 'fee', header: 'Fee',
-      render: (p: Payment) => p.platformFee == null ? 'ג€”' : <Money amount={p.platformFee} direction="out" />,
+      render: (p: Payment) => p.platformFee == null ? '—' : (
+        <>
+          <Money amount={p.platformFee} direction="out" />
+          {p.feeIsEstimate && <span className="sub inline" title={ESTIMATED_FEE_NOTE}> · estimated</span>}
+        </>
+      ),
     }] : []),
     {
       key: 'status', header: 'Status', sortKey: 'status', render: (p) => <PaymentStatus payment={p} />,
@@ -460,8 +472,9 @@ export default function PaymentsPage() {
               direction={detail.reviewRequired ? undefined : 'in'} /></DetailRow>
             {detail.platformFee != null && (
               <>
-                <DetailRow label="Platform fee"><Money amount={detail.platformFee} direction="out" /></DetailRow>
-                <DetailRow label="Net"><Money amount={detail.amount - detail.platformFee} direction="in" emphasis /></DetailRow>
+                <DetailRow label={detail.feeIsEstimate ? 'Platform fee · estimated' : 'Platform fee'}><Money amount={detail.platformFee} direction="out" /></DetailRow>
+                <DetailRow label={detail.feeIsEstimate ? 'Net · estimated' : 'Net'}><Money amount={detail.amount - detail.platformFee} direction="in" emphasis /></DetailRow>
+                {detail.feeIsEstimate && <p className="sub">{ESTIMATED_FEE_NOTE}</p>}
               </>
             )}
             <DetailRow label="Date"><DateCell ts={detail.occurredAt} /></DetailRow>
@@ -695,7 +708,7 @@ function PaymentFlowContent({ flow, labels }: {
               <Money amount={flow.fees.provider} currency={flow.currency} direction="out" />
             </DetailRow>
             {flow.fees.providerSource === 'estimated' && (
-              <p className="sub flow-fee-note">Calculated from the configured MantaPay rates. Actual provider fees have not been reported.</p>
+              <p className="sub flow-fee-note">{ESTIMATED_FEE_NOTE}</p>
             )}
             <div className="flow-breakdown">
               {providerItems.map(([label, amount, rate]) => (

@@ -6,14 +6,26 @@ MantaPay merchant ID, hash key, webhook, or reconciliation credentials.
 
 ## One-time synthetic attribution setup
 
-In the designated HigherPays workspace:
+Marketplace carts need their own workspace. Pointing the integration at an
+agency's workspace would book marketplace sales as that agency's revenue,
+splits and payouts.
 
-1. Create one active creator/account named `Marketplace`.
-2. Create one active agent/chatter named `Marketplace`.
-3. Assign that agent to the `Marketplace` account.
-4. Configure its revenue split and platform fee as the marketplace business
+1. Create a workspace used only by the marketplace, and designate it:
+
+   ```sql
+   UPDATE workspaces SET is_marketplace = true WHERE id = '<workspace uuid>';
+   ```
+
+   Only one workspace can hold this flag, and `POST
+   /integrations/marketplace/orders` answers `503
+   marketplace_workspace_not_designated` for any other workspace. Setting
+   `MARKETPLACE_WORKSPACE_ID` on its own grants nothing.
+2. Create one active creator/account named `Marketplace`.
+3. Create one active agent/chatter named `Marketplace`.
+4. Assign that agent to the `Marketplace` account.
+5. Configure its revenue split and platform fee as the marketplace business
    requires; every marketplace cart is attributed to this pair.
-5. Set `MARKETPLACE_WORKSPACE_ID`, `MARKETPLACE_ACCOUNT_ID`, and
+6. Set `MARKETPLACE_WORKSPACE_ID`, `MARKETPLACE_ACCOUNT_ID`, and
    `MARKETPLACE_AGENT_ID` to those UUIDs. Do not use catalog-creator accounts
    or agents for these values.
 

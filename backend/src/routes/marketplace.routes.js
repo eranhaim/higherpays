@@ -179,7 +179,7 @@ router.post('/orders', asyncHandler(async (req, res) => {
       return { order: existing };
     }
     const setup = (await c.query(
-      `SELECT w.currency, w.status, a.id AS account_id, ag.id AS agent_id
+      `SELECT w.currency, w.status, w.is_marketplace, a.id AS account_id, ag.id AS agent_id
          FROM workspaces w
          JOIN accounts a ON a.id=$2 AND a.workspace_id=w.id AND a.status='active'
          JOIN agents ag ON ag.id=$3 AND ag.workspace_id=w.id
@@ -188,6 +188,10 @@ router.post('/orders', asyncHandler(async (req, res) => {
       [config.marketplaceWorkspaceId, config.marketplaceAccountId, config.marketplaceAgentId],
     )).rows[0];
     if (!setup) return { setupMissing: true };
+    // The env var alone is not permission to write into a workspace. Only the
+    // workspace designated in the database may hold marketplace carts, so a
+    // MARKETPLACE_WORKSPACE_ID left pointing at a real agency books nothing.
+    if (!setup.is_marketplace) return { workspaceNotDesignated: true };
     if (setup.currency !== currency.toUpperCase()) return { currencyMismatch: true };
     const fee = (await c.query('SELECT checkout_fee FROM effective_platform_fee($1, now())', [config.marketplaceWorkspaceId])).rows[0];
     const referenceId = generateOrderReference();
@@ -214,6 +218,7 @@ router.post('/orders', asyncHandler(async (req, res) => {
   });
   if (result.conflict) return res.status(409).json({ error: 'marketplace_order_mismatch' });
   if (result.setupMissing) return res.status(503).json({ error: 'marketplace_synthetic_attribution_not_ready' });
+  if (result.workspaceNotDesignated) return res.status(503).json({ error: 'marketplace_workspace_not_designated' });
   if (result.currencyMismatch) return res.status(409).json({ error: 'currency_mismatch' });
   res.status(201).json(publicOrder(result.order));
 }));

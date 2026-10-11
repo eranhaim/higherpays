@@ -127,6 +127,11 @@ const Workspace = entity('workspaces', {
     webhookSecret:     text().notNull()
       .default("replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '')"),
 
+    // Which workspace holds the marketplace's carts. Set in the database, not
+    // by MARKETPLACE_WORKSPACE_ID alone, so a mistyped env var cannot book
+    // marketplace sales as a real agency's revenue.
+    isMarketplace:     bool().notNull().default('false'),
+
     minLinkAmount:     money(),
     maxLinkAmount:     money(),
     linkTtlMinutes:    int(),   // how long a single-use link lives; null = platform default
@@ -142,7 +147,10 @@ const Workspace = entity('workspaces', {
   checks: [
     'min_link_amount IS NULL OR max_link_amount IS NULL OR min_link_amount <= max_link_amount',
   ],
-  indexes: ['webhookEndpointId'],
+  indexes: [
+    'webhookEndpointId',
+    { columns: ['isMarketplace'], unique: true, where: 'is_marketplace' },
+  ],
   timestamps: 'both',
 });
 
