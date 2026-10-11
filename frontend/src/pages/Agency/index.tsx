@@ -280,9 +280,10 @@ export default function AgencyPage() {
         </Select>
       ),
     },
-    // What someone is paid only reaches a caller the server trusts with
-    // revenue figures, so an absent field means an absent column.
-    ...(can('revenue.view') ? [{
+    // Everyone's pay terms are a whole-workspace figure, gated on the server
+    // like the roster and the volume beside them, so an absent field means an
+    // absent column.
+    ...(can('data.view_all') ? [{
       key: 'terms',
       header: 'Terms',
       render: (row: Row) => {

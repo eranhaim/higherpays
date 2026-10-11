@@ -191,6 +191,29 @@ test('an admin keeps the full fee breakdown', async () => {
   assert.equal(report.timeseries[0].gross, 100);
 });
 
+// GET /team returns every seat in the workspace with no row scope, so the pay
+// terms on those rows are a whole-workspace figure and belong behind
+// `data.view_all`. `revenue.view` would not do: it is a per-seat permission an
+// admin can hand to one agent, and that grant must not become everyone's split.
+test('an agent seat granted team and revenue access still gets no pay terms', async () => {
+  const { t, account, agent } = await setup();
+  await grantPermissions(t, agent.userId, 'agent', 'team.view', 'revenue.view');
+
+  const { members } = await get(t, '/team', agent.headers);
+  const creator = members.find((m) => m.accountId === account.id);
+  assert.ok(creator, 'the roster still lists the creator');
+  assert.equal(creator.revenueSplitPct, undefined);
+  assert.equal(creator.payModel, undefined);
+  assert.equal(creator.salaryAmount, undefined);
+  const self = members.find((m) => m.agentId === agent.id);
+  assert.equal(self.commissionPct, undefined);
+
+  // The owner, who does hold data.view_all, still reads them.
+  const full = await get(t, '/team', t.authHeaders);
+  assert.equal(full.members.find((m) => m.accountId === account.id).revenueSplitPct, 70);
+  assert.equal(full.members.find((m) => m.agentId === agent.id).commissionPct, 10);
+});
+
 test('a salaried creator is never promised a share of net revenue', async () => {
   const t = await createTenant(app, RATES);
   const account = await createAccount(app, t, { revenueSplitPct: 70 });
