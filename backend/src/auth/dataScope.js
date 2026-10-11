@@ -1,8 +1,11 @@
 'use strict';
 const { hasPermission } = require('./permissions');
+const { resolveCallerAgentId } = require('./callerAgent');
 
 // Which ROWS a caller may see, as opposed to which endpoints they may call.
 // requirePermission answers the second question; this answers the first.
+// Neither answers who the caller is — resolveCallerAgentId does that, and
+// attribution belongs to it.
 //
 //   workspace — every row in the workspace
 //   agent     — only their own work: links they created, payments credited to
@@ -20,9 +23,8 @@ async function resolveDataScope(client, req) {
   if (hasPermission(access, 'data.view_all')) return WORKSPACE_SCOPE;
 
   if (access.role === 'agent') {
-    const agent = (await client.query(
-      'SELECT id FROM agents WHERE workspace_id = $1 AND user_id = $2', [access.workspaceId, req.user.id])).rows[0];
-    if (agent) return { kind: 'agent', agentId: agent.id, accountId: null };
+    const agentId = await resolveCallerAgentId(client, req);
+    if (agentId) return { kind: 'agent', agentId, accountId: null };
   }
   if (access.role === 'account_owner') {
     const account = (await client.query(
