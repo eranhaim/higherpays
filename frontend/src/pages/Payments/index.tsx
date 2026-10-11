@@ -19,7 +19,7 @@ import {
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import { formatMoney, toInstantRange } from '../../lib/format';
 import {
-  isReversed, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, paymentStatusLabel, getPaymentExportColumns,
+  isReversed, visibleAmount, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, paymentStatusLabel, getPaymentExportColumns,
   PROVIDER_FEE_SOURCE_LABELS, declineReasonLabel,
   paymentsApi, type Payment, type PaymentFlow, type PaymentStatus, type PaymentSort, type ListPaymentsQuery, type MantaPayDeclineSource,
 } from '../../api/endpoints';
@@ -29,6 +29,19 @@ import { usePaymentsData, type ExportInput } from './usePaymentsData';
 // Until a sale has one, the fee and the net shown for it are the rate card's
 // expectation, so every surface that shows them says so.
 const ESTIMATED_FEE_NOTE = 'Calculated from the configured MantaPay rates. Actual provider fees have not been reported.';
+
+/** The payment's money figure as the list and the mobile card show it. */
+function PaymentAmount({ payment }: { payment: Payment }) {
+  const amount = visibleAmount(payment);
+  if (amount == null) return <>—</>;
+  return (
+    <Money
+      amount={amount}
+      currency={payment.currency}
+      direction={isReversed(payment.status) ? 'out' : payment.status === 'paid' && !payment.reviewRequired ? 'in' : undefined}
+    />
+  );
+}
 
 const STATUS_TONE: Record<Exclude<PaymentStatus, 'pending'>, 'ok' | 'no'> = {
   paid: 'ok',
@@ -147,6 +160,7 @@ export default function PaymentsPage() {
   });
 
   const statsUnknown = isSummaryLoading || isSummaryError || !summary;
+  const detailAmount = detail ? visibleAmount(detail) : null;
 
   const statCards = [
     {
@@ -233,8 +247,7 @@ export default function PaymentsPage() {
     { key: 'category', header: 'Category', render: (p) => p.category ?? '—' },
     {
       key: 'amount', header: canScope ? 'Amount' : 'Net revenue', sortKey: 'amount',
-      render: (p) => <Money amount={canScope ? p.amount : (p.amountAfterFees ?? p.amount)} currency={p.currency}
-        direction={isReversed(p.status) ? 'out' : p.status === 'paid' && !p.reviewRequired ? 'in' : undefined} />,
+      render: (p) => <PaymentAmount payment={p} />,
     },
     ...(canScope ? [{
       key: 'fee', header: 'Fee',
@@ -397,10 +410,7 @@ export default function PaymentsPage() {
         onRowClick={setDetail}
         mobileSummary={(p) => (
           <div className="mobile-data-card-summary">
-            <div className="mobile-data-card-amount">
-              <Money amount={canScope ? p.amount : (p.amountAfterFees ?? p.amount)} currency={p.currency}
-                direction={isReversed(p.status) ? 'out' : p.status === 'paid' && !p.reviewRequired ? 'in' : undefined} />
-            </div>
+            <div className="mobile-data-card-amount"><PaymentAmount payment={p} /></div>
             <div className="mobile-data-card-status"><StatusPill payment={p} /></div>
             <div className="mobile-data-card-creator">{labels.account}: {p.account}</div>
             <div className="mobile-card-actions">
@@ -468,9 +478,13 @@ export default function PaymentsPage() {
                 <DetailRow label={labels.agent}>{detail.agent ?? '—'}</DetailRow>
               </>
             )}
-            <DetailRow label={detail.amountAfterFees != null ? 'Net revenue' : 'Amount'}><Money amount={detail.amountAfterFees ?? detail.amount} currency={detail.currency}
-              direction={detail.reviewRequired ? undefined : 'in'} /></DetailRow>
-            {detail.platformFee != null && (
+            <DetailRow label={canScope ? 'Amount' : 'Net revenue'}>
+              {detailAmount == null ? '—' : (
+                <Money amount={detailAmount} currency={detail.currency}
+                  direction={detail.reviewRequired ? undefined : 'in'} />
+              )}
+            </DetailRow>
+            {detail.amount != null && detail.platformFee != null && (
               <>
                 <DetailRow label={detail.feeIsEstimate ? 'Platform fee · estimated' : 'Platform fee'}><Money amount={detail.platformFee} direction="out" /></DetailRow>
                 <DetailRow label={detail.feeIsEstimate ? 'Net · estimated' : 'Net'}><Money amount={detail.amount - detail.platformFee} direction="in" emphasis /></DetailRow>
@@ -577,10 +591,13 @@ export default function PaymentsPage() {
           fee={reversing.kind === 'refund' ? rateCard.refundFee : rateCard.chargebackFee}
           onClose={() => setReversing(null)}
           onSubmit={async () => {
+            const reversed = visibleAmount(reversing.payment);
             await recordReversal(reversing.payment.id, reversing.kind);
             setReversing(null);
             setDetail(null);
-            toast(`Recorded ${reversing.kind} of ${formatMoney(reversing.payment.amount, reversing.payment.currency)}.`);
+            toast(reversed == null
+              ? `Recorded ${reversing.kind}.`
+              : `Recorded ${reversing.kind} of ${formatMoney(reversed, reversing.payment.currency)}.`);
           }}
         />
       )}
@@ -843,6 +860,7 @@ function ReversalModal({ payment, kind, fee, onClose, onSubmit }: {
   onSubmit: () => Promise<void>;
 }) {
   const copy = REVERSAL_COPY[kind];
+  const amount = visibleAmount(payment);
   const [confirmed, setConfirmed] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -857,7 +875,9 @@ function ReversalModal({ payment, kind, fee, onClose, onSubmit }: {
   return (
     <Modal open onClose={onClose} title={copy.title} subtitle={copy.subtitle}>
       <div className="callout">
-        <DetailRow label="Reversed"><Money amount={payment.amount} currency={payment.currency} direction="out" /></DetailRow>
+        <DetailRow label="Reversed">
+          {amount == null ? '—' : <Money amount={amount} currency={payment.currency} direction="out" />}
+        </DetailRow>
         {fee !== undefined && <DetailRow label={copy.feeLabel}><Money amount={fee} direction="out" /></DetailRow>}
         {payment.platformFee != null && (
           <p className="sub">Platform fees already taken ({formatMoney(payment.platformFee)}) are not returned by the provider.</p>
@@ -870,7 +890,9 @@ function ReversalModal({ payment, kind, fee, onClose, onSubmit }: {
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>Cancel</button>
         <button className="btn danger" onClick={submit} disabled={isSaving}>
-          {isSaving ? 'Recording…' : `Record ${kind} of ${formatMoney(payment.amount, payment.currency)}`}
+          {isSaving ? 'Recording…'
+            : amount == null ? `Record ${kind}`
+              : `Record ${kind} of ${formatMoney(amount, payment.currency)}`}
         </button>
       </div>
     </Modal>

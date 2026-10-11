@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../hooks/useCurrentSession';
-import { categoriesApi, customersApi, paymentsApi, type CompletePaymentInput, type Payment } from '../api/endpoints';
+import { categoriesApi, customersApi, paymentsApi, visibleAmount, type CompletePaymentInput, type Payment } from '../api/endpoints';
 import { formatMoney } from '../lib/format';
 import { toast } from '../lib/toast';
 import Modal from './Modal';
@@ -108,8 +108,15 @@ export default function CompletePaymentModal({ payment, onClose, onCompleted }: 
     }
   };
 
+  // An agent fills these details, and an agent is sent the net rather than the
+  // sale price, so the dialog names whichever figure the server returned.
+  const amount = visibleAmount(payment);
+  const subtitle = amount == null
+    ? payment.account
+    : `${formatMoney(amount, payment.currency)} · ${payment.account}`;
+
   return (
-    <Modal open onClose={onClose} title="Fill payment details" subtitle={`${formatMoney(payment.amount, payment.currency)} · ${payment.account}`}>
+    <Modal open onClose={onClose} title="Fill payment details" subtitle={subtitle}>
       {hasCustomersError && (
         <div className="warnbar" role="alert">
           Existing customers could not be loaded. Retry before creating a new one.{' '}

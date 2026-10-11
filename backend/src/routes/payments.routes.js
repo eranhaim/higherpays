@@ -44,13 +44,9 @@ const SELECT = `
 //
 // No fee figure of any kind reaches a scoped caller — not the platform fee,
 // not its margin or PSP parts, and not a combined total.
-//
-// `amount` is the sale price and stays for everyone: an agent sets it when
-// they create the link and quotes it to the customer, and an unsettled
-// payment has no net figure to show instead.
 function publicPayment(p, { seesFees }) {
   return {
-    id: p.id, amount: Number(p.amount), currency: p.currency, status: p.status,
+    id: p.id, currency: p.currency, status: p.status,
     paymentMethod: p.payment_method, providerPaymentId: p.provider_payment_id,
     providerTransactionId: p.provider_transaction_id, occurredAt: p.occurred_at,
     accountId: p.account_id, account: p.account,
@@ -68,18 +64,21 @@ function publicPayment(p, { seesFees }) {
       declineCodeSource: p.provider_decline_code_source,
       declineReasonSource: p.provider_decline_reason_source,
     } : {}),
-    // Agents need to see the actual amount the agency received, not the
-    // customer-facing content price. We expose the final ledger result, never
-    // recalculate fees in the HTTP layer.
-    ...(!seesFees ? { amountAfterFees: p.distributable == null ? null : Number(p.distributable) } : {}),
-    // MantaPay reports the actual per-transaction fee only through its Search
-    // API, long after the payment. Until it does, the provider's share of this
-    // fee is the rate card's expectation, and the caller must be told so rather
-    // than read the net it implies as settled fact.
+    // Gross and net are mutually exclusive, in one branch, because together
+    // they are the platform fee by subtraction. A scoped caller is paid out of
+    // the distributable, so that ledger result is the one money figure they
+    // get; it is null until the sale settles, and no gross stands in for it.
     ...(seesFees ? {
+      amount: Number(p.amount),
       platformFee: p.platform_fee == null ? null : Number(p.platform_fee),
+      // MantaPay reports the actual per-transaction fee only through its Search
+      // API, long after the payment. Until it does, the provider's share of
+      // this fee is the rate card's expectation, and the caller must be told so
+      // rather than read the net it implies as settled fact.
       feeIsEstimate: p.fee_is_estimate !== false,
-    } : {}),
+    } : {
+      amountAfterFees: p.distributable == null ? null : Number(p.distributable),
+    }),
   };
 }
 
@@ -298,15 +297,20 @@ router.get('/filters', requirePermission('payments.view'), asyncHandler(async (r
 // Every column the export can carry, in file order. Headers are what the agency
 // reads in the file, not our column names. `feesOnly` columns reach only a caller who sees the whole
 // workspace. Mirrored in frontend/src/api/endpoints/payments.ts.
+//
+// Gross is `feesOnly` for the same reason it is withheld from the list: beside
+// net it is the platform fee by subtraction. Net is the figure a scoped caller
+// is paid on, so it stays, and it is read off the ledger rather than
+// recalculated here.
 const exportColumns = (labels) => [
   { key: 'date', header: 'Date', value: (r) => new Date(r.occurred_at).toISOString() },
   { key: 'reference', header: 'HigherPays Order', value: (r) => r.link_reference },
   { key: 'providerTransaction', header: 'MantaPay Transaction ID', value: (r) => r.provider_transaction_id },
   { key: 'status', header: 'Status', value: (r) => r.status },
-  { key: 'gross', header: 'Gross Revenue', value: (r) => `${r.amount} ${r.currency}` },
+  { key: 'gross', header: 'Gross Revenue', feesOnly: true, value: (r) => `${r.amount} ${r.currency}` },
   { key: 'fee', header: 'Platform Fee', feesOnly: true, value: (r) => r.platform_fee },
-  { key: 'net', header: 'Net Revenue', feesOnly: true,
-    value: (r) => (r.platform_fee == null ? null : (Number(r.amount) - Number(r.platform_fee)).toFixed(2)) },
+  { key: 'net', header: 'Net Revenue',
+    value: (r) => (r.distributable == null ? null : Number(r.distributable).toFixed(2)) },
   { key: 'customer', header: 'Customer', value: (r) => r.customer },
   { key: 'telegram', header: 'Telegram', value: (r) => r.customer_telegram },
   { key: 'creator', header: labels.account, value: (r) => r.account },
