@@ -7,6 +7,7 @@ const { audit } = require('../util/audit');
 const { badRequest } = require('../util/validate');
 const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const { resolveDataScope, scopeParams } = require('../auth/dataScope');
+const { resolveCallerAgentId } = require('../auth/callerAgent');
 const { hasPermission } = require('../auth/permissions');
 const { status: vocab } = require('../schema/entities');
 const config = require('../config');
@@ -358,6 +359,10 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
     }
 
     const scope = await resolveDataScope(c, req);
+    // Who owns the link is a question about the caller, not about what they
+    // may see. An agent granted data.view_all resolves to a workspace scope,
+    // and reading the agent out of that scope left their links unattributed.
+    const createdByAgentId = await resolveCallerAgentId(c, req);
 
     // The account must be active, in this workspace and, for an agent, one
     // they are assigned. An unassigned account reports the same not-found as a
@@ -395,7 +400,7 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
           status, reference_id, provider_link_id, description, expires_at, checkout_url)
        VALUES ($1,$2,$3,$4,'fixed',$5,$6,$7,'active',$8,$8,$9,$10,$11)
        RETURNING *`,
-      [wid(req), accountId, scope.kind === 'agent' ? scope.agentId : null,
+      [wid(req), accountId, createdByAgentId,
         type, amt, checkoutFee, cur, referenceId, description || null, expiresAt, checkoutUrl])).rows[0];
     await recordLinkEvent(c, {
       workspaceId: wid(req), linkId: link.id, eventType: 'created',
