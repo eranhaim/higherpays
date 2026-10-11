@@ -81,7 +81,7 @@ test('additive checkout fees are rejected against the configured and actual link
     .set(admin.headers)
     .send({ feeModel: 'flat', pspRatePct: 8, marginRatePct: 5, pspFixedFee: 0, checkoutFee: 10 })
     .expect(400);
-  assert.match(invalid.body.message, /less than the minimum permitted link amount/);
+  assert.match(invalid.body.detail, /less than the minimum permitted link amount/);
 
   await request(app).put(`/platform/workspaces/${t.workspaceId}/platform-fee`)
     .set(admin.headers)
@@ -92,5 +92,5 @@ test('additive checkout fees are rejected against the configured and actual link
   const link = await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
     .send({ accountId: account.id, type: 'single_use', amount: 4, currency: 'EUR' })
     .expect(400);
-  assert.match(link.body.message, /checkout fee must be less than the link amount/);
+  assert.match(link.body.detail, /checkout fee must be less than the link amount/);
 });

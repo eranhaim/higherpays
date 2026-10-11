@@ -347,7 +347,7 @@ Check the environment before debugging connection issues.
 
 ### People
 
-`users` is the login. `workspace_users` is access: one role per user per workspace (`workspace_admin`, `analyst`, `agent`, `account_owner`). `accounts` and `agents` are the business records; each belongs to a user and its composite foreign key proves that user holds the matching role in that workspace, so the database itself refuses an agent profile on an admin, or one person being both an owner and an agent in the same agency. Creating an agent or account always creates the login (`backend/src/services/people.js`). Platform admins are `users.is_platform_admin` and hold a `workspace_users` row in every workspace.
+`users` is the login. `workspace_users` is access: one role per user per workspace (`workspace_admin`, `analyst`, `agent`, `account_owner`). `accounts` and `agents` are the business records; each belongs to a user and its composite foreign key proves that user holds a seat in that workspace. Migration `029_profile_workspace_role_separation` dropped the role from that key so a profile survives a permission-role change, so the rule that one person is one thing per workspace — no agent profile on an admin, nobody both an owner and an agent in the same agency — is enforced in `backend/src/services/people.js`, not by the database. Creating an agent or account always creates the login there too. Platform admins are `users.is_platform_admin` and hold a `workspace_users` row in every workspace.
 
 ### Workspace queries
 

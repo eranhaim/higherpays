@@ -175,10 +175,15 @@ test('link operations keep an idempotent timeline, notes, archives, and price ba
     .set(t.authHeaders).expect(200)).body.items;
   assert.equal(withArchived.some((link) => link.id === first.id), true);
 
+  // The summary reports money, not inventory, so an archived link leaves it
+  // even when the list beside it is asked to show archived rows.
   const summary = (await request(app).get(`/workspaces/${t.workspaceId}/links/summary?showArchived=true`)
     .set(t.authHeaders).expect(200)).body;
-  assert.deepEqual(summary.priceBands.map((band) => band.count), [1, 1, 1, 1, 1]);
+  assert.deepEqual(summary.priceBands.map((band) => band.count), [0, 1, 1, 1, 1]);
 
   await request(app).post(`/workspaces/${t.workspaceId}/links/${first.id}/reactivate`)
     .set(t.authHeaders).expect(200);
+  const restored = (await request(app).get(`/workspaces/${t.workspaceId}/links/summary`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.deepEqual(restored.priceBands.map((band) => band.count), [1, 1, 1, 1, 1]);
 });
