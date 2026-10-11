@@ -1,4 +1,4 @@
-﻿import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useDebounced } from '../../hooks/useDebounced';
@@ -198,7 +198,7 @@ export default function PaymentsPage() {
       ),
     },
   ];
-  // Useful figures, but not what this page is read for ג€” off unless asked for.
+  // Useful figures, but not what this page is read for — off unless asked for.
   const statsView = useViewLayout('payments.stats', statCards, ['approvalRate', 'detailsNeeded', 'refunded']);
 
   const range: DateRange = { from: filters.from, to: filters.to };
@@ -214,23 +214,23 @@ export default function PaymentsPage() {
   const columns: Column<Payment>[] = [
     {
       key: 'reference', header: 'HigherPays Order',
-      render: (p) => <span className="ref" title={p.linkReference ?? undefined}>{p.linkReference ?? 'ג€”'}</span>,
+      render: (p) => <span className="ref" title={p.linkReference ?? undefined}>{p.linkReference ?? '—'}</span>,
     },
     {
       key: 'providerTransaction', header: 'MantaPay transaction',
-      render: (p) => <span className="ref" title={p.providerTransactionId ?? undefined}>{p.providerTransactionId ?? 'ג€”'}</span>,
+      render: (p) => <span className="ref" title={p.providerTransactionId ?? undefined}>{p.providerTransactionId ?? '—'}</span>,
     },
     {
       key: 'customer', header: 'Customer',
-      render: (p) => <span className="cname" title={p.customer ?? undefined}>{p.customer ?? 'ג€”'}</span>,
+      render: (p) => <span className="cname" title={p.customer ?? undefined}>{p.customer ?? '—'}</span>,
     },
     {
       key: 'account', header: labels.account, render: (p) => p.account,
     },
     {
-      key: 'agent', header: labels.agent, render: (p) => p.agent ?? 'ג€”',
+      key: 'agent', header: labels.agent, render: (p) => p.agent ?? '—',
     },
-    { key: 'category', header: 'Category', render: (p) => p.category ?? 'ג€”' },
+    { key: 'category', header: 'Category', render: (p) => p.category ?? '—' },
     {
       key: 'amount', header: canScope ? 'Amount' : 'Net revenue', sortKey: 'amount',
       render: (p) => <Money amount={canScope ? p.amount : (p.amountAfterFees ?? p.amount)} currency={p.currency}
@@ -418,7 +418,7 @@ export default function PaymentsPage() {
             {payments.length} loaded
             {hasMore && (
               <button className="btn ghost small" onClick={loadMore} disabled={isLoadingMore}>
-                {isLoadingMore ? 'Loadingג€¦' : 'Load more'}
+                {isLoadingMore ? 'Loading…' : 'Load more'}
               </button>
             )}
           </span>
@@ -434,9 +434,9 @@ export default function PaymentsPage() {
             <DetailRow label="HigherPays Order">
               {detail.linkReference
                 ? <Link className="ref" to={`/links?q=${encodeURIComponent(detail.linkReference)}`}>{detail.linkReference}</Link>
-                : 'ג€”'}
+                : '—'}
             </DetailRow>
-            <DetailRow label="MantaPay transaction ID">{detail.providerTransactionId ?? 'ג€”'}</DetailRow>
+            <DetailRow label="MantaPay transaction ID">{detail.providerTransactionId ?? '—'}</DetailRow>
             {detail.status === 'failed' && (
               <>
                 <DetailRow label="MantaPay decline reason">{declineReasonLabel(detail.declineReason)}</DetailRow>
@@ -446,8 +446,8 @@ export default function PaymentsPage() {
                 <p className="sub">The reason is MantaPay display text, or our own wording where MantaPay sent none; the signed reply code is the payment outcome.</p>
               </>
             )}
-            <DetailRow label="Customer">{detail.customer ?? 'ג€”'}{detail.customerTelegram ? <span className="sub inline"> ֲ· {detail.customerTelegram}</span> : null}</DetailRow>
-            <DetailRow label="Category">{detail.category ?? 'ג€”'}</DetailRow>
+            <DetailRow label="Customer">{detail.customer ?? '—'}{detail.customerTelegram ? <span className="sub inline"> · {detail.customerTelegram}</span> : null}</DetailRow>
+            <DetailRow label="Category">{detail.category ?? '—'}</DetailRow>
             {canReverse && !isReversed(detail.status) && !detail.reviewRequired ? (
               <ReassignFields
                 key={detail.id}
@@ -465,7 +465,7 @@ export default function PaymentsPage() {
             ) : (
               <>
                 <DetailRow label={labels.account}>{detail.account}</DetailRow>
-                <DetailRow label={labels.agent}>{detail.agent ?? 'ג€”'}</DetailRow>
+                <DetailRow label={labels.agent}>{detail.agent ?? '—'}</DetailRow>
               </>
             )}
             <DetailRow label={detail.amountAfterFees != null ? 'Net revenue' : 'Amount'}><Money amount={detail.amountAfterFees ?? detail.amount} currency={detail.currency}
@@ -533,9 +533,9 @@ export default function PaymentsPage() {
         open={flowPayment !== null}
         onClose={() => setFlowPayment(null)}
         title="Payment flow"
-        subtitle={flowPayment ? `HigherPays Order ${flowPayment.linkReference ?? 'ג€”'} ֲ· recorded waterfall` : undefined}
+        subtitle={flowPayment ? `HigherPays Order ${flowPayment.linkReference ?? '—'} · recorded waterfall` : undefined}
       >
-        {flow.isPending && <p className="sub">Loading the payment flowג€¦</p>}
+        {flow.isPending && <p className="sub">Loading the payment flow…</p>}
         {flow.isError && <div className="warnbar" role="alert">{paymentFlowError(flow.error)}</div>}
         {flow.data && <PaymentFlowContent flow={flow.data} labels={labels} />}
         <div className="modal-actions">
@@ -638,7 +638,7 @@ function paymentFlowError(error: unknown): string {
   if (error instanceof HttpError && typeof error.body === 'object' && error.body !== null) {
     const code = (error.body as { error?: unknown }).error;
     if (code === 'platform_two_factor_required') {
-      return 'Enable 2FA in Settings ג†’ My account before viewing payment flows.';
+      return 'Enable 2FA in Settings → My account before viewing payment flows.';
     }
     if (code === 'not_platform_admin') {
       return 'Only a HigherPays platform admin can view payment flows.';
@@ -671,8 +671,8 @@ function PaymentFlowContent({ flow, labels }: {
   return (
     <div className="payment-flow">
       <div className="flow-card">
-        <DetailRow label="HigherPays Order"><span className="ref">{flow.linkReference ?? 'ג€”'}</span></DetailRow>
-        <DetailRow label="MantaPay transaction ID">{flow.providerTransactionId ?? 'ג€”'}</DetailRow>
+        <DetailRow label="HigherPays Order"><span className="ref">{flow.linkReference ?? '—'}</span></DetailRow>
+        <DetailRow label="MantaPay transaction ID">{flow.providerTransactionId ?? '—'}</DetailRow>
       </div>
 
       <div className="flow-node flow-total">
@@ -680,13 +680,13 @@ function PaymentFlowContent({ flow, labels }: {
         <Money amount={flow.customerTotal} currency={flow.currency} direction="in" emphasis />
       </div>
 
-      <div className="flow-connector" aria-hidden="true">ג†“</div>
+      <div className="flow-connector" aria-hidden="true">↓</div>
 
       <div className="flow-card">
         <DetailRow label="Payment amount">
           <Money amount={flow.saleAmount} currency={flow.currency} direction="in" />
         </DetailRow>
-        <DetailRow label="Checkout fee ֲ· HigherPays">
+        <DetailRow label="Checkout fee · HigherPays">
           <Money amount={flow.checkoutFee} currency={flow.currency} direction="in" />
         </DetailRow>
       </div>
@@ -697,14 +697,14 @@ function PaymentFlowContent({ flow, labels }: {
         </div>
       ) : (
         <>
-          <div className="flow-connector" aria-hidden="true">ג†“</div>
+          <div className="flow-connector" aria-hidden="true">↓</div>
 
           <div className="flow-card">
             <div className="flow-card-head">
               <span className="field-label">Platform deductions</span>
               <Money amount={flow.fees.platform} currency={flow.currency} direction="out" emphasis />
             </div>
-            <DetailRow label={`MantaPay costs ֲ· ${PROVIDER_FEE_SOURCE_LABELS[flow.fees.providerSource]}`}>
+            <DetailRow label={`MantaPay costs · ${PROVIDER_FEE_SOURCE_LABELS[flow.fees.providerSource]}`}>
               <Money amount={flow.fees.provider} currency={flow.currency} direction="out" />
             </DetailRow>
             {flow.fees.providerSource === 'estimated' && (
@@ -712,7 +712,7 @@ function PaymentFlowContent({ flow, labels }: {
             )}
             <div className="flow-breakdown">
               {providerItems.map(([label, amount, rate]) => (
-                <DetailRow key={label} label={`MantaPay ֲ· ${rate ? rateLabel(label, rate, flow.currency) : label}`}>
+                <DetailRow key={label} label={`MantaPay · ${rate ? rateLabel(label, rate, flow.currency) : label}`}>
                   <Money amount={amount} currency={flow.currency} direction="out" />
                 </DetailRow>
               ))}
@@ -722,7 +722,7 @@ function PaymentFlowContent({ flow, labels }: {
             </div>
           </div>
 
-          <div className="flow-connector" aria-hidden="true">ג†“</div>
+          <div className="flow-connector" aria-hidden="true">↓</div>
 
           <div className="flow-node flow-total">
             <span className="field-label">Available to distribute</span>
@@ -813,7 +813,7 @@ function ExportModal({ range, loadedCount, canSeeFees, labels, onClose, onSubmit
       </div>
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>Cancel</button>
-        <button className="btn" onClick={submit} disabled={isExporting}>{isExporting ? 'Exportingג€¦' : 'Export CSV'}</button>
+        <button className="btn" onClick={submit} disabled={isExporting}>{isExporting ? 'Exporting…' : 'Export CSV'}</button>
       </div>
     </Modal>
   );
@@ -870,7 +870,7 @@ function ReversalModal({ payment, kind, fee, onClose, onSubmit }: {
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>Cancel</button>
         <button className="btn danger" onClick={submit} disabled={isSaving}>
-          {isSaving ? 'Recordingג€¦' : `Record ${kind} of ${formatMoney(payment.amount, payment.currency)}`}
+          {isSaving ? 'Recording…' : `Record ${kind} of ${formatMoney(payment.amount, payment.currency)}`}
         </button>
       </div>
     </Modal>
