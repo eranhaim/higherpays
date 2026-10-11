@@ -198,17 +198,25 @@ test('pending and abandoned MantaPay replies do not create failed payments', asy
   const t = await createTenant(app);
   const account = await createAccount(app, t);
 
-  for (const replyCode of ['001', '600']) {
+  const reply = async (replyCode) => {
     const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
       .send({ accountId: account.id, type: 'single_use', amount: 30, currency: 'EUR' }).expect(201)).body;
-    const response = await postWebhook(app, await endpointFor(t.workspaceId), buildPaidPayload({
+    return (await postWebhook(app, await endpointFor(t.workspaceId), buildPaidPayload({
       reference: link.referenceId,
       transId: newTransId(),
       amount: 30,
       replyCode,
-    })).expect(200);
-    assert.equal(response.body.ignored, 'non_final_status');
-  }
+    })).expect(200)).body;
+  };
+
+  // 001 is a wire or PIX the customer has not finished: a real pending payment.
+  const pending = await reply('001');
+  assert.equal(pending.status, 'pending');
+  assert.ok(pending.paymentId);
+
+  // 600 is the customer closing the window, which leaves nothing to record.
+  const abandoned = await reply('600');
+  assert.equal(abandoned.ignored, 'non_final_status');
 
   const payments = (await request(app).get(`/workspaces/${t.workspaceId}/payments?status=failed`)
     .set(t.authHeaders).expect(200)).body.items;
