@@ -31,7 +31,7 @@ export {
 } from './links';
 export {
   paymentsApi, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, getPaymentExportColumns,
-  PROVIDER_FEE_SOURCE_LABELS, isReversed, paymentStatusLabel, declineReasonLabel,
+  PROVIDER_FEE_SOURCE_LABELS, isReversed, visibleAmount, paymentStatusLabel, declineReasonLabel,
   type Payment, type PaymentFlow, type PaymentFlowParty, type PaymentFlowRate, type PaymentsSummary, type PaymentStatus, type PaymentFilterOptions, type ListPaymentsQuery, type CompletePaymentInput, type ReversalResult,
   type ExportColumn, type ExportOptions, type PaymentSort, type MantaPayDeclineSource,
 } from './payments';

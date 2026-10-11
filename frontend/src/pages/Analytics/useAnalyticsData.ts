@@ -10,7 +10,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { analyticsApi, accountsApi, agentsApi } from '../../api/endpoints';
-import { DAY_MS, startOfLocalDay, endOfLocalDay } from '../../lib/format';
+import { DAY_MS, toLocalDateInput, startOfLocalDay, endOfLocalDay } from '../../lib/format';
 
 export interface AnalyticsFilters {
   /** Date-input values, `YYYY-MM-DD` in local time. */
@@ -24,15 +24,6 @@ export interface DateWindow {
   fromMs: number;
   toMs: number;
   days: number;
-}
-
-/** `YYYY-MM-DD` for a timestamp in local time, matching what `<input type="date">` holds. */
-export function toLocalDateInput(ts: number): string {
-  const d = new Date(ts);
-  const y = d.getFullYear();
-  const mo = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${mo}-${day}`;
 }
 
 export function defaultFilters(): AnalyticsFilters {

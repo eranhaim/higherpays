@@ -4,7 +4,7 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import { HttpError } from '../../api/http';
-import { initials } from '../../lib/format';
+import { initials, toLocalDateInput } from '../../lib/format';
 import { sortRows, type SortValues } from '../../lib/sortRows';
 import { toast } from '../../lib/toast';
 import Modal from '../../components/Modal';
@@ -30,23 +30,20 @@ type Row =
 
 type RangeKey = 'all' | '30d' | 'month' | 'quarter';
 
-function isoDate(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
 function rangeFor(key: RangeKey) {
   const today = new Date();
+  const day = (date: Date) => toLocalDateInput(date.getTime());
   if (key === 'all') return {};
   if (key === '30d') {
     const from = new Date(today);
     from.setDate(from.getDate() - 29);
-    return { from: isoDate(from), to: isoDate(today) };
+    return { from: day(from), to: day(today) };
   }
   if (key === 'month') {
-    return { from: isoDate(new Date(today.getFullYear(), today.getMonth(), 1)), to: isoDate(today) };
+    return { from: day(new Date(today.getFullYear(), today.getMonth(), 1)), to: day(today) };
   }
   const quarterMonth = Math.floor(today.getMonth() / 3) * 3;
-  return { from: isoDate(new Date(today.getFullYear(), quarterMonth, 1)), to: isoDate(today) };
+  return { from: day(new Date(today.getFullYear(), quarterMonth, 1)), to: day(today) };
 }
 
 function memberType(member: Member): MemberType {
@@ -280,9 +277,10 @@ export default function AgencyPage() {
         </Select>
       ),
     },
-    // What someone is paid only reaches a caller the server trusts with
-    // revenue figures, so an absent field means an absent column.
-    ...(can('revenue.view') ? [{
+    // Everyone's pay terms are a whole-workspace figure, gated on the server
+    // like the roster and the volume beside them, so an absent field means an
+    // absent column.
+    ...(can('data.view_all') ? [{
       key: 'terms',
       header: 'Terms',
       render: (row: Row) => {

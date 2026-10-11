@@ -35,10 +35,25 @@ export function isReversed(status: PaymentStatus): boolean {
   return status === 'refunded';
 }
 
+/**
+ * The one money figure the server sent for a payment: gross for a caller who
+ * sees the whole workspace, net for a scoped seat. The server never sends
+ * both — together they are the platform fee by subtraction — so there is
+ * nothing to choose between here. Null before a sale settles, when a scoped
+ * seat has no net yet.
+ */
+export function visibleAmount(payment: Payment): number | null {
+  return payment.amount ?? payment.amountAfterFees ?? null;
+}
+
 /** One checkout attempt. A reusable link has many. */
 export interface Payment {
   id: string;
-  amount: number;
+  /**
+   * The gross sale price. Only sent to callers who see the whole workspace:
+   * beside `amountAfterFees` it is the platform fee by subtraction.
+   */
+  amount?: number;
   currency: string;
   status: PaymentStatus;
   paymentMethod: string | null;
@@ -69,7 +84,8 @@ export interface Payment {
   needsDetails: boolean;
   /**
    * The final ledger amount after all provider and platform fees. This is sent
-   * to limited-scope users instead of a fee breakdown.
+   * to limited-scope users instead of the gross and the fee breakdown, and is
+   * null until the sale settles.
    */
   amountAfterFees?: number | null;
   /** Only sent to callers who see the whole workspace. */
@@ -204,9 +220,9 @@ export function getPaymentExportColumns(labels: WorkspaceLabels): ExportColumn[]
   { key: 'reference', label: 'HigherPays Order' },
   { key: 'providerTransaction', label: 'MantaPay Transaction ID' },
   { key: 'status', label: 'Status' },
-  { key: 'gross', label: 'Gross Revenue' },
+  { key: 'gross', label: 'Gross Revenue', feesOnly: true },
   { key: 'fee', label: 'Platform Fee', feesOnly: true },
-  { key: 'net', label: 'Net Revenue', feesOnly: true },
+  { key: 'net', label: 'Net Revenue' },
   { key: 'customer', label: 'Customer' },
   { key: 'telegram', label: 'Telegram' },
   { key: 'creator', label: labels.account },

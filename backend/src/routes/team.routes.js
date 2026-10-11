@@ -83,9 +83,11 @@ router.post('/', requirePermission('team.manage'), asyncHandler(async (req, res)
 //
 //   - customer-paid volume and the assignment roster describe the whole
 //     workspace, so a seat narrowed to its own rows never receives them;
-//   - pay terms are revenue fields, gated like the share and the commission
-//     are everywhere else. Returning them here would hand a scoped seat the
-//     figures the rest of the API deliberately withholds.
+//   - pay terms are every other creator's split, salary and commission, which
+//     is a whole-workspace figure too. This route has no row scope, so
+//     `data.view_all` is the only gate that holds — `revenue.view` is a
+//     per-seat permission an agent can be granted, and that grant must not
+//     turn into the pay terms of everyone they work with.
 //
 // `team.view` is a per-seat permission, so an agent or account owner can hold
 // it; neither check can be inferred from the role.
@@ -93,7 +95,6 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
   const range = dateRange(req.query);
   if (!range) return res.status(400).json({ error: 'invalid_date_range' });
   const seesWholeWorkspace = hasPermission(req.access, 'data.view_all');
-  const seesRevenue = hasPermission(req.access, 'revenue.view');
   // A platform admin's seat refuses every edit below. Whoever manages the
   // team is told which seats those are, rather than offered a 409.
   const managesTeam = hasPermission(req.access, 'team.manage');
@@ -157,12 +158,12 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
         totalCustomerPaid: r.total_customer_paid == null ? null : Number(r.total_customer_paid),
         assignedCount: r.assigned_count == null ? null : Number(r.assigned_count),
       } : {}),
-      ...(seesRevenue && r.account_id ? {
+      ...(seesWholeWorkspace && r.account_id ? {
         payModel: r.pay_model,
         revenueSplitPct: Number(r.revenue_split_pct),
         salaryAmount: Number(r.salary_amount),
       } : {}),
-      ...(seesRevenue && r.agent_id ? { commissionPct: Number(r.commission_pct) } : {}),
+      ...(seesWholeWorkspace && r.agent_id ? { commissionPct: Number(r.commission_pct) } : {}),
     })),
   });
 }));

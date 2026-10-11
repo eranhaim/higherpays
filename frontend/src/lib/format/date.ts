@@ -63,6 +63,22 @@ export function toIsoDate(ts: number): string {
 }
 
 /**
+ * `YYYY-MM-DD` for a timestamp in local time, matching what `<input type="date">`
+ * holds and what every date filter in the API expects.
+ *
+ * Not `toIsoDate`: east of UTC that reads back the previous calendar day for
+ * any instant before the offset, so a range built from it starts a day early
+ * and its upper bound can exclude today.
+ */
+export function toLocalDateInput(ts: number): string {
+  const d = new Date(ts);
+  const y = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${mo}-${day}`;
+}
+
+/**
  * The first and last instant of a yyyy-mm-dd day, in local time.
  *
  * A date picker holds a calendar day, but every date filter in the API

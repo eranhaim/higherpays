@@ -86,7 +86,9 @@ test('an account owner sees their own payments and none of the fees', async () =
   await paySale(app, t, otherAccount, 99);
   const list = (await request(app).get(`/workspaces/${t.workspaceId}/payments`).set(account.ownerHeaders).expect(200)).body.items;
   assert.equal(list.length, 1);
-  assert.equal(list[0].amount, 40);
+  // Net only: gross beside it would be the platform fee by subtraction.
+  assert.equal(list[0].amount, undefined);
+  assert.ok(list[0].amountAfterFees > 0);
   assert.equal(list[0].platformFee, undefined);
   const admin = (await request(app).get(`/workspaces/${t.workspaceId}/payments`).set(t.authHeaders).expect(200)).body.items;
   assert.equal(admin.length, 2);
@@ -269,7 +271,7 @@ test('an agent sees the after-fee receipt, not the customer-facing price', async
     .set(agent.headers).expect(200)).body.items;
   const summary = (await request(app).get(`/workspaces/${t.workspaceId}/payments/summary`)
     .set(agent.headers).expect(200)).body;
-  assert.equal(list[0].amount, 40, 'the API retains the immutable sale amount');
+  assert.equal(list[0].amount, undefined, 'the customer-facing price stays with the agency');
   assert.equal(list[0].amountAfterFees, Number(entry.distributable));
   assert.equal(summary.afterFees, Number(entry.distributable));
   assert.equal(list[0].platformFee, undefined, 'the fee breakdown remains private');
