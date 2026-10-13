@@ -181,7 +181,7 @@ export interface ListPaymentsQuery {
   agentId?: string;
   customerId?: string;
   categoryId?: string;
-  /** YYYY-MM-DD, inclusive. */
+  /** ISO instant, inclusive. A picker's day becomes one through `toInstantRange`. */
   from?: string;
   to?: string;
   /** Matches HigherPays Order, MantaPay transaction ID, customer, account, or agent. */
@@ -257,11 +257,7 @@ function filterParams(filters: ListPaymentsQuery): URLSearchParams {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(filters)) {
     if (v === undefined || v === '' || v === false) continue;
-    // The date inputs give a day; the server compares timestamps, so the
-    // upper bound has to cover the whole of that day.
-    if (k === 'from') qs.set('from', `${v}T00:00:00`);
-    else if (k === 'to') qs.set('to', `${v}T23:59:59.999`);
-    else qs.set(k, String(v));
+    qs.set(k, String(v));
   }
   return qs;
 }

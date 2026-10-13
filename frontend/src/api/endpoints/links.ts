@@ -140,7 +140,7 @@ export interface ListLinksQuery {
   type?: string;
   min?: string;
   max?: string;
-  /** YYYY-MM-DD, inclusive. */
+  /** ISO instant, inclusive. A picker's day becomes one through `toInstantRange`. */
   from?: string;
   to?: string;
   /** Matches HigherPays Order, MantaPay transaction ID, or agent name. */
@@ -156,9 +156,7 @@ function filterParams(filters: ListLinksQuery): URLSearchParams {
   const qs = new URLSearchParams();
   for (const [key, value] of Object.entries(filters)) {
     if (!value) continue;
-    if (key === 'from') qs.set('from', `${value}T00:00:00`);
-    else if (key === 'to') qs.set('to', `${value}T23:59:59.999`);
-    else qs.set(key, value);
+    qs.set(key, value);
   }
   return qs;
 }
