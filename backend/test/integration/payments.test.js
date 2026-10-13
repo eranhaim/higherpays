@@ -352,3 +352,46 @@ test('payment summaries use all filtered rows and keep checkout-fee revenue plat
     .get(`/workspaces/${t.workspaceId}/payments?q=${paid.link.referenceId}`)
     .set(t.authHeaders).expect(200)).body.items[0].linkReference);
 });
+
+// The Payments page turns the picker's day into an ISO instant before it asks.
+// A build that then appended the day suffix a second time sent
+// `...ZT23:59:59.999`, which Postgres reads as a timezone name and refuses, so
+// the list, the totals and the export all answered 500 on a customer's screen.
+test('a date filter that is not a date is refused, and a real range still totals its payments', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const { paymentId } = await paySale(app, t, account, 40);
+  const base = `/workspaces/${t.workspaceId}/payments`;
+
+  const occurredAt = (await request(app).get(base).set(t.authHeaders).expect(200))
+    .body.items.find((p) => p.id === paymentId).occurredAt;
+  const day = occurredAt.slice(0, 10);
+  const startOfDay = `${day}T00:00:00.000Z`;
+  const endOfDay = `${day}T23:59:59.999Z`;
+
+  for (const path of [base, `${base}/summary`, `${base}/export`]) {
+    const refused = await request(app)
+      .get(`${path}?from=${startOfDay}&to=${encodeURIComponent(`${endOfDay}T23:59:59.999`)}`)
+      .set(t.authHeaders).expect(400);
+    assert.deepEqual(refused.body.fields, ['to']);
+  }
+
+  // An open upper bound is a filter, not an error: the picker has one between
+  // the first and the second click of a range.
+  assert.ok((await request(app).get(`${base}?from=${startOfDay}`).set(t.authHeaders).expect(200))
+    .body.items.some((p) => p.id === paymentId));
+
+  const inDay = `?from=${startOfDay}&to=${endOfDay}`;
+  assert.ok((await request(app).get(base + inDay).set(t.authHeaders).expect(200))
+    .body.items.some((p) => p.id === paymentId));
+  assert.equal((await request(app).get(`${base}/summary${inDay}`).set(t.authHeaders).expect(200))
+    .body.grossContent, 40);
+
+  // The bounds are compared, not ignored: a window that closes before the sale
+  // holds neither the row nor its money.
+  const beforeSale = `?to=${new Date(Date.parse(occurredAt) - 1000).toISOString()}`;
+  assert.equal((await request(app).get(base + beforeSale).set(t.authHeaders).expect(200))
+    .body.items.length, 0);
+  assert.equal((await request(app).get(`${base}/summary${beforeSale}`).set(t.authHeaders).expect(200))
+    .body.grossContent, 0);
+});

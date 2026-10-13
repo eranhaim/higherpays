@@ -4,7 +4,7 @@ const { query, withTransaction } = require('../db');
 const { requirePermission, requireArchiveManager } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
-const { badRequest } = require('../util/validate');
+const { badRequest, invalidDateFilter } = require('../util/validate');
 const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const { resolveDataScope, scopeParams } = require('../auth/dataScope');
 const { resolveCallerAgentId } = require('../auth/callerAgent');
@@ -154,6 +154,8 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
   const cursor = decodeCursor(req.query.cursor);
   const min = numberFilter(req.query.min), max = numberFilter(req.query.max);
   if (min != null && max != null && max < min) return badRequest(res, 'max must be >= min', ['min', 'max']);
+  const invalidDate = invalidDateFilter(req.query);
+  if (invalidDate) return badRequest(res, `${invalidDate} must be a date`, [invalidDate]);
 
   const rows = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
@@ -194,6 +196,8 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
 router.get('/summary', requirePermission('links.view'), asyncHandler(async (req, res) => {
   const min = numberFilter(req.query.min), max = numberFilter(req.query.max);
   if (min != null && max != null && max < min) return badRequest(res, 'max must be >= min', ['min', 'max']);
+  const invalidDate = invalidDateFilter(req.query);
+  if (invalidDate) return badRequest(res, `${invalidDate} must be a date`, [invalidDate]);
 
   const row = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
