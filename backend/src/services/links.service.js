@@ -16,6 +16,12 @@ const { recordLinkEvent } = require('./linkEvents');
 const DEFAULT_GRACE_MINUTES = 10;
 const LOOP_INTERVAL_MS = 10 * 60_000;
 
+// Only a settled attempt becomes a payment here. MantaPay hands back a fresh
+// transaction id for a checkout that is still open, so every poll of an unpaid
+// link looked like a new attempt: one phantom pending payment per link per run.
+// The push notification still records a pending attempt, once, under its own id.
+const SETTLED_STATUSES = ['approved', 'declined'];
+
 async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
   const summary = { checked: 0, updated: [], skipped: [] };
 
@@ -39,7 +45,7 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
 
     if (link.type === 'reusable') {
       for (const [index, transaction] of (statusResp.transactions || []).entries()) {
-        if (!transaction.transId || !['approved', 'pending', 'declined'].includes(transaction.status)) continue;
+        if (!transaction.transId || !SETTLED_STATUSES.includes(transaction.status)) continue;
         const outcome = await paymentsService.recordPaymentOutcome(c, ws.id, {
           providerTransactionId: transaction.transId,
           status: transaction.status,
@@ -68,7 +74,7 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
 
     const st = statusResp.status;   // approved | declined | pending | abandoned | unknown
 
-    if (['approved', 'declined'].includes(st) || (st === 'pending' && statusResp.transaction_id)) {
+    if (SETTLED_STATUSES.includes(st)) {
       const outcome = await paymentsService.recordPaymentOutcome(c, ws.id, {
         providerTransactionId: statusResp.transaction_id || ('ref-' + link.reference_id),
         status: st,
@@ -94,18 +100,11 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
         });
         continue;
       }
-      if (st === 'declined') {
-        summary.updated.push({
-          linkId: link.id,
-          to: 'failed',
-          paymentId: outcome.paymentId,
-        });
-        if (!link.is_expired) continue;
-      }
-      if (st === 'pending') {
-        summary.skipped.push({ linkId: link.id, reason: 'status_pending', paymentId: outcome.paymentId });
-        if (!link.is_expired) continue;
-      }
+      summary.updated.push({ linkId: link.id, to: 'failed', paymentId: outcome.paymentId });
+      if (!link.is_expired) continue;
+    } else if (st === 'pending') {
+      summary.skipped.push({ linkId: link.id, reason: 'status_pending' });
+      if (!link.is_expired) continue;
     }
     // Anything short of approval leaves the link open until its deadline.
     if (link.is_expired) {
