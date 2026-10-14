@@ -24,8 +24,12 @@ const PLATFORM_ADMIN_EMAIL = process.env.SEED_PLATFORM_ADMIN || 'platform@higher
 // login sees more than one workspace without being a platform admin.
 const SHARED_MEMBER = { email: 'finance@higherpays.test', fullName: 'Sam Okafor', role: 'member' };
 
-// The two agencies deliberately differ in vocabulary, split and fee model, so
-// anything that hardcodes one of them shows up immediately.
+// The agencies deliberately differ in vocabulary, split, fee model and
+// currency, so anything that hardcodes one of them shows up immediately.
+//
+// `currencies` is the enabled set beyond the base one. Acme and Northstar have
+// none, so they exercise the single-currency path that every existing agency
+// is on; OnlyElite is the multi-currency agency.
 const AGENCIES = [
   {
     slug: 'acme',
@@ -80,6 +84,41 @@ const AGENCIES = [
       { key: 'closer', fullName: 'Marco Ruiz', country: 'US', commissionPct: 10, works: ['rae'] },
     ],
   },
+  {
+    slug: 'onlyelite',
+    name: 'OnlyElite',
+    currency: 'USD',
+    merchantId: 'MID-ELITE-003',
+    labels: { account: 'Creator', accounts: 'Creators', agent: 'Chatter', agents: 'Chatters' },
+    linkLimits: { min: 5, max: 5000 },
+    // The checkout fee is set per currency because a flat amount does not
+    // translate: USD 1.50 is roughly EUR 1.40 and GBP 1.20, while the same
+    // 1.50 in shekels would be a third of the fee. ILS is enabled for records
+    // and reporting only — MantaPay has no currency id for it, so no link can
+    // be priced in it.
+    currencies: [
+      { code: 'EUR', checkoutFee: 1.4, min: 5, max: 5000 },
+      { code: 'GBP', checkoutFee: 1.2, min: 5, max: 5000 },
+      { code: 'ILS', checkoutFee: 5.5, min: 20, max: 20000 },
+    ],
+    fees: {
+      feeModel: 'flat',
+      pspRatePct: 6, mdrPct: null, settlementPct: null, pspFixedFee: 0.3, marginRatePct: 4,
+    },
+    settlementFees: {
+      chargebackFee: 20, refundFee: 2, declineFee: 0.4,
+      settlementFeePct: 0, settlementFeeFlat: 0, reservePct: 5, reserveReleaseDays: 60,
+    },
+    split: { account: 65, agency: 25, agent: 10 },
+    categories: ['Subscription', 'Custom content', 'Tip'],
+    accounts: [
+      { handle: 'nova', name: 'Nova Lane', country: 'GB', splitPct: 65 },
+      { handle: 'tali', name: 'Tali Bar', country: 'IL', splitPct: 70 },
+    ],
+    agents: [
+      { key: 'chatter', fullName: 'Yael Shapira', country: 'IL', commissionPct: 10, works: ['nova', 'tali'] },
+    ],
+  },
 ];
 
 // --- upserts ---------------------------------------------------------------
@@ -117,6 +156,26 @@ async function upsertWorkspace(c, agency) {
      agency.linkLimits.min, agency.linkLimits.max,
      agency.labels.account, agency.labels.accounts,
      agency.labels.agent, agency.labels.agents])).rows[0];
+}
+
+// The base currency is always enabled and inherits its amounts, so a
+// single-currency agency looks exactly as it did before multi-currency.
+async function upsertWorkspaceCurrencies(c, workspaceId, agency) {
+  await c.query(
+    `INSERT INTO workspace_currencies (workspace_id, currency) VALUES ($1,$2)
+     ON CONFLICT (workspace_id, currency) DO NOTHING`,
+    [workspaceId, agency.currency]);
+  for (const cur of agency.currencies || []) {
+    await c.query(
+      `INSERT INTO workspace_currencies
+         (workspace_id, currency, checkout_fee, min_link_amount, max_link_amount)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (workspace_id, currency) DO UPDATE
+          SET checkout_fee = EXCLUDED.checkout_fee,
+              min_link_amount = EXCLUDED.min_link_amount,
+              max_link_amount = EXCLUDED.max_link_amount`,
+      [workspaceId, cur.code, cur.checkoutFee, cur.min, cur.max]);
+  }
 }
 
 async function upsertAccess(c, workspaceId, userId, role, status = 'active') {
@@ -176,6 +235,7 @@ async function seedOnce(c, table, columns, values, workspaceId) {
 
 async function seedAgency(c, agency, passwordHash, platformAdminId) {
   const workspace = await upsertWorkspace(c, agency);
+  await upsertWorkspaceCurrencies(c, workspace.id, agency);
   await ensureWorkspaceRoles(c, workspace.id);
   const logins = [];
 
@@ -265,7 +325,8 @@ async function main() {
     console.log(`  ${PLATFORM_ADMIN_EMAIL.padEnd(32)} platform admin, every workspace`);
     console.log(`  ${SHARED_MEMBER.email.padEnd(32)} ${SHARED_MEMBER.role}, every workspace`);
     for (const { agency, workspace, logins } of seeded) {
-      console.log(`\n${agency.name}  (${agency.currency}, webhook ${workspace.webhook_endpoint_id})`);
+      const extra = (agency.currencies || []).map((x) => x.code).join(', ');
+      console.log(`\n${agency.name}  (${agency.currency}${extra ? ` + ${extra}` : ''}, webhook ${workspace.webhook_endpoint_id})`);
       for (const { email, role, status } of logins) {
         const suffix = status === 'active' ? '' : `  [${status}]`;
         console.log(`  ${email.padEnd(32)} ${role}${suffix}`);

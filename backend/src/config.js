@@ -35,9 +35,12 @@ const config = {
   sessionAbsoluteDays: parseInt(process.env.SESSION_ABSOLUTE_DAYS || process.env.REFRESH_TOKEN_DAYS || '30', 10),
   sessionInactivityHours: parseFloat(process.env.SESSION_INACTIVITY_HOURS || '1'),
 
-  // Supported agency and link currencies. FX is deliberately out of scope:
-  // every workspace keeps its own currency and all amounts stay in it.
-  supportedCurrencies: (process.env.SUPPORTED_CURRENCIES || 'EUR,USD,GBP').split(',').map((c) => c.trim().toUpperCase()),
+  // Currencies the platform can denominate in. An agency may be enabled for
+  // several of them (workspace_currencies); FX is still deliberately out of
+  // scope — nothing is ever converted, and no figure mixes two currencies.
+  // Being listed here is not provider support: see
+  // services/currencies.service.js::isCheckoutSupported.
+  supportedCurrencies: (process.env.SUPPORTED_CURRENCIES || 'EUR,USD,GBP,ILS').split(',').map((c) => c.trim().toUpperCase()),
 
   // ── MantaPay (payment provider) ─────────────────────────────────────────
   // Hosted-page base URL. The per-merchant hash key is resolved per workspace
