@@ -45,14 +45,17 @@ const newTransId = () => `mp_${Date.now().toString(36)}_${Math.random().toString
 
 /** Creates a link for `account` as `headers` (default: the admin) and pays it. */
 async function paySale(app, tenant, account, amount, opts = {}) {
+  const currency = opts.currency || 'EUR';
   const link = (await request(app)
     .post(`/workspaces/${tenant.workspaceId}/links`)
     .set(opts.headers || tenant.authHeaders)
-    .send({ accountId: account.id, type: opts.type || 'single_use', amount, currency: 'EUR' })
+    .send({ accountId: account.id, type: opts.type || 'single_use', amount, currency })
     .expect(201)).body;
   const transId = newTransId();
   const res = await postWebhook(app, await endpointFor(tenant.workspaceId),
-    buildPaidPayload({ reference: link.referenceId, transId, amount: opts.paidAmount ?? amount })).expect(200);
+    buildPaidPayload({
+      reference: link.referenceId, transId, currency, amount: opts.paidAmount ?? amount,
+    })).expect(200);
   return { link, transId, paymentId: res.body.paymentId };
 }
 

@@ -31,14 +31,14 @@ test('a paid payment waits for details; completing it creates the customer and f
 
   const linkAfter = (await pool.query('SELECT status FROM payment_links WHERE id = $1', [link.id])).rows[0];
   assert.equal(linkAfter.status, 'done');
-  const customer = (await pool.query('SELECT total_spend FROM customers WHERE id = $1', [done.customerId])).rows[0];
-  assert.equal(Number(customer.total_spend), 40);
-
-  const customers = (await request(app).get(`/workspaces/${t.workspaceId}/customers`)
-    .set(agent.headers).expect(200)).body.customers;
-  assert.equal(customers.some((item) => item.id === done.customerId), true);
+  const list = (await request(app).get(`/workspaces/${t.workspaceId}/customers`)
+    .set(agent.headers).expect(200)).body;
+  assert.equal(list.currency, 'EUR');
+  const listed = list.customers.find((item) => item.id === done.customerId);
+  assert.equal(listed.totalSpend, 40, 'spend is the paid total in the reported currency');
   const customerDetail = (await request(app).get(`/workspaces/${t.workspaceId}/customers/${done.customerId}`)
     .set(agent.headers).expect(200)).body;
+  assert.deepEqual(customerDetail.spendByCurrency, [{ currency: 'EUR', totalSpend: 40 }]);
   assert.equal(customerDetail.payments[0].linkId, link.id);
   assert.equal(customerDetail.payments[0].linkReference, link.referenceId);
   assert.equal(customerDetail.payments[0].needsDetails, false);

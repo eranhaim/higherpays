@@ -117,8 +117,16 @@ test('link creation validates currency after acquiring the workspace lock', asyn
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    // Re-denominating the agency replaces its enabled set, so the in-flight
+    // EUR link is now priced in a currency this agency may not use.
     await client.query(
       "UPDATE workspaces SET currency='USD' WHERE id=$1",
+      [tenant.workspaceId]);
+    await client.query(
+      "INSERT INTO workspace_currencies (workspace_id, currency) VALUES ($1,'USD')",
+      [tenant.workspaceId]);
+    await client.query(
+      "DELETE FROM workspace_currencies WHERE workspace_id=$1 AND currency='EUR'",
       [tenant.workspaceId]);
     const pending = request(app).post(`/workspaces/${tenant.workspaceId}/links`)
       .set(tenant.authHeaders)
