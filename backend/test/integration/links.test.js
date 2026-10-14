@@ -187,3 +187,19 @@ test('link operations keep an idempotent timeline, notes, archives, and price ba
     .set(t.authHeaders).expect(200)).body;
   assert.deepEqual(restored.priceBands.map((band) => band.count), [1, 1, 1, 1, 1]);
 });
+
+// The Links page builds its range the same way the Payments page does, so the
+// same malformed bound reached the same timestamptz cast.
+test('a link date filter that is not a date is refused rather than crashing', async () => {
+  const t = await createTenant(app);
+  const base = `/workspaces/${t.workspaceId}/links`;
+
+  for (const path of [base, `${base}/summary`]) {
+    const refused = await request(app)
+      .get(`${path}?to=${encodeURIComponent('2026-10-13T20:59:59.999ZT23:59:59.999')}`)
+      .set(t.authHeaders).expect(400);
+    assert.deepEqual(refused.body.fields, ['to']);
+  }
+
+  await request(app).get(`${base}?from=2026-10-01T00:00:00.000Z`).set(t.authHeaders).expect(200);
+});
