@@ -154,6 +154,31 @@ const Workspace = entity('workspaces', {
   timestamps: 'both',
 });
 
+// The currencies one agency may transact in. workspaces.currency is its BASE
+// currency and always has a row here; every other row is a second currency the
+// agency was deliberately enabled for.
+//
+// The amounts are per-currency because a flat amount does not translate: a
+// EUR 2.00 checkout fee is not a sane fee in ILS. NULL means "inherit" — the
+// rate card's checkoutFee, or the workspace's own link limits — which is what
+// the base row carries, so a single-currency agency behaves exactly as before.
+const WorkspaceCurrency = entity('workspace_currencies', {
+  fields: {
+    workspaceId:   uuid().references('workspaces').notNull(),
+    currency:      char(3).notNull(),
+    checkoutFee:   money(),
+    minLinkAmount: money(),
+    maxLinkAmount: money(),
+  },
+  primaryKey: ['workspaceId', 'currency'],
+  checks: [
+    "currency ~ '^[A-Z]{3}$'",
+    'checkout_fee IS NULL OR checkout_fee >= 0',
+    'min_link_amount IS NULL OR max_link_amount IS NULL OR min_link_amount <= max_link_amount',
+  ],
+  timestamps: 'created',
+});
+
 // Effective-dated platform rate card. marginRatePct is HigherPays' own cut:
 // never expose it to a workspace, which sees only the blended rate.
 const PlatformFeeRate = entity('platform_fee_rates', {
@@ -343,7 +368,9 @@ const Customer = entity('customers', {
     phone:          text(),
     country:        char(2),
     segment:        enumOf(CUSTOMER_SEGMENT).notNull().default("'new'"),
-    totalSpend:     money().notNull().default('0'),   // cached, recomputed on payment
+    // No total spend column: a fan may pay in several currencies, and one
+    // cached number for them would be a sum across currencies. Spend is
+    // computed per currency where it is read (customers.routes.js).
     lastPurchaseAt: timestamp(),
     archivedAt:     timestamp(),   // reversible operational archive
     deletedAt:      timestamp(),
@@ -369,8 +396,8 @@ const PaymentLink = entity('payment_links', {
     type:                  enumOf(LINK_TYPE).notNull(),
     pricingMode:           enumOf(PRICING_MODE).notNull().default("'fixed'"),
     amount:                money(),             // null when the payer chooses the amount
-    checkoutFee:           money().notNull().default('0'),  // added at checkout, copied from the rate card
-    currency:              char(3).notNull(),
+    checkoutFee:           money().notNull().default('0'),  // added at checkout, copied from the enabled currency
+    currency:              char(3).notNull(),   // immutable; enforced by a trigger
     status:                enumOf(LINK_STATUS).notNull().default("'active'"),
     referenceId:           text(),              // our reference, sent to the provider
     providerRequestId:     text(),              // provider's id for the create-link call
@@ -383,6 +410,11 @@ const PaymentLink = entity('payment_links', {
   checks: [
     "pricing_mode = 'open' OR (amount IS NOT NULL AND amount > 0)",
     "type = 'single_use' OR (expires_at IS NULL AND paid_at IS NULL)",
+  ],
+  // A link can only be priced in a currency this agency is enabled for.
+  foreignKeys: [
+    { columns: ['workspaceId', 'currency'], table: 'workspace_currencies',
+      references: ['workspaceId', 'currency'] },
   ],
   indexes: [
     'workspaceId', 'accountId', 'customerId',
@@ -423,7 +455,7 @@ const Payment = entity('payments', {
     categoryId:        uuid().references('categories', 'SET NULL'),  // chosen by the agent after payment
     agentId:           uuid().references('agents', 'SET NULL'),
     amount:            money().notNull(),
-    currency:          char(3).notNull(),
+    currency:          char(3).notNull(),   // immutable; enforced by a trigger
     status:            enumOf(PAYMENT_STATUS).notNull(),   // always written with the provider's outcome
     paymentMethod:     text(),                  // when the provider reports it
     providerPaymentId: text(),
@@ -432,6 +464,10 @@ const Payment = entity('payments', {
     occurredAt:        timestamp().notNull().default('now()'),
   },
   unique: [['workspaceId', 'providerPaymentId']],
+  foreignKeys: [
+    { columns: ['workspaceId', 'currency'], table: 'workspace_currencies',
+      references: ['workspaceId', 'currency'] },
+  ],
   indexes: [
     'workspaceId', 'accountId', 'paymentLinkId',
     { columns: ['workspaceId', 'occurredAt'] },
@@ -731,7 +767,7 @@ const AuditLog = entity('audit_log', {
 
 module.exports = {
   // global
-  User, RefreshToken, ImpersonationSession, Workspace, PlatformFeeRate,
+  User, RefreshToken, ImpersonationSession, Workspace, WorkspaceCurrency, PlatformFeeRate,
   // access
   WorkspaceRole, WorkspaceUser, Invite,
   // commercial
