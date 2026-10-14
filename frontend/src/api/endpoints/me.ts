@@ -10,10 +10,15 @@ import { workspacePath } from '../workspacePath';
  */
 export interface Earnings {
   range: { from: string; to: string };
+  /** The one currency every figure below is in. */
+  currency: string;
   role: 'agent' | 'account_owner';
   /** Null for an agent, who is always paid a commission. */
   payModel: 'share' | 'salary' | null;
-  /** Only set for a salaried creator: what they are owed each payout period. */
+  /**
+   * Only set for a salaried creator, and only in the agency's base currency:
+   * a salary is a fixed amount, so it is not owed in a second currency.
+   */
   salaryAmount: number | null;
   period: {
     sales: number;
@@ -27,8 +32,9 @@ export interface Earnings {
 }
 
 export const meApi = {
-  earnings(from: string, to: string): Promise<Earnings> {
+  earnings(from: string, to: string, currency?: string): Promise<Earnings> {
     const qs = new URLSearchParams({ from, to });
+    if (currency) qs.set('currency', currency);
     return api.get<Earnings>(workspacePath(`/me/earnings?${qs.toString()}`));
   },
 };

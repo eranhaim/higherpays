@@ -9,6 +9,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
+import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import { analyticsApi, accountsApi, agentsApi } from '../../api/endpoints';
 import { DAY_MS, toLocalDateInput, startOfLocalDay, endOfLocalDay } from '../../lib/format';
 
@@ -50,6 +51,7 @@ export function toDateWindow(filters: AnalyticsFilters): DateWindow | null {
 
 export function useAnalyticsData(filters: AnalyticsFilters, canScope: boolean) {
   const { activeWorkspaceId } = useCurrentSession();
+  const { currency } = useReportingCurrency();
   const dateWindow = toDateWindow(filters);
   const enabled = Boolean(activeWorkspaceId) && dateWindow !== null;
 
@@ -65,13 +67,13 @@ export function useAnalyticsData(filters: AnalyticsFilters, canScope: boolean) {
     : null;
 
   const report = useQuery({
-    queryKey: ['analytics', activeWorkspaceId, currentRange, scope],
-    queryFn: () => analyticsApi.report({ ...currentRange!, ...scope }),
+    queryKey: ['analytics', activeWorkspaceId, currency, currentRange, scope],
+    queryFn: () => analyticsApi.report({ ...currentRange!, ...scope, currency }),
     enabled,
   });
   const previous = useQuery({
-    queryKey: ['analytics', activeWorkspaceId, previousRange, scope],
-    queryFn: () => analyticsApi.report({ ...previousRange!, ...scope }),
+    queryKey: ['analytics', activeWorkspaceId, currency, previousRange, scope],
+    queryFn: () => analyticsApi.report({ ...previousRange!, ...scope, currency }),
     enabled,
   });
   const accounts = useQuery({
@@ -87,6 +89,7 @@ export function useAnalyticsData(filters: AnalyticsFilters, canScope: boolean) {
 
   return {
     dateWindow,
+    currency,
     report: report.data,
     previous: previous.data,
     isLoading: report.isLoading,

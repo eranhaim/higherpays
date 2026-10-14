@@ -126,6 +126,8 @@ export interface ReassignImpact {
   /** How many of them are in a payout that has already been paid. */
   paidOut: number;
   amount: number;
+  /** The currency of the link or payment; null when nothing was paid. */
+  currency: string | null;
 }
 
 /** Who a link or a payment should belong to from now on. */
@@ -136,6 +138,13 @@ export interface ReassignInput {
 }
 
 export interface ListLinksQuery {
+  /**
+   * Which currency the list, its totals and its price bands are about. One
+   * currency, never a set: a band of "100-200" means nothing across two.
+   * Omitted means the agency's base currency, and the server echoes back
+   * what it used.
+   */
+  currency?: string;
   status?: string;
   type?: string;
   min?: string;

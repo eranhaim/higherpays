@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
+import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import { useTimezone } from '../../hooks/useTimezone';
 import {
   payoutsApi, meApi,
@@ -32,30 +33,36 @@ export interface UsePayoutsDataResult {
   isError: boolean;
   isHistoryLoading: boolean;
   isHistoryError: boolean;
-  /** Settles unpaid balances for one payee, or every payee of that type when `targetId` is omitted. */
-  pay: (input: Pick<RunPayoutInput, 'payeeType' | 'targetId'>) => Promise<{ ran: number; total: number }>;
+  /**
+   * Settles unpaid balances for one payee, or every payee of that type when
+   * `targetId` is omitted, in the currency the page is reporting.
+   */
+  pay: (input: Pick<RunPayoutInput, 'payeeType' | 'targetId'>) => Promise<{ ran: number; total: number; currency: string }>;
   isPaying: boolean;
 }
 
 export function usePayoutsData(selected: DateRange, historyFilters: PayoutHistoryFilters): UsePayoutsDataResult {
   const { activeWorkspaceId } = useCurrentSession();
+  const { currency } = useReportingCurrency();
   const queryClient = useQueryClient();
   const range = useIsoRange(selected);
 
+  // What is owed, what has been paid, and what is run are all in the page's
+  // one currency: two currencies owed to the same creator are two debts.
   const breakdown = useQuery({
-    queryKey: ['payouts-breakdown', activeWorkspaceId, range.from, range.to],
-    queryFn: () => payoutsApi.getBreakdown(range.from, range.to),
+    queryKey: ['payouts-breakdown', activeWorkspaceId, range.from, range.to, currency],
+    queryFn: () => payoutsApi.getBreakdown(range.from, range.to, currency),
     enabled: Boolean(activeWorkspaceId),
   });
   const history = useQuery({
-    queryKey: ['payouts-history', activeWorkspaceId, historyFilters],
-    queryFn: () => payoutsApi.list(historyFilters),
+    queryKey: ['payouts-history', activeWorkspaceId, historyFilters, currency],
+    queryFn: () => payoutsApi.list({ ...historyFilters, currency }),
     enabled: Boolean(activeWorkspaceId),
   });
 
   const run = useMutation({
     mutationFn: (input: Pick<RunPayoutInput, 'payeeType' | 'targetId'>) =>
-      payoutsApi.run({ ...input, from: range.from, to: range.to }),
+      payoutsApi.run({ ...input, from: range.from, to: range.to, currency }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payouts-breakdown', activeWorkspaceId] });
       queryClient.invalidateQueries({ queryKey: ['payouts-history', activeWorkspaceId] });
@@ -71,19 +78,20 @@ export function usePayoutsData(selected: DateRange, historyFilters: PayoutHistor
     isHistoryError: history.isError,
     pay: async (input) => {
       const result = await run.mutateAsync(input);
-      return { ran: result.ran, total: result.total };
+      return { ran: result.ran, total: result.total, currency: result.currency };
     },
     isPaying: run.isPending,
   };
 }
 
-/** The signed-in agent's or owner's own figures. */
+/** The signed-in agent's or owner's own figures, in one currency. */
 export function useEarnings(selected: DateRange) {
   const { activeWorkspaceId } = useCurrentSession();
+  const { currency } = useReportingCurrency();
   const range = useIsoRange(selected);
   const query = useQuery<Earnings>({
-    queryKey: ['earnings', activeWorkspaceId, range.from, range.to],
-    queryFn: () => meApi.earnings(range.from, range.to),
+    queryKey: ['earnings', activeWorkspaceId, range.from, range.to, currency],
+    queryFn: () => meApi.earnings(range.from, range.to, currency),
     enabled: Boolean(activeWorkspaceId),
   });
   return { earnings: query.data ?? null, isLoading: query.isLoading, isError: query.isError };

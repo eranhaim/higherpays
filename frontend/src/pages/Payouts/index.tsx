@@ -8,7 +8,7 @@ import { toast } from '../../lib/toast';
 import Modal from '../../components/Modal';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DetailRow, EmptyState, LoadingCard, ErrorCard,
-  FilterBar, DateRangePicker, DataTable, DateCell, Select, type DateRange, type Column,
+  FilterBar, DateRangePicker, DataTable, DateCell, Select, CurrencyPicker, type DateRange, type Column,
 } from '../../components/ui';
 import type { PayoutRecord } from '../../api/endpoints';
 import { usePayoutsData, useEarnings } from './usePayoutsData';
@@ -50,12 +50,12 @@ function MyEarnings() {
   // title rather than in a filter bar of its own.
   const header = (
     <PageHeader title="Earnings" subtitle="What you earned in the selected period, and what you are still owed."
-      actions={<DateRangePicker value={range} onChange={setRange} />} />
+      actions={<><CurrencyPicker /><DateRangePicker value={range} onChange={setRange} /></>} />
   );
   if (isLoading) return <div>{header}<LoadingCard label="Loading your earnings…" /></div>;
   if (isError || !earnings) return <div>{header}<ErrorCard message="Couldn't load your earnings." /></div>;
 
-  const { period, balance } = earnings;
+  const { period, balance, currency } = earnings;
   const onSalary = earnings.payModel === 'salary';
   // Net revenue is the pot; your pay is your slice of it. Naming both "earnings"
   // is what made creators read the pot as their own money.
@@ -64,18 +64,23 @@ function MyEarnings() {
     <div>
       {header}
       <StatGrid>
-        <StatCard label="Net revenue" value={<Money amount={period.netRevenue} direction="in" emphasis />}
+        <StatCard label="Net revenue" value={<Money amount={period.netRevenue} currency={currency} direction="in" emphasis />}
           sub={`${period.sales} paid sales · revenue after all fees`} />
         {onSalary ? (
-          <StatCard label="Your salary" value={<Money amount={earnings.salaryAmount ?? 0} direction="in" />}
-            sub="Fixed amount for each payout period" />
+          // A salary is a fixed amount in the agency's base currency, so it is
+          // owed in that currency and nothing is owed in any other.
+          <StatCard label="Your salary"
+            value={earnings.salaryAmount == null
+              ? <span className="amt">—</span>
+              : <Money amount={earnings.salaryAmount} currency={currency} direction="in" />}
+            sub={earnings.salaryAmount == null ? 'Paid in the agency\u2019s base currency' : 'Fixed amount for each payout period'} />
         ) : (
           <>
-            <StatCard label={shareLabel} value={<Money amount={period.earned} direction="in" />}
+            <StatCard label={shareLabel} value={<Money amount={period.earned} currency={currency} direction="in" />}
               sub={`${period.yourRatePct}% of net revenue`} />
-            <StatCard label="Still owed to you" value={<Money amount={balance.owed} direction="in" />}
+            <StatCard label="Still owed to you" value={<Money amount={balance.owed} currency={currency} direction="in" />}
               sub="Across all periods, not yet paid out" />
-            <StatCard label="Paid to date" value={<Money amount={balance.paidToDate} />}
+            <StatCard label="Paid to date" value={<Money amount={balance.paidToDate} currency={currency} />}
               sub="Everything already paid out" />
           </>
         )}
@@ -84,14 +89,18 @@ function MyEarnings() {
         <h2 className="sechead">How your pay is worked out</h2>
         {onSalary ? (
           <>
-            <DetailRow label="Net revenue in this period"><Money amount={period.netRevenue} direction="in" /></DetailRow>
-            <DetailRow label="Your salary each payout period"><Money amount={earnings.salaryAmount ?? 0} direction="in" emphasis /></DetailRow>
+            <DetailRow label="Net revenue in this period"><Money amount={period.netRevenue} currency={currency} direction="in" /></DetailRow>
+            <DetailRow label="Your salary each payout period">
+              {earnings.salaryAmount == null
+                ? <span className="amt">—</span>
+                : <Money amount={earnings.salaryAmount} currency={currency} direction="in" emphasis />}
+            </DetailRow>
             <p className="sub">You are paid a fixed salary, so your pay does not rise or fall with net revenue.</p>
           </>
         ) : (
           <>
-            <DetailRow label="Net revenue — what is left after all fees"><Money amount={period.netRevenue} direction="in" /></DetailRow>
-            <DetailRow label={`${shareLabel} — ${period.yourRatePct}% of net revenue`}><Money amount={period.earned} direction="in" emphasis /></DetailRow>
+            <DetailRow label="Net revenue — what is left after all fees"><Money amount={period.netRevenue} currency={currency} direction="in" /></DetailRow>
+            <DetailRow label={`${shareLabel} — ${period.yourRatePct}% of net revenue`}><Money amount={period.earned} currency={currency} direction="in" emphasis /></DetailRow>
             <p className="sub">Your pay is worked out from net revenue, not from the price the customer paid.</p>
           </>
         )}
@@ -122,16 +131,18 @@ function AgencyPayouts() {
 
   const header = (
     <PageHeader title="Payouts" subtitle="What the agency owes for the selected period, and what has already been settled."
-      actions={<DateRangePicker value={range} onChange={setRange} />} />
+      actions={<><CurrencyPicker /><DateRangePicker value={range} onChange={setRange} /></>} />
   );
 
   if (isLoading) return <div>{header}<LoadingCard label="Loading payout breakdown…" /></div>;
   if (isError || !data) return <div>{header}<ErrorCard message="Couldn't load the payout breakdown." /></div>;
 
+  // Safe to add up: every figure in `data` is in `data.currency`, because the
+  // server resolved one currency for the whole breakdown.
   const accountsOwed = sum(data.perAccount.map((c) => c.owed));
   const agentsOwed = sum(data.perAgent.map((c) => c.owed));
   const owedTotal = accountsOwed + agentsOwed;
-  const { cash } = data;
+  const { cash, currency } = data;
   const cashScale = Math.max(owedTotal, cash.received, 1);
   const accountsWithBalance = data.perAccount.filter((c) => c.owed > 0).length;
   const agentsWithBalance = data.perAgent.filter((c) => c.owed > 0).length;
@@ -140,7 +151,9 @@ function AgencyPayouts() {
     try {
       const result = await pay({ payeeType: p.payeeType, targetId: p.targetId });
       setPending(null);
-      toast(result.ran === 0 ? `Nothing owed to ${p.label}.` : `Recorded ${formatMoney(result.total)} for ${p.label}.`);
+      toast(result.ran === 0
+        ? `Nothing owed to ${p.label} in ${result.currency}.`
+        : `Recorded ${formatMoney(result.total, result.currency)} for ${p.label}.`);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not record the payout.');
     }
@@ -165,10 +178,10 @@ function AgencyPayouts() {
       {header}
 
       <StatGrid>
-        <StatCard label="Gross sales" value={<Money amount={data.summary.grossSales} direction="in" />} sub={`${data.summary.successfulSales} successful sales`} />
-        <StatCard label="Net after platform fees" value={<Money amount={data.summary.distributable} direction="in" emphasis />} sub="Available to distribute" />
-        <StatCard label="Currently owed" value={<Money amount={data.summary.currentlyOwed} direction="out" />} sub="Selected period, not yet settled" />
-        <StatCard label="Paid to date" value={<Money amount={data.summary.paidToDate} />} sub="Recorded payouts across all periods" />
+        <StatCard label="Gross sales" value={<Money amount={data.summary.grossSales} currency={currency} direction="in" />} sub={`${data.summary.successfulSales} successful sales`} />
+        <StatCard label="Net after platform fees" value={<Money amount={data.summary.distributable} currency={currency} direction="in" emphasis />} sub="Available to distribute" />
+        <StatCard label="Currently owed" value={<Money amount={data.summary.currentlyOwed} currency={currency} direction="out" />} sub="Selected period, not yet settled" />
+        <StatCard label="Paid to date" value={<Money amount={data.summary.paidToDate} currency={currency} />} sub="Recorded payouts across all periods" />
       </StatGrid>
 
       {(owedTotal > 0 || cash.heldInReserve > 0) && (
@@ -178,22 +191,22 @@ function AgencyPayouts() {
           <div className="metric-row">
             <span className="ml wide">Received after fees</span>
             <span className="mt"><span className="tone-pos" style={{ width: `${(cash.received / cashScale) * 100}%` }} /></span>
-            <span className="mv">{formatMoney(cash.received)}</span>
+            <span className="mv">{formatMoney(cash.received, currency)}</span>
           </div>
           <div className="metric-row">
             {/* Named for its holder: the agency's own rolling reserve is a
                 separate, still-unbuilt line, and the two must not read alike. */}
             <span className="ml wide">Held in reserve by MantaPay</span>
             <span className="mt"><span className="tone-accent" style={{ width: `${(cash.heldInReserve / cashScale) * 100}%` }} /></span>
-            <span className="mv">{formatMoney(cash.heldInReserve)}</span>
+            <span className="mv">{formatMoney(cash.heldInReserve, currency)}</span>
           </div>
           <div className="metric-row">
             <span className="ml wide">Owed to {labels.accounts.toLowerCase()} and {labels.agents.toLowerCase()}</span>
             <span className="mt"><span style={{ width: `${(owedTotal / cashScale) * 100}%` }} /></span>
-            <span className="mv">{formatMoney(owedTotal)}</span>
+            <span className="mv">{formatMoney(owedTotal, currency)}</span>
           </div>
           {cash.shortfallIfPaidNow > 0 ? (
-            <div className="warnbar">Settling every balance now leaves you {formatMoney(cash.shortfallIfPaidNow)} short. That is cash you front until the reserve is released.</div>
+            <div className="warnbar">Settling every balance now leaves you {formatMoney(cash.shortfallIfPaidNow, currency)} short. That is cash you front until the reserve is released.</div>
           ) : <p className="sub">Every balance can be settled from this period's receipts.</p>}
           {cash.heldInReserve > 0 && data.reserve.source === 'estimated' && (
             <p className="sub">Reserve estimated from your {data.reserve.pct}% rate.</p>
@@ -226,8 +239,8 @@ function AgencyPayouts() {
               ) : data.perAccount.map((c) => (
                 <tr key={c.id}>
                   <th scope="row" data-label={labels.account}>{c.name}{c.payModel === 'salary' ? <span className="sub inline"> · salary</span> : null}</th>
-                  <td data-label="Revenue"><Money amount={c.revenue} direction="in" /></td>
-                  <td data-label="Owed"><Money amount={c.owed} direction="out" emphasis /></td>
+                  <td data-label="Revenue"><Money amount={c.revenue} currency={currency} direction="in" /></td>
+                  <td data-label="Owed"><Money amount={c.owed} currency={currency} direction="out" emphasis /></td>
                   <td data-label="Status">{c.owed > 0 ? <><Pill tone="ok">Accruing</Pill> {payButton('account', c.id, c.name, c.owed)}</> : <Pill>Settled</Pill>}</td>
                 </tr>
               ))}
@@ -262,7 +275,7 @@ function AgencyPayouts() {
                 <tr key={c.id}>
                   <th scope="row" data-label={labels.agent}>{c.name}</th>
                   <td data-label="Sales">{c.sales}</td>
-                  <td data-label="Commission owed"><Money amount={c.owed} direction="out" emphasis /></td>
+                  <td data-label="Commission owed"><Money amount={c.owed} currency={currency} direction="out" emphasis /></td>
                   <td data-label="Status">{c.owed > 0 ? <><Pill tone="ok">Accruing</Pill> {payButton('agent', c.id, c.name, c.owed)}</> : <Pill>Settled</Pill>}</td>
                 </tr>
               ))}
@@ -297,8 +310,9 @@ function AgencyPayouts() {
         </FilterBar>
         {isHistoryLoading ? <LoadingCard label="Loading payout history…" />
           : isHistoryError ? <ErrorCard message="Couldn't load payout history." />
-            : <DataTable columns={historyColumns} rows={history} rowKey={(p) => p.id} emptyTitle="No payouts run yet."
-              emptyHint="Every payout you confirm above is recorded here." />}
+            : <DataTable columns={historyColumns} rows={history} rowKey={(p) => p.id}
+              emptyTitle={`No ${currency} payouts run yet.`}
+              emptyHint={`Every ${currency} payout you confirm above is recorded here. A payout in another currency is listed under that currency.`} />}
       </div>
 
       <Modal open={pending !== null} onClose={() => setPending(null)} title={pending ? `Record payout for ${pending.label}?` : ''}
@@ -307,10 +321,10 @@ function AgencyPayouts() {
           <>
             <div className="callout">
               <DetailRow label={pending.payeeCount === 1 ? 'Payee' : 'Payees'}>{pending.payeeCount === 1 ? pending.label : `${pending.payeeCount} with a balance`}</DetailRow>
-              <DetailRow label="Amount to record"><Money amount={pending.amount} direction="out" emphasis /></DetailRow>
+              <DetailRow label="Amount to record"><Money amount={pending.amount} currency={currency} direction="out" emphasis /></DetailRow>
             </div>
             {cash.shortfallIfPaidNow > 0 && (
-              <div className="warnbar">You are {formatMoney(cash.shortfallIfPaidNow)} short across all balances this period. Settling now fronts that cash yourself.</div>
+              <div className="warnbar">You are {formatMoney(cash.shortfallIfPaidNow, currency)} short across all balances this period. Settling now fronts that cash yourself.</div>
             )}
             <div className="modal-actions">
               <button className="btn ghost" onClick={() => setPending(null)}>Cancel</button>

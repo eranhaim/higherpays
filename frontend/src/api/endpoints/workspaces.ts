@@ -2,8 +2,33 @@ import { api } from '../http';
 import { workspacePath } from '../workspacePath';
 import type { Page, WorkspaceLabels, WorkspaceRole } from '../types';
 
+/**
+ * One currency an agency may transact in.
+ *
+ * Mirrors workspace_currencies (backend/src/schema/entities.js). The amounts
+ * are already resolved: an inherited checkout fee arrives as the rate card's
+ * value with `checkoutFeeInherited` set.
+ */
+export interface WorkspaceCurrency {
+  currency: string;
+  checkoutFee: number;
+  checkoutFeeInherited: boolean;
+  minLinkAmount: number | null;
+  maxLinkAmount: number | null;
+  /** The agency's base currency: what reports default to, and what a salary is paid in. */
+  isBase: boolean;
+  hasActivity: boolean;
+  /**
+   * False when MantaPay cannot charge in it. Such a currency is reportable but
+   * no link may be priced in it, so the link form must not offer it.
+   */
+  checkoutSupported: boolean;
+}
+
 /** Response from `GET /workspaces/:wid/platform-fee`. */
 export interface PlatformFee {
+  /** Which currency the flat amounts below are in. */
+  currency: string;
   blendedRatePct: number;
   pspRatePct: number;
   settlementPct: number;
@@ -44,6 +69,8 @@ export interface UpdateWorkspaceInput {
 }
 
 export interface LinkLimits {
+  /** Which currency these amounts are in. */
+  currency: string;
   minLinkAmount: number | null;
   maxLinkAmount: number | null;
   /** How long a single-use link lives. Always a number: the platform default when unset. */
@@ -77,9 +104,17 @@ export const workspacesApi = {
 
   update: (input: UpdateWorkspaceInput) => api.patch<WorkspaceSettings>(workspacePath(''), input),
 
-  getPlatformFee: () => api.get<PlatformFee>(workspacePath('/platform-fee')),
+  /** Every currency this agency may transact in, base first. */
+  listCurrencies: () => api
+    .get<{ currencies: WorkspaceCurrency[] }>(workspacePath('/currencies'))
+    .then((r) => r.currencies),
 
-  getLinkLimits: () => api.get<LinkLimits>(workspacePath('/link-limits')),
+  // The flat amounts in both of these are per currency, so both take one.
+  getPlatformFee: (currency?: string) =>
+    api.get<PlatformFee>(workspacePath(`/platform-fee${currency ? `?currency=${currency}` : ''}`)),
+
+  getLinkLimits: (currency?: string) =>
+    api.get<LinkLimits>(workspacePath(`/link-limits${currency ? `?currency=${currency}` : ''}`)),
 
   setLinkLimits: (input: {
     minLinkAmount?: number | null;

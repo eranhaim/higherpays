@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { customersFromResponse, type Customer } from './customers';
+import { customersFromResponse, type CustomerListItem } from './customers';
 
-const completedCustomer: Customer = {
+const completedCustomer: CustomerListItem = {
   id: 'customer-1',
   name: 'Existing Customer',
   telegramName: '@existing',
@@ -9,6 +9,7 @@ const completedCustomer: Customer = {
   phone: null,
   country: null,
   segment: 'regular',
+  // Spend is per currency: this is what they paid in the list's currency.
   totalSpend: 75,
   lastPurchaseAt: '2026-09-09T10:00:00.000Z',
   archivedAt: null,

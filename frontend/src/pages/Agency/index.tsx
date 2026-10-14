@@ -9,7 +9,7 @@ import { sortRows, type SortValues } from '../../lib/sortRows';
 import { toast } from '../../lib/toast';
 import Modal from '../../components/Modal';
 import {
-  DataTable, FilterBar, Money, PageHeader, Pill, Select, ViewPicker,
+  CurrencyPicker, DataTable, FilterBar, Money, PageHeader, Pill, Select, ViewPicker,
   type Column, type SortState,
 } from '../../components/ui';
 import type { Invite, Member } from '../../api/endpoints';
@@ -103,7 +103,7 @@ export default function AgencyPage() {
   const salesRange = useMemo(() => rangeFor(period), [period]);
   const data = useAgencyData(salesRange, canManageCreators || canManageAgents);
   const {
-    members, pendingInvites, accounts, agents, isLoading, isError,
+    members, salesCurrency, pendingInvites, accounts, agents, isLoading, isError,
   } = data;
 
   const [creating, setCreating] = useState<'member' | 'creator' | 'agent' | null>(null);
@@ -346,7 +346,7 @@ export default function AgencyPage() {
       render: (row: Row) => {
         if (row.kind === 'invite' || row.member.totalCustomerPaid == null) return <span className="sub">—</span>;
         const amount = row.member.totalCustomerPaid;
-        return <Money amount={amount} direction={amount < 0 ? 'out' : 'in'} />;
+        return <Money amount={amount} currency={salesCurrency} direction={amount < 0 ? 'out' : 'in'} />;
       },
     }] : []),
   ];
@@ -427,6 +427,7 @@ export default function AgencyPage() {
           <option value="month">This month</option>
           <option value="quarter">This quarter</option>
         </Select>
+        <CurrencyPicker />
         <button className="btn ghost" onClick={() => { setSearch(''); setTypeFilter(''); setStateFilter(''); }}>Clear filters</button>
         <span className="sub">{rows.length} of {members.length + pendingInvites.length}</span>
         <ViewPicker label="Edit columns" sections={[{ view: columnsView }]} />

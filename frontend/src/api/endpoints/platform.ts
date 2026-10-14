@@ -28,9 +28,19 @@ export interface PlatformWorkspace {
   checkoutFee: number;
 }
 
+/** What the platform processed in one currency. There is no total across them. */
+export interface PlatformMoney {
+  currency: string;
+  gross: number;
+  psp_fees: number;
+  platform_fees: number;
+  higherpays_margin: number;
+  sales: number;
+}
+
 export interface PlatformOverview {
   counts: { workspaces: number; workspaces_active: number; accounts: number; agents: number; users: number };
-  money: { gross: number; psp_fees: number; platform_fees: number; higherpays_margin: number; sales: number };
+  money: PlatformMoney[];
   supportedCurrencies: string[];
 }
 
@@ -117,13 +127,13 @@ export const platformApi = {
   async overview(): Promise<PlatformOverview> {
     const raw = await api.get<{
       counts: Record<string, string | number>;
-      money: Record<string, string | number>;
+      money: Array<Record<string, string | number>>;
       supportedCurrencies?: string[];
     }>('/platform/overview', opts);
     const num = (o: Record<string, string | number>) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Number(v)]));
     return {
       counts: num(raw.counts) as PlatformOverview['counts'],
-      money: num(raw.money) as PlatformOverview['money'],
+      money: raw.money.map((row) => ({ ...num(row), currency: String(row.currency) }) as PlatformMoney),
       supportedCurrencies: raw.supportedCurrencies ?? ['EUR', 'USD', 'GBP'],
     };
   },

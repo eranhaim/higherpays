@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
+import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import {
   accountsApi, agentsApi, invitesApi, platformApi, teamApi,
   type Account, type Agent, type CreateAccountInput, type CreateAgentInput,
@@ -18,6 +19,8 @@ export interface MemberInput {
 
 export interface UseAgencyDataResult {
   members: Member[];
+  /** The currency each member's sales volume is in. */
+  salesCurrency: string;
   pendingInvites: Invite[];
   /** The pickers inside the editors; empty until the caller may manage them. */
   accounts: Account[];
@@ -53,12 +56,13 @@ export function useAgencyData(
   canManageRoster: boolean,
 ): UseAgencyDataResult {
   const { activeWorkspaceId } = useCurrentSession();
+  const { currency } = useReportingCurrency();
   const queryClient = useQueryClient();
   const enabled = Boolean(activeWorkspaceId);
 
   const members = useQuery({
-    queryKey: ['team', activeWorkspaceId, salesRange],
-    queryFn: () => teamApi.list(salesRange),
+    queryKey: ['team', activeWorkspaceId, currency, salesRange],
+    queryFn: () => teamApi.list({ ...salesRange, currency }),
     enabled,
   });
   const invites = useQuery({ queryKey: ['invites', activeWorkspaceId], queryFn: () => invitesApi.list(), enabled });
@@ -149,7 +153,8 @@ export function useAgencyData(
   });
 
   return {
-    members: members.data ?? [],
+    members: members.data?.members ?? [],
+    salesCurrency: members.data?.currency ?? currency,
     // An expired invite is no longer pending, but stays withdrawable until cleared.
     pendingInvites: (invites.data ?? []).filter((invite) => !invite.acceptedAt),
     accounts: accounts.data ?? [],

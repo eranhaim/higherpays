@@ -13,4 +13,5 @@ export { DetailRow } from './DetailRow';
 export { CopyButton } from './CopyButton';
 export { RowViewButton } from './RowViewButton';
 export { Select } from './Select';
+export { CurrencyPicker } from './CurrencyPicker';
 export { ViewPicker } from './ViewPicker';

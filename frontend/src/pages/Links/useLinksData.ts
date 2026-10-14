@@ -10,6 +10,8 @@ export interface CreateLinkFormInput {
   accountId: string;
   type: LinkType;
   amount: number;
+  /** What the link is priced in. Immutable once it exists. */
+  currency: string;
   description?: string;
   /** single_use only: create a link that never times out. */
   noExpiry?: boolean;
@@ -36,8 +38,14 @@ export interface UseLinksDataResult {
   reassignLink: (id: string, input: ReassignInput) => Promise<void>;
 }
 
-export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
-  const { activeWorkspaceId, currency } = useCurrentSession();
+/**
+ * @param filters what the list and its summary are about, including the one
+ *   currency they report.
+ * @param limitsCurrency which currency's link limits to load. The create form
+ *   may be pricing a link in a currency other than the one being reported.
+ */
+export function useLinksData(filters: ListLinksQuery = {}, limitsCurrency?: string): UseLinksDataResult {
+  const { activeWorkspaceId } = useCurrentSession();
   const queryClient = useQueryClient();
   const enabled = Boolean(activeWorkspaceId);
 
@@ -61,8 +69,8 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     placeholderData: keepPreviousData,
   });
   const linkLimits = useQuery({
-    queryKey: ['link-limits', activeWorkspaceId],
-    queryFn: () => workspacesApi.getLinkLimits(),
+    queryKey: ['link-limits', activeWorkspaceId, limitsCurrency],
+    queryFn: () => workspacesApi.getLinkLimits(limitsCurrency),
     enabled,
     staleTime: 5 * 60_000,
   });
@@ -79,7 +87,7 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
   };
 
   const create = useMutation({
-    mutationFn: (input: CreateLinkFormInput) => linksApi.create({ ...input, currency }),
+    mutationFn: (input: CreateLinkFormInput) => linksApi.create(input),
     onSuccess: invalidateLinks,
   });
   const cancel = useMutation({ mutationFn: (id: string) => linksApi.cancel(id), onSuccess: invalidateLinks });

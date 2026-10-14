@@ -6,13 +6,13 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import {
-  PageHeader, Money, DateCell, DataTable, FilterBar, DetailRow, Pill, Select, ViewPicker, RowViewButton,
+  PageHeader, Money, DateCell, DataTable, FilterBar, DetailRow, Pill, Select, ViewPicker, RowViewButton, CurrencyPicker,
   type Column, type SortState,
 } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import {
   CUSTOMER_SEGMENTS, CUSTOMER_SEGMENT_LABELS, paymentStatusLabel,
-  type Customer, type CustomerSegment, type CustomerSort, type CreateCustomerInput, type UpdateCustomerInput,
+  type Customer, type CustomerListItem, type CustomerSegment, type CustomerSort, type CreateCustomerInput, type UpdateCustomerInput,
 } from '../../api/endpoints';
 import { useCustomersData, useCustomerDetail } from './useCustomersData';
 
@@ -48,7 +48,7 @@ export default function CustomersPage() {
   }), [segment, q, sort]);
 
   const {
-    customers, isLoading, isError, hasMore, isLoadingMore, loadMore,
+    customers, currency, isLoading, isError, hasMore, isLoadingMore, loadMore,
     createCustomer, updateCustomer, eraseCustomer, exportCsv,
   } = useCustomersData(query);
   const [detailId, setDetailId] = useState<string | null>(null);
@@ -80,7 +80,7 @@ export default function CustomersPage() {
     }
   };
 
-  const columns: Column<Customer>[] = [
+  const columns: Column<CustomerListItem>[] = [
     {
       key: 'customer', header: 'Customer', sortKey: 'name',
       render: (c) => (
@@ -90,7 +90,7 @@ export default function CustomersPage() {
         </>
       ),
     },
-    { key: 'spend', header: 'Total spend', sortKey: 'spend', render: (c) => <Money amount={c.totalSpend} direction="in" /> },
+    { key: 'spend', header: 'Total spend', sortKey: 'spend', render: (c) => <Money amount={c.totalSpend} currency={currency} direction="in" /> },
     { key: 'last', header: 'Last purchase', sortKey: 'last', render: (c) => <DateCell ts={c.lastPurchaseAt} /> },
     {
       key: 'segment', header: 'Segment', sortKey: 'segment', render: (c) => <SegmentTag segment={c.segment} />,
@@ -105,12 +105,12 @@ export default function CustomersPage() {
   ];
 
   const columnsView = useViewLayout('customers.columns', columns.map((c) => ({ key: c.key, label: c.header })));
-  const shownColumns: Column<Customer>[] = [
+  const shownColumns: Column<CustomerListItem>[] = [
     // The explicit way into a customer's detail, matching Payments and Links.
     // Clicking the row still works, but it is a shortcut, not the only way in.
     {
       key: 'view', header: 'View', hideHeader: true, width: 44,
-      render: (c: Customer) => <RowViewButton onClick={() => setDetailId(c.id)} label={`View ${c.name}`} />,
+      render: (c: CustomerListItem) => <RowViewButton onClick={() => setDetailId(c.id)} label={`View ${c.name}`} />,
     },
     ...orderBy(columns, columnsView.visibleKeys),
     // The actions cell is a control, not data: it is never hidden or moved.
@@ -144,6 +144,7 @@ export default function CustomersPage() {
       <FilterBar>
         <input type="search" className="search-input" aria-label="Search customers"
           placeholder="Search name, Telegram, email or phone" value={search} onChange={(e) => setSearch(e.target.value)} />
+        <CurrencyPicker />
         <button className="btn ghost" onClick={() => { setSegment(''); setSearch(''); }}>Clear filters</button>
       </FilterBar>
 
@@ -181,7 +182,15 @@ export default function CustomersPage() {
             <DetailRow label="Email">{detail.data.email ?? '—'}</DetailRow>
             <DetailRow label="Phone">{detail.data.phone ?? '—'}</DetailRow>
             <DetailRow label="Segment"><SegmentTag segment={detail.data.segment} /></DetailRow>
-            <DetailRow label="Total spend"><Money amount={detail.data.totalSpend} direction="in" emphasis /></DetailRow>
+            {/* One row per currency they paid in. The amounts are never added
+                together, so a fan who paid in two currencies shows two rows. */}
+            {detail.data.spendByCurrency.length === 0 ? (
+              <DetailRow label="Total spend">—</DetailRow>
+            ) : detail.data.spendByCurrency.map((s) => (
+              <DetailRow key={s.currency} label={`Total spend (${s.currency})`}>
+                <Money amount={s.totalSpend} currency={s.currency} direction="in" emphasis />
+              </DetailRow>
+            ))}
             <DetailRow label="Customer since"><DateCell ts={detail.data.createdAt} /></DetailRow>
             <h3 className="sechead">Payments</h3>
             {detail.data.payments.length === 0 ? <p className="sub">No payments yet.</p> : (

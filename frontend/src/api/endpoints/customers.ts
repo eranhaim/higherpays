@@ -24,10 +24,23 @@ export interface Customer {
   phone: string | null;
   country: string | null;
   segment: CustomerSegment;
-  totalSpend: number;
   lastPurchaseAt: string | null;
   archivedAt: string | null;
   createdAt: string;
+}
+
+/** A row of the customer list: the contact plus their spend in ONE currency. */
+export interface CustomerListItem extends Customer {
+  /**
+   * What they paid in the list's currency. There is no all-currency total: a
+   * fan who paid in two currencies owes that money to neither sum.
+   */
+  totalSpend: number;
+}
+
+export interface CustomerSpend {
+  currency: string;
+  totalSpend: number;
 }
 
 export interface CustomerPayment {
@@ -44,6 +57,8 @@ export interface CustomerPayment {
 }
 
 export interface CustomerDetail extends Customer {
+  /** Every currency this fan paid in, largest first. Never totalled. */
+  spendByCurrency: CustomerSpend[];
   payments: CustomerPayment[];
 }
 
@@ -51,6 +66,11 @@ export interface CustomerDetail extends Customer {
 export type CustomerSort = 'name' | 'spend' | 'last' | 'segment';
 
 export interface ListCustomersQuery {
+  /**
+   * Which currency the spend column is in. Omitted means the agency's base
+   * currency, and the server echoes back what it used.
+   */
+  currency?: string;
   segment?: CustomerSegment;
   /** Matches name, email, phone or Telegram name. */
   q?: string;
@@ -76,14 +96,15 @@ export interface UpdateCustomerInput {
   segment?: CustomerSegment;
 }
 
-export function customersFromResponse(raw: { customers?: Customer[] }): Customer[] {
+export function customersFromResponse(raw: { customers?: CustomerListItem[] }): CustomerListItem[] {
   if (!Array.isArray(raw.customers)) throw new Error('Invalid customers response.');
   return raw.customers;
 }
 
 export const customersApi = {
-  async list(query: ListCustomersQuery = {}): Promise<Customer[]> {
+  async list(query: ListCustomersQuery = {}): Promise<CustomerListItem[]> {
     const qs = new URLSearchParams();
+    if (query.currency) qs.set('currency', query.currency);
     if (query.segment) qs.set('segment', query.segment);
     if (query.q) qs.set('q', query.q);
     if (query.sort) qs.set('sort', query.sort);
@@ -91,7 +112,7 @@ export const customersApi = {
     if (query.limit != null) qs.set('limit', String(query.limit));
     if (query.offset != null) qs.set('offset', String(query.offset));
     const suffix = qs.toString() ? `/customers?${qs.toString()}` : '/customers';
-    const raw = await api.get<{ customers?: Customer[] }>(workspacePath(suffix));
+    const raw = await api.get<{ customers?: CustomerListItem[] }>(workspacePath(suffix));
     return customersFromResponse(raw);
   },
 
@@ -104,7 +125,8 @@ export const customersApi = {
   /** Erasure: name and contact details are wiped; their payments stay, anonymised. */
   erase: (id: string) => api.del<void>(workspacePath(`/customers/${id}`)),
 
-  exportCsv() {
-    return api.download(workspacePath('/customers/export'), 'customers.csv');
+  exportCsv(currency?: string) {
+    const suffix = currency ? `/customers/export?currency=${currency}` : '/customers/export';
+    return api.download(workspacePath(suffix), 'customers.csv');
   },
 };

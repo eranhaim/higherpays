@@ -1,8 +1,8 @@
 export { authApi, type TwoFactorSetup, type Session } from './auth';
-export { workspacesApi, type PlatformFee, type LinkLimits, type WorkspacePermissions, type WorkspaceSettings, type UpdateWorkspaceInput, type AuditEntry } from './workspaces';
+export { workspacesApi, type PlatformFee, type LinkLimits, type WorkspaceCurrency, type WorkspacePermissions, type WorkspaceSettings, type UpdateWorkspaceInput, type AuditEntry } from './workspaces';
 export {
   platformApi,
-  type PlatformWorkspace, type PlatformOverview, type OnboardAgencyInput,
+  type PlatformWorkspace, type PlatformOverview, type PlatformMoney, type OnboardAgencyInput,
   type PlatformFeeRate, type SettlementFee, type PlatformWorkspaceDetail,
   type ImpersonationTarget, type ImpersonationSession, type PlatformUser,
 } from './platform';
@@ -12,7 +12,7 @@ export {
   type Account, type AccountStatus, type PayModel, type AccountAgent, type CreateAccountInput, type UpdateAccountInput,
 } from './accounts';
 export { agentsApi, type Agent, type CreateAgentInput, type UpdateAgentInput } from './agents';
-export { teamApi, type Member, type MemberStatus } from './team';
+export { teamApi, type Member, type MemberStatus, type TeamList } from './team';
 export {
   rolesApi, ROLE_PERMISSION_GROUPS, PERMISSION_DEPENDENCIES, toggleRolePermission,
   type RoleDefinition,
@@ -20,7 +20,7 @@ export {
 export { categoriesApi, type Category } from './categories';
 export {
   customersApi, CUSTOMER_SEGMENTS, CUSTOMER_SEGMENT_LABELS,
-  type Customer, type CustomerDetail, type CustomerPayment, type CustomerSegment, type CustomerSort, type ListCustomersQuery, type CreateCustomerInput, type UpdateCustomerInput,
+  type Customer, type CustomerListItem, type CustomerSpend, type CustomerDetail, type CustomerPayment, type CustomerSegment, type CustomerSort, type ListCustomersQuery, type CreateCustomerInput, type UpdateCustomerInput,
 } from './customers';
 export {
   linksApi, LINK_TYPES, LINK_TYPE_LABELS, LINK_STATUSES, LINK_STATUS_LABELS,

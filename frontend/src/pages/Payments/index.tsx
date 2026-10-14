@@ -13,10 +13,11 @@ import EnableTwoFactorModal from '../../components/EnableTwoFactorModal';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DateCell,
-  DataTable, FilterBar, DateRangePicker, DetailRow, Select, ViewPicker, RowViewButton,
+  DataTable, FilterBar, DateRangePicker, DetailRow, Select, ViewPicker, RowViewButton, CurrencyPicker,
   type Column, type DateRange, type SortState,
 } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
+import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import { formatMoney, toInstantRange } from '../../lib/format';
 import {
   isReversed, visibleAmount, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, paymentStatusLabel, getPaymentExportColumns,
@@ -118,7 +119,9 @@ export default function PaymentsPage() {
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }));
 
   const search = useDebounced(filters.search, 300);
+  const { currency } = useReportingCurrency();
   const query = useMemo<ListPaymentsQuery>(() => ({
+    currency,
     status: filters.status || undefined,
     accountId: filters.accountId || undefined,
     agentId: filters.agentId || undefined,
@@ -134,7 +137,7 @@ export default function PaymentsPage() {
     sort: sort.key as PaymentSort,
     dir: sort.dir,
   }), [
-    canScope, filters.status, filters.accountId, filters.agentId, filters.customerId, filters.categoryId,
+    canScope, currency, filters.status, filters.accountId, filters.agentId, filters.customerId, filters.categoryId,
     filters.from, filters.to, filters.needsDetails, filters.minAmount, filters.maxAmount, filters.minFee, filters.maxFee,
     search, sort,
   ]);
@@ -253,7 +256,7 @@ export default function PaymentsPage() {
       key: 'fee', header: 'Fee',
       render: (p: Payment) => p.platformFee == null ? '—' : (
         <>
-          <Money amount={p.platformFee} direction="out" />
+          <Money amount={p.platformFee} currency={p.currency} direction="out" />
           {p.feeIsEstimate && <span className="sub inline" title={ESTIMATED_FEE_NOTE}> · estimated</span>}
         </>
       ),
@@ -345,6 +348,9 @@ export default function PaymentsPage() {
               <option key={status} value={status}>{PAYMENT_STATUS_LABELS[status]}</option>
             ))}
           </Select>
+          {/* Not a filter you can clear: every figure on the page is in one
+              currency, so the page is always showing one. */}
+          <CurrencyPicker />
           <DateRangePicker value={range} onChange={setRange} />
           {/* Its own control, not a status: a payment waiting for its details
               already has one (Paid), and the two narrow the list together. */}
@@ -486,8 +492,8 @@ export default function PaymentsPage() {
             </DetailRow>
             {detail.amount != null && detail.platformFee != null && (
               <>
-                <DetailRow label={detail.feeIsEstimate ? 'Platform fee · estimated' : 'Platform fee'}><Money amount={detail.platformFee} direction="out" /></DetailRow>
-                <DetailRow label={detail.feeIsEstimate ? 'Net · estimated' : 'Net'}><Money amount={detail.amount - detail.platformFee} direction="in" emphasis /></DetailRow>
+                <DetailRow label={detail.feeIsEstimate ? 'Platform fee · estimated' : 'Platform fee'}><Money amount={detail.platformFee} currency={detail.currency} direction="out" /></DetailRow>
+                <DetailRow label={detail.feeIsEstimate ? 'Net · estimated' : 'Net'}><Money amount={detail.amount - detail.platformFee} currency={detail.currency} direction="in" emphasis /></DetailRow>
                 {detail.feeIsEstimate && <p className="sub">{ESTIMATED_FEE_NOTE}</p>}
               </>
             )}
@@ -878,9 +884,9 @@ function ReversalModal({ payment, kind, fee, onClose, onSubmit }: {
         <DetailRow label="Reversed">
           {amount == null ? '—' : <Money amount={amount} currency={payment.currency} direction="out" />}
         </DetailRow>
-        {fee !== undefined && <DetailRow label={copy.feeLabel}><Money amount={fee} direction="out" /></DetailRow>}
+        {fee !== undefined && <DetailRow label={copy.feeLabel}><Money amount={fee} currency={payment.currency} direction="out" /></DetailRow>}
         {payment.platformFee != null && (
-          <p className="sub">Platform fees already taken ({formatMoney(payment.platformFee)}) are not returned by the provider.</p>
+          <p className="sub">Platform fees already taken ({formatMoney(payment.platformFee, payment.currency)}) are not returned by the provider.</p>
         )}
       </div>
       <label className="check-row">

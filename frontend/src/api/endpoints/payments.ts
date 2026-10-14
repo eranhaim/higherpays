@@ -176,6 +176,12 @@ export const PROVIDER_FEE_SOURCE_LABELS: Record<PaymentFlow['fees']['providerSou
 export type PaymentSort = 'date' | 'amount' | 'status';
 
 export interface ListPaymentsQuery {
+  /**
+   * Which currency the list and its totals are about. One currency, never a
+   * set: nothing here is converted or summed across currencies. Omitted means
+   * the agency's base currency, and the server echoes back what it used.
+   */
+  currency?: string;
   status?: string;
   accountId?: string;
   agentId?: string;
@@ -220,6 +226,7 @@ export function getPaymentExportColumns(labels: WorkspaceLabels): ExportColumn[]
   { key: 'reference', label: 'HigherPays Order' },
   { key: 'providerTransaction', label: 'MantaPay Transaction ID' },
   { key: 'status', label: 'Status' },
+  { key: 'currency', label: 'Currency' },
   { key: 'gross', label: 'Gross Revenue', feesOnly: true },
   { key: 'fee', label: 'Platform Fee', feesOnly: true },
   { key: 'net', label: 'Net Revenue' },

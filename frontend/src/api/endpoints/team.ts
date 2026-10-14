@@ -30,20 +30,27 @@ export interface Member {
   assignedCount?: number | null;
   payModel?: PayModel;
   revenueSplitPct?: number;
+  /** A fixed amount in the agency's base currency, not in the reported one. */
   salaryAmount?: number;
   commissionPct?: number;
+}
+
+export interface TeamList {
+  /** The currency `totalCustomerPaid` is in. */
+  currency: string;
+  members: Member[];
 }
 
 export const teamApi = {
   create: (input: { email: string; password: string; fullName?: string; role: 'workspace_admin' | 'member'; permissions: Permission[] }) =>
     api.post<{ userId: string; role: string }>(workspacePath('/team'), input),
 
-  async list(range?: { from?: string; to?: string }): Promise<Member[]> {
+  list(range?: { from?: string; to?: string; currency?: string }): Promise<TeamList> {
     const search = new URLSearchParams();
     if (range?.from) search.set('from', range.from);
     if (range?.to) search.set('to', range.to);
-    const raw = await api.get<{ members: Member[] }>(`${workspacePath('/team')}${search.size ? `?${search}` : ''}`);
-    return raw.members;
+    if (range?.currency) search.set('currency', range.currency);
+    return api.get<TeamList>(`${workspacePath('/team')}${search.size ? `?${search}` : ''}`);
   },
 
   /** Active and suspended are direct access controls; removed is set through remove(). */

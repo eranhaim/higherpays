@@ -4,6 +4,11 @@ import { workspacePath } from '../workspacePath';
 /** Response from `GET /workspaces/:wid/analytics`. Money is reversal-adjusted. */
 export interface AnalyticsReport {
   range: { from: string; to: string; days: number };
+  /**
+   * The one currency the whole report is in, as resolved by the server. Sales
+   * in any other currency are not in these figures and are not converted.
+   */
+  currency: string;
   scope: 'agency' | 'agent' | 'account';
   timeseries: Array<{ d: string; gross?: number; net: number }>;
   // The agency-side figures below are omitted for a scoped caller (an agent or
@@ -73,11 +78,14 @@ export interface AnalyticsQuery {
   /** Agency roles may scope the report to one agent or one account. */
   agentId?: string;
   accountId?: string;
+  /** Omitted means the agency's base currency. */
+  currency?: string;
 }
 
 export const analyticsApi = {
   report(query: AnalyticsQuery): Promise<AnalyticsReport> {
     const qs = new URLSearchParams({ from: query.from, to: query.to });
+    if (query.currency) qs.set('currency', query.currency);
     if (query.agentId) qs.set('agentId', query.agentId);
     if (query.accountId) qs.set('accountId', query.accountId);
     return api.get<AnalyticsReport>(workspacePath(`/analytics?${qs.toString()}`));

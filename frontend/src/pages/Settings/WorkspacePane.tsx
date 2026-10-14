@@ -5,6 +5,7 @@ import { useCan } from '../../hooks/usePermission';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useRateCard } from '../../hooks/useRateCard';
+import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import { toast } from '../../lib/toast';
 import { CopyButton, ErrorCard, LoadingCard, Money } from '../../components/ui';
 import { useGeneralSettings, usePlatformFees, type RateCardInput } from './useSettingsData';
@@ -108,6 +109,9 @@ function WorkspaceCard({ editable, workspace, onSave }: {
   const dirty = name.trim() !== workspace.name || account !== workspace.labels.account || accounts !== workspace.labels.accounts
     || agent !== workspace.labels.agent || agents !== workspace.labels.agents;
   useUnsavedChanges('workspace-settings', dirty);
+  // Which currencies are enabled is HigherPays' to set, so this pane only says
+  // what they are.
+  const extras = useReportingCurrency().currencies.filter((c) => !c.isBase).map((c) => c.currency);
 
   const save = async () => {
     if (!name.trim()) { toast('Workspace name is required.'); return; }
@@ -151,8 +155,13 @@ function WorkspaceCard({ editable, workspace, onSave }: {
       </div>
       <div className="setrow">
         <div>
-          <div className="k">Currency</div>
-          <div className="d">All amounts are in this currency. Multi-currency is not enabled.</div>
+          <div className="k">Base currency</div>
+          <div className="d">
+            What every report defaults to, and the currency a salary is paid in.
+            {extras.length > 0
+              ? ` You can also take payments in ${extras.join(', ')}. Amounts in different currencies are reported separately and never converted.`
+              : ' Contact HigherPays to take payments in another currency.'}
+          </div>
         </div>
         <span className="mono-val">{workspace.currency}</span>
       </div>
@@ -317,7 +326,8 @@ function FeesCard({ rateCard, editable, detail, currencies, onSave }: {
       )}
       {feeRow('fee-fixed', 'Fixed fee', 'Charged on every transaction, on top of the blended rate.', fixed, setFixed, rateCard.fixed)}
       {editable && feeRow('fee-checkout', 'Checkout fee',
-        'Added to the price and paid by the customer, so it never enters the agency’s gross.', checkout, setCheckout, rateCard.checkoutFee)}
+        'Added to the price and paid by the customer, so it never enters the agency’s gross. A flat amount, so a currency may be given its own instead of this one.',
+        checkout, setCheckout, rateCard.checkoutFee)}
       {(editable || rateCard.refundFee !== undefined) &&
         feeRow('fee-refund', 'Refund fee', 'Charged when a payment is refunded.', refund, setRefund, rateCard.refundFee ?? 0)}
       {(editable || rateCard.chargebackFee !== undefined) &&
@@ -398,6 +408,9 @@ function LinkLimitsCard({ editable, limits, rateCard, onSave }: {
         disproportionately expensive: a <Money amount={5} /> link costs {effectivePct(5, rateCard)} in
         fees, a <Money amount={20} /> link {effectivePct(20, rateCard)}, a <Money amount={100} /> link{' '}
         {effectivePct(100, rateCard)}. Enforced on the server, so the limits cannot be bypassed.
+      </p>
+      <p className="sub">
+        These amounts are in {rateCard.currency}. A currency with its own limits uses those instead.
       </p>
       <div className="setrow">
         <div>

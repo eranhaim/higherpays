@@ -148,10 +148,44 @@ export default function PlatformPage() {
 
       <StatGrid>
         <StatCard isUnknown={!overview} label="Agencies" value={overview?.counts.workspaces_active ?? 0} sub={`${overview?.counts.workspaces ?? 0} in total`} />
-        <StatCard isUnknown={!overview} label="Gross processed" value={<Money amount={overview?.money.gross ?? 0} direction="in" />} sub={`${overview?.money.sales ?? 0} sales`} />
-        <StatCard isUnknown={!overview} label="Platform fees" value={<Money amount={overview?.money.platform_fees ?? 0} />} sub="Charged to agencies" />
-        <StatCard isUnknown={!overview} label="HigherPays margin" value={<Money amount={overview?.money.higherpays_margin ?? 0} direction="in" emphasis />} sub="After PSP costs" />
+        <StatCard isUnknown={!overview} label="Creators" value={overview?.counts.accounts ?? 0} sub={`${overview?.counts.agents ?? 0} agents`} />
+        <StatCard isUnknown={!overview} label="Users" value={overview?.counts.users ?? 0} sub="With access to any agency" />
       </StatGrid>
+
+      {/* One row per currency, never a total: agencies are denominated
+          differently, so a single "gross processed" figure would be a sum of
+          euros and dollars. */}
+      <div className="card section">
+        <div className="sechead">Processed by currency</div>
+        {!overview ? <p className="sub">Loading…</p>
+          : overview.money.length === 0 ? <p className="sub">Nothing processed yet.</p>
+            : (
+              <div className="tablewrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th scope="col">Currency</th>
+                      <th scope="col">Gross</th>
+                      <th scope="col">Platform fees</th>
+                      <th scope="col">HigherPays margin</th>
+                      <th scope="col">Sales</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {overview.money.map((row) => (
+                      <tr key={row.currency}>
+                        <th scope="row"><span className="mono">{row.currency}</span></th>
+                        <td><Money amount={row.gross} currency={row.currency} direction="in" /></td>
+                        <td><Money amount={row.platform_fees} currency={row.currency} /></td>
+                        <td><Money amount={row.higherpays_margin} currency={row.currency} direction="in" emphasis /></td>
+                        <td><span className="mono">{row.sales}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+      </div>
 
       {isLoading ? <LoadingCard label="Loading agencies…" />
         : isError ? <ErrorCard message="Couldn't load the agency list." />

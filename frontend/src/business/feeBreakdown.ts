@@ -1,5 +1,13 @@
-/** Rates that apply to one workspace. Percentages are 0..100. */
+/**
+ * Rates that apply to one workspace in one currency. Percentages are 0..100.
+ *
+ * The percentages are currency-independent, but `fixed` and `checkoutFee` are
+ * flat amounts and so belong to a single currency: a 2.00 fee that is right in
+ * euros is wrong in shekels. `currency` says which, so a breakdown computed
+ * from this card cannot be displayed in the wrong one.
+ */
 export interface RateCard {
+  currency: string;
   /** Nominal variable rate: MDR + settlement + HigherPays margin. */
   blended: number;
   /** MDR applied to the content price plus the customer-paid checkout fee. */
@@ -23,6 +31,8 @@ export interface RateCard {
 }
 
 export interface FeeBreakdown {
+  /** The currency every amount below is in: the rate card's. */
+  currency: string;
   amount: number;
   customerTotal: number;
   blendedPct: number;
@@ -50,6 +60,7 @@ export function feeBreakdown(amount: number, rc: RateCard): FeeBreakdown {
   const blendedFee = mdrFee + settlementFee + marginFee;
   const total = blendedFee + fixed;
   return {
+    currency: rc.currency,
     amount: a,
     customerTotal,
     blendedPct: rc.blended,

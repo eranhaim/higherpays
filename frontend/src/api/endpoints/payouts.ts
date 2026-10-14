@@ -3,6 +3,8 @@ import { workspacePath } from '../workspacePath';
 
 export interface PayoutBreakdown {
   range: { from: string; to: string };
+  /** The one currency every figure below is in. Nothing here is converted. */
+  currency: string;
   summary: {
     grossSales: number;
     distributable: number;
@@ -23,6 +25,11 @@ export interface RunPayoutInput {
   targetId?: string;
   from?: string;
   to?: string;
+  /**
+   * Which currency to settle. A payout is one amount to one payee, so it is
+   * in one currency; a payee owed two currencies is paid by two runs.
+   */
+  currency?: string;
 }
 
 /** One payout that was run: who, how much, for which period. */
@@ -44,11 +51,14 @@ export interface PayoutHistoryFilters {
   status?: '' | PayoutRecord['status'];
   from?: string;
   to?: string;
+  /** Optional here: history rows carry their own currency and are not totalled. */
+  currency?: string;
 }
 
 export const payoutsApi = {
-  getBreakdown(from: string, to: string): Promise<PayoutBreakdown> {
+  getBreakdown(from: string, to: string, currency?: string): Promise<PayoutBreakdown> {
     const qs = new URLSearchParams({ from, to });
+    if (currency) qs.set('currency', currency);
     return api.get<PayoutBreakdown>(workspacePath(`/payouts/breakdown?${qs.toString()}`));
   },
 
@@ -63,6 +73,8 @@ export const payoutsApi = {
     return api.post<{
       ran: number;
       total: number;
+      /** The currency that was settled, as the server resolved it. */
+      currency: string;
       payouts: Array<{ recipientId: string; amount: number; payoutId: string }>;
     }>(workspacePath('/payouts/run'), input);
   },

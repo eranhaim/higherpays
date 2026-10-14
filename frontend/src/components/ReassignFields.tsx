@@ -113,10 +113,10 @@ export default function ReassignFields({ kind, id, accountId, agentId, accounts,
                 {kind === 'link'
                   ? impact.data.payments === 0
                     ? 'Nothing has been paid on this yet. Future payments will use the new attribution.'
-                    : `${impact.data.payments} past payment${impact.data.payments === 1 ? '' : 's'} — ${formatMoney(impact.data.amount)} — stay unchanged. Only future payments use the new attribution.`
+                    : `${impact.data.payments} past payment${impact.data.payments === 1 ? '' : 's'} — ${formatMoney(impact.data.amount, impact.data.currency ?? undefined)} — stay unchanged. Only future payments use the new attribution.`
                   : impact.data.payments === 0
                     ? 'Nothing has been paid on this yet, so only the attribution changes.'
-                    : `${impact.data.payments} payment${impact.data.payments === 1 ? '' : 's'} — ${formatMoney(impact.data.amount)} — move, and the split is recalculated from the new terms.`}
+                    : `${impact.data.payments} payment${impact.data.payments === 1 ? '' : 's'} — ${formatMoney(impact.data.amount, impact.data.currency ?? undefined)} — move, and the split is recalculated from the new terms.`}
               </p>
               {kind === 'payment' && impact.data.paidOut > 0 && (
                 <p className="sub text-neg">
