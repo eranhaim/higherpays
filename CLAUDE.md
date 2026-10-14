@@ -333,7 +333,17 @@ One root `.env` next to `docker-compose.yml`. Never commit it.
 
 ### Production
 
-`https://higherpays.com`, fronted by the EC2's system nginx (`deploy/nginx-higherpays.conf`), which proxies to the frontend container on `127.0.0.1:8083`.
+`https://higherpays.com` and `www.higherpays.com` resolve to `64.176.175.97`, a
+Vultr box. Caddy is the public edge (`/etc/caddy/Caddyfile`) and reverse-proxies
+both names to the frontend container on `127.0.0.1:8083`. There is no system
+nginx on that host — only the nginx inside the frontend container. The repo is
+checked out at `/home/deploy/higherpays` and the deploy user is `deploy`.
+
+**That box also runs several unrelated production projects** (propeller,
+telescope, shiftpro, followup and others), each with its own compose project and
+containers. Work only inside `/home/deploy/higherpays` and name the service you
+mean. Never run a bare `docker compose down` or any `docker system prune` there:
+it would take other people's live services down with ours.
 
 Check the environment before debugging connection issues.
 
@@ -414,7 +424,7 @@ Do not add a flag to `DataTable` to suppress its frame — that is the wrapper's
 
 ### Deploy is manual
 
-Pushing to `main` does nothing on its own. Deploy with `./deploy/deploy.sh` (optionally naming one service), which SSHes to the EC2 box, pulls `origin/main`, rebuilds, and health-checks. It uploads nothing — the server only runs pushed commits, so it refuses to deploy a dirty or unpushed tree. Target host and key live in `deploy/deploy.env` (gitignored; copy `deploy.env.example`).
+Pushing to `main` does nothing on its own. Deploy with `./deploy/deploy.sh` (optionally naming one service), which SSHes to the production box, pulls `origin/main`, rebuilds, and health-checks. It uploads nothing — the server only runs pushed commits, so it refuses to deploy a dirty or unpushed tree. Target host and key live in `deploy/deploy.env` (gitignored; copy `deploy.env.example`).
 
 ---
 
