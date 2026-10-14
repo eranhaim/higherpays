@@ -1,12 +1,13 @@
 'use strict';
 const express = require('express');
-const { query } = require('../db');
+const { pool, query } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { isStr, badRequest } = require('../util/validate');
 const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const { hasPermission } = require('../auth/permissions');
+const currencies = require('../services/currencies.service');
 const config = require('../config');
 
 const router = express.Router({ mergeParams: true });
@@ -16,6 +17,9 @@ const n = (v) => (v == null ? 0 : Number(v));
 const LABELS = { accountLabel: 'account_label', accountLabelPlural: 'account_label_plural', agentLabel: 'agent_label', agentLabelPlural: 'agent_label_plural' };
 
 const publicWorkspace = (w) => ({
+  // `currency` is the agency's BASE currency: what a report defaults to and
+  // what a salary is denominated in. The full set it may transact in comes
+  // from GET /currencies.
   id: w.id, name: w.name, currency: w.currency, status: w.status,
   labels: { account: w.account_label, accounts: w.account_label_plural, agent: w.agent_label, agents: w.agent_label_plural },
   minLinkAmount: w.min_link_amount == null ? null : Number(w.min_link_amount),
@@ -60,8 +64,25 @@ router.patch('/', requirePermission('settings.edit'), asyncHandler(async (req, r
   res.json(publicWorkspace(w));
 }));
 
-// GET /workspaces/:id/platform-fee — the rate the agency is charged.
+// GET /workspaces/:id/currencies — every currency this agency may transact
+// in, base first, with the amounts already resolved.
+//
+// `checkoutSupported` is false for a currency MantaPay has no id for: its
+// history and reports work, but no link may be priced in it. The UI must not
+// offer an unsupported currency on the link form.
+router.get('/currencies', requirePermission('payments.view'), asyncHandler(async (req, res) => {
+  const list = await currencies.listCurrencies(pool, wid(req));
+  res.json({ currencies: list });
+}));
+
+// GET /workspaces/:id/platform-fee?currency= — the rate the agency is charged.
+//
+// The percentage rates are the agency's rate card and apply to every currency.
+// The checkout fee is a flat amount and so is per currency; it is resolved for
+// the requested one.
 router.get('/platform-fee', requirePermission('payments.view'), asyncHandler(async (req, res) => {
+  const currency = await currencies.resolveReportingCurrency(pool, wid(req), req.query.currency);
+  const enabled = await currencies.getCurrency(pool, wid(req), currency);
   const r = (await query(
     `SELECT workspace_blended_rate($1) AS blended,
             f.psp_rate_pct, f.settlement_pct, f.margin_rate_pct,
@@ -75,12 +96,16 @@ router.get('/platform-fee', requirePermission('payments.view'), asyncHandler(asy
   // treasury and belongs to the roles that run the agency.
   const seesTreasury = hasPermission(req.access, 'data.view_all');
   res.json({
+    currency,
     blendedRatePct: n(r.blended),
     pspRatePct: n(r.psp_rate_pct),
     settlementPct: n(r.settlement_pct),
     marginRatePct: n(r.margin_rate_pct),
+    // Still one flat amount for every currency. MantaPay's own fixed fee is
+    // not documented per currency and we have not confirmed it, so it is left
+    // as the rate card states it rather than guessed at per currency.
     pspFixedFee: n(r.psp_fixed_fee),
-    checkoutFee: n(r.checkout_fee),
+    checkoutFee: enabled ? enabled.checkoutFee : n(r.checkout_fee),
     providerRefundAvailable: !!config.mantapayRefundEnabled,
     ...(seesTreasury ? {
       refundFee: n(r.refund_fee),
@@ -92,21 +117,35 @@ router.get('/platform-fee', requirePermission('payments.view'), asyncHandler(asy
   });
 }));
 
-// GET /workspaces/:id/link-limits
+// GET /workspaces/:id/link-limits?currency=
+//
+// The amounts are per currency — a floor that is sane in euros is not a floor
+// in shekels — and come from the enabled currency, which inherits the
+// workspace-wide amounts when it sets none of its own. The TTL and the
+// reusable-link switch are currency-free.
 router.get('/link-limits', requirePermission('payments.view'), asyncHandler(async (req, res) => {
+  const currency = await currencies.resolveReportingCurrency(pool, wid(req), req.query.currency);
+  const enabled = await currencies.getCurrency(pool, wid(req), currency);
   const w = (await query(
     'SELECT min_link_amount, max_link_amount, link_ttl_minutes, reusable_links_enabled FROM workspaces WHERE id=$1', [wid(req)])).rows[0];
   res.json({
-    minLinkAmount: w.min_link_amount == null ? null : Number(w.min_link_amount),
-    maxLinkAmount: w.max_link_amount == null ? null : Number(w.max_link_amount),
+    currency,
+    minLinkAmount: enabled ? enabled.minLinkAmount : (w.min_link_amount == null ? null : Number(w.min_link_amount)),
+    maxLinkAmount: enabled ? enabled.maxLinkAmount : (w.max_link_amount == null ? null : Number(w.max_link_amount)),
     linkTtlMinutes: w.link_ttl_minutes == null ? config.linkTtlMinutes : Number(w.link_ttl_minutes),
     reusableLinksEnabled: w.reusable_links_enabled,
+    // MantaPay's floor. We have only ever seen it stated as a bare 3, with no
+    // per-currency table, so it is reported as 3 in whichever currency is
+    // asked for. Not verified per currency — see the handover notes.
     providerMinimum: 3,
   });
 }));
 
 // PATCH /workspaces/:id/link-limits  { minLinkAmount, maxLinkAmount, linkTtlMinutes, reusableLinksEnabled }
-// (null clears an amount; a null TTL falls back to the platform default)
+//
+// These are the workspace-wide amounts, which every enabled currency inherits
+// unless a platform operator gave that currency its own. (null clears an
+// amount; a null TTL falls back to the platform default.)
 router.patch('/link-limits', requirePermission('settings.edit'), asyncHandler(async (req, res) => {
   const body = req.body || {};
   const norm = (v) => (v == null || v === '' ? null : Number(v));

@@ -7,13 +7,19 @@
 // Net revenue is the only revenue figure these roles get. Gross and the fee
 // total are deliberately absent: either one alongside net gives away the
 // platform fee by subtraction.
+//
+// Earnings are reported in ONE currency, resolved server-side and echoed back.
+// Someone paid in two currencies is owed two balances, and a single number for
+// them would be collectable in neither.
 const express = require('express');
 const { withTransaction } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { resolveDataScope } = require('../auth/dataScope');
+const currencies = require('../services/currencies.service');
 
 const router = express.Router({ mergeParams: true });
+const { wid } = require('../lib/scope');
 const n = (v) => Number(v || 0);
 const r2 = (v) => Math.round(v * 100) / 100;
 
@@ -26,6 +32,7 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
     const scope = await resolveDataScope(c, req);
     if (scope.kind !== 'agent' && scope.kind !== 'account') return null;
 
+    const currency = await currencies.resolveReportingCurrency(c, wid(req), req.query.currency);
     const isAccount = scope.kind === 'account';
     const amountCol = isAccount ? 're.account_amount' : 're.agent_amount';
     const paidCol = isAccount ? 're.account_payout_id' : 're.agent_payout_id';
@@ -38,8 +45,12 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
     const profile = isAccount
       ? (await c.query(
         `SELECT CASE WHEN pay_model = 'salary' THEN 0 ELSE COALESCE(revenue_split_pct, 0) END AS pct,
-                pay_model, salary_amount
-           FROM accounts WHERE id = $1`, [scopeVal])).rows[0]
+                pay_model,
+                -- The salary is a fixed amount in the agency's base currency,
+                -- so it is not owed in any other currency's report.
+                CASE WHEN $2::text = (SELECT w.currency FROM workspaces w WHERE w.id = a.workspace_id)
+                     THEN a.salary_amount END AS salary_amount
+           FROM accounts a WHERE a.id = $1`, [scopeVal, currency])).rows[0]
       : (await c.query(
         'SELECT commission_pct AS pct, NULL AS pay_model, NULL AS salary_amount FROM agents WHERE id = $1',
         [scopeVal])).rows[0];
@@ -51,8 +62,9 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
          FROM revenue_entries re
          JOIN transactions t ON t.id = re.transaction_id
          JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
-        WHERE ${scopeCol} = $1 AND t.occurred_at >= $2 AND t.occurred_at <= $3`,
-      [scopeVal, F, T])).rows[0];
+        WHERE ${scopeCol} = $1 AND t.occurred_at >= $2 AND t.occurred_at <= $3
+          AND t.currency = $4::text`,
+      [scopeVal, F, T, currency])).rows[0];
 
     // Balances are all-time: what you are owed is what was never settled.
     const balance = (await c.query(
@@ -61,9 +73,9 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
          FROM revenue_entries re
          JOIN transactions t ON t.id = re.transaction_id
          JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
-        WHERE ${scopeCol} = $1`, [scopeVal])).rows[0];
+        WHERE ${scopeCol} = $1 AND t.currency = $2::text`, [scopeVal, currency])).rows[0];
 
-    return { isAccount, profile, period, balance };
+    return { isAccount, profile, period, balance, currency };
   });
 
   if (!data) return res.status(404).json({ error: 'no_profile' });
@@ -72,11 +84,12 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
   const onSalary = isAccount && profile.pay_model === 'salary';
   res.json({
     range: { from: F, to: T },
+    currency: data.currency,
     role: isAccount ? 'account_owner' : 'agent',
     payModel: isAccount ? profile.pay_model : null,
     // A salaried creator is owed a fixed amount per payout period, not a cut
     // of net revenue, so their terms are the salary rather than a rate.
-    salaryAmount: onSalary ? r2(n(profile.salary_amount)) : null,
+    salaryAmount: onSalary && profile.salary_amount != null ? r2(n(profile.salary_amount)) : null,
     period: {
       sales: n(period.sales),
       netRevenue: r2(period.distributable),   // the base the rate is applied to

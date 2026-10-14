@@ -12,6 +12,7 @@ const { resolveDataScope, scopeParams } = require('../auth/dataScope');
 const { hasPermission } = require('../auth/permissions');
 const { resolveAttribution, repostSales } = require('../services/attribution');
 const paymentsService = require('../services/payments.service');
+const currencies = require('../services/currencies.service');
 const { recordLinkEvent } = require('../services/linkEvents');
 const config = require('../config');
 const {
@@ -103,7 +104,9 @@ function numericFilter(value) {
   return Number.isFinite(Number(value)) ? value : null;
 }
 
-function paymentFilterParams(req, scope, { canFilterFees }) {
+// `currency` is never optional: the list and its summary are about one
+// currency, so the table cannot show rows the totals above it leave out.
+function paymentFilterParams(req, scope, { canFilterFees, currency }) {
   const q = typeof req.query.q === 'string' && req.query.q.trim()
     ? `%${req.query.q.trim().toLowerCase()}%`
     : null;
@@ -115,6 +118,7 @@ function paymentFilterParams(req, scope, { canFilterFees }) {
     numericFilter(req.query.minAmount), numericFilter(req.query.maxAmount),
     canFilterFees ? numericFilter(req.query.minFee) : null,
     canFilterFees ? numericFilter(req.query.maxFee) : null,
+    currency,
   ];
 }
 
@@ -158,20 +162,21 @@ const PAYMENT_FILTERS = `
        AND fee_entry.entry_type = 'sale'
        AND fee_entry.platform_fee <= $16::numeric
   ))
+  AND p.currency = $17::text
   AND p.archived_at IS NULL`;
 
 // The list and the export answer the same question with the same filters;
 // only the page size differs. `cursor` null and `limit` null mean "all".
-async function listPayments(c, req, { cursor, limit, canFilterFees }) {
+async function listPayments(c, req, { cursor, limit, canFilterFees, currency }) {
   const sort = sortFor(req);
   const scope = await resolveDataScope(c, req);
   return (await c.query(
     `${SELECT}
       WHERE p.workspace_id = $1
         AND ${PAYMENT_FILTERS}
-        AND ($17::text IS NULL OR (${sort.expr}, p.id) ${sort.after} ($17::${sort.cast}, $18::uuid))
-      ORDER BY ${sort.expr} ${sort.dir}, p.id ${sort.dir} LIMIT $19`,
-    [...paymentFilterParams(req, scope, { canFilterFees }),
+        AND ($18::text IS NULL OR (${sort.expr}, p.id) ${sort.after} ($18::${sort.cast}, $19::uuid))
+      ORDER BY ${sort.expr} ${sort.dir}, p.id ${sort.dir} LIMIT $20`,
+    [...paymentFilterParams(req, scope, { canFilterFees, currency }),
       cursor ? cursor.value : null, cursor ? cursor.id : null, limit])).rows;
 }
 
@@ -182,19 +187,33 @@ router.get('/', requirePermission('payments.view'), asyncHandler(async (req, res
   const limit = parseLimit(req.query.limit);
   const cursor = decodeCursor(req.query.cursor);
   const seesFees = hasPermission(req.access, 'data.view_all');
-  const rows = await withTransaction((c) => listPayments(c, req, {
-    cursor, limit: limit + 1, canFilterFees: seesFees,
-  }));
-  const result = page(rows, limit, sortFor(req).keyOf, (r) => r.id);
-  res.json({ items: result.items.map((r) => publicPayment(r, { seesFees })), nextCursor: result.nextCursor });
+  const out = await withTransaction(async (c) => {
+    const currency = await currencies.resolveReportingCurrency(c, wid(req), req.query.currency);
+    const rows = await listPayments(c, req, {
+      cursor, limit: limit + 1, canFilterFees: seesFees, currency,
+    });
+    return { rows, currency };
+  });
+  const result = page(out.rows, limit, sortFor(req).keyOf, (r) => r.id);
+  res.json({
+    items: result.items.map((r) => publicPayment(r, { seesFees })),
+    nextCursor: result.nextCursor,
+    currency: out.currency,
+  });
 }));
 
 // GET /summary — the filtered totals across all matching rows, before pagination.
+//
+// Every money figure here is in ONE currency, resolved server-side and echoed
+// back. There is no "all currencies" total: adding EUR 100 to GBP 100 produces
+// a number that is true in no currency, and a payments ledger must not print
+// it. Counts are currency-free and so are reported across the filtered set.
 router.get('/summary', requirePermission('payments.view'), asyncHandler(async (req, res) => {
   const invalidDate = invalidDateFilter(req.query);
   if (invalidDate) return badRequest(res, `${invalidDate} must be a date`, [invalidDate]);
   const out = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
+    const currency = await currencies.resolveReportingCurrency(c, wid(req), req.query.currency);
     const row = (await c.query(
       `WITH matching AS (
          ${SELECT}
@@ -214,15 +233,15 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
               COALESCE(SUM(amount) FILTER (WHERE status = 'refunded'), 0) AS refunded_amount,
               COALESCE(SUM(surcharge) FILTER (
                 WHERE status IN ('paid', 'refunded') AND review_reason IS NULL
-              ), 0) AS checkout_fees,
-              (SELECT currency FROM workspaces WHERE id = $1) AS currency
+              ), 0) AS checkout_fees
          FROM matching`,
       paymentFilterParams(req, scope, {
         canFilterFees: hasPermission(req.access, 'data.view_all'),
+        currency,
       }))).rows[0];
     const platform = !req.user.actorId && (await c.query(
       'SELECT is_platform_admin FROM users WHERE id = $1', [req.user.id])).rows[0]?.is_platform_admin === true;
-    return { row, platform };
+    return { row, platform, currency };
   });
 
   const grossContent = Number(out.row.gross_content);
@@ -245,7 +264,7 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
     refundedCount: out.row.refunded_count,
     refundedAmount: Number(out.row.refunded_amount),
     ...(out.platform ? { checkoutFeeRevenue: Number(out.row.checkout_fees) } : {}),
-    currency: out.row.currency,
+    currency: out.currency,
   });
 }));
 
@@ -311,6 +330,9 @@ const exportColumns = (labels) => [
   { key: 'reference', header: 'HigherPays Order', value: (r) => r.link_reference },
   { key: 'providerTransaction', header: 'MantaPay Transaction ID', value: (r) => r.provider_transaction_id },
   { key: 'status', header: 'Status', value: (r) => r.status },
+  // The file is one currency, but it must say which: two exports of the same
+  // period in two currencies are otherwise indistinguishable.
+  { key: 'currency', header: 'Currency', value: (r) => r.currency },
   { key: 'gross', header: 'Gross Revenue', feesOnly: true, value: (r) => `${r.amount} ${r.currency}` },
   { key: 'fee', header: 'Platform Fee', feesOnly: true, value: (r) => r.platform_fee },
   { key: 'net', header: 'Net Revenue',
@@ -346,8 +368,11 @@ router.get('/export', requirePermission('payments.export'), asyncHandler(async (
   const asked = Number(req.query.limit);
   const limit = Number.isFinite(asked) && asked > 0 ? Math.min(asked, EXPORT_MAX_ROWS) : EXPORT_MAX_ROWS;
 
-  const rows = await withTransaction((c) => listPayments(c, req, {
-    cursor: null, limit, canFilterFees: seesFees,
+  const rows = await withTransaction(async (c) => listPayments(c, req, {
+    cursor: null,
+    limit,
+    canFilterFees: seesFees,
+    currency: await currencies.resolveReportingCurrency(c, wid(req), req.query.currency),
   }));
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'payment.export', metadata: { count: rows.length }, ip: req.ip || null });
   const csv = toCSV(columns.map((c) => c.header), rows.map((r) => columns.map((c) => c.value(r))));
@@ -382,10 +407,6 @@ router.post('/:id/archive', requirePermission('archive.manage'), requireArchiveM
     if (archived?.customer_id) {
       await c.query(
         `UPDATE customers SET
-            total_spend = (SELECT COALESCE(SUM(amount), 0)
-                             FROM payments
-                            WHERE customer_id = $1 AND status = 'paid'
-                              AND review_reason IS NULL AND archived_at IS NULL),
             last_purchase_at = (SELECT MAX(occurred_at)
                                   FROM payments
                                  WHERE customer_id = $1 AND status = 'paid'
@@ -413,10 +434,6 @@ router.post('/:id/reactivate', requirePermission('archive.manage'), requireArchi
     if (restored?.customer_id) {
       await c.query(
         `UPDATE customers SET
-            total_spend = (SELECT COALESCE(SUM(amount), 0)
-                             FROM payments
-                            WHERE customer_id = $1 AND status = 'paid'
-                              AND review_reason IS NULL AND archived_at IS NULL),
             last_purchase_at = (SELECT MAX(occurred_at)
                                   FROM payments
                                  WHERE customer_id = $1 AND status = 'paid'
@@ -589,8 +606,7 @@ router.patch('/:id/details', requirePermission('payments.complete'), asyncHandle
       'UPDATE payments SET category_id = $2, customer_id = $3 WHERE id = $1', [payment.id, category.id, resolvedCustomerId]);
     if (resolvedCustomerId) {
       await c.query(
-        `UPDATE customers SET total_spend = (SELECT COALESCE(SUM(amount),0) FROM payments WHERE customer_id = $1 AND status = 'paid' AND review_reason IS NULL AND archived_at IS NULL),
-                              last_purchase_at = GREATEST(coalesce(last_purchase_at, $2), $2)
+        `UPDATE customers SET last_purchase_at = GREATEST(coalesce(last_purchase_at, $2), $2)
           WHERE id = $1`, [resolvedCustomerId, payment.occurred_at]);
     }
     // A single-use link is finished once its one payment is complete.
@@ -621,12 +637,13 @@ router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(asyn
   const row = (await query(`
     SELECT count(*)::int AS payments,
            count(*) FILTER (WHERE re.account_payout_id IS NOT NULL OR re.agent_payout_id IS NOT NULL)::int AS paid_out,
-           COALESCE(SUM(p.amount), 0) AS amount
+           COALESCE(SUM(p.amount), 0) AS amount,
+           max(p.currency) AS currency
       FROM payments p
       LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
       LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
      WHERE p.workspace_id = $1 AND p.id = $2 AND p.archived_at IS NULL`, [wid(req), req.params.id])).rows[0];
-  res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount) });
+  res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount), currency: row.currency });
 }));
 
 // PATCH /:id/attribution  { accountId?, agentId? }

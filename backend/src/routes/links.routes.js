@@ -12,6 +12,7 @@ const { hasPermission } = require('../auth/permissions');
 const { status: vocab } = require('../schema/entities');
 const config = require('../config');
 const linksService = require('../services/links.service');
+const currencies = require('../services/currencies.service');
 const { recordLinkEvent } = require('../services/linkEvents');
 const { resolveAttribution } = require('../services/attribution');
 const { generateOrderReference } = require('../lib/orderReference');
@@ -78,7 +79,9 @@ function numberFilter(value) {
   return value === undefined || value === '' || Number.isNaN(Number(value)) ? null : Number(value);
 }
 
-function linkFilterParams(req, scope, includeArchived = null) {
+// `currency` is never optional: a list and its summary are about one currency,
+// so the table cannot show rows the totals above it leave out.
+function linkFilterParams(req, scope, currency, includeArchived = null) {
   const q = typeof req.query.q === 'string' && req.query.q.trim()
     ? `%${req.query.q.trim().toLowerCase()}%`
     : null;
@@ -89,6 +92,7 @@ function linkFilterParams(req, scope, includeArchived = null) {
     req.query.from || null, req.query.to || null,
     req.query.accountId || null, q, req.query.providerStatus || null,
     includeArchived === false ? false : req.query.showArchived === 'true',
+    currency,
   ];
 }
 
@@ -107,7 +111,8 @@ const LINK_FILTERS_UNDATED = `
        OR lower(COALESCE(pl.provider_transaction_id, '')) LIKE $11::text
        OR lower(COALESCE(u.full_name, '')) LIKE $11::text)
   AND ($12::text IS NULL OR pl.provider_status = $12::text)
-  AND ($13::boolean OR pl.archived_at IS NULL)`;
+  AND ($13::boolean OR pl.archived_at IS NULL)
+  AND pl.currency = $14::text`;
 
 // A link belongs to the window when it was created in it.
 const LINK_CREATED_IN_RANGE = `
@@ -157,9 +162,10 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
   const invalidDate = invalidDateFilter(req.query);
   if (invalidDate) return badRequest(res, `${invalidDate} must be a date`, [invalidDate]);
 
-  const rows = await withTransaction(async (c) => {
+  const out = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
-    return (await c.query(
+    const currency = await currencies.resolveReportingCurrency(c, wid(req), req.query.currency);
+    const rows = (await c.query(
       `WITH effective AS (
          SELECT pl.*, ${EFFECTIVE_STATUS} AS effective_status,
                 latest.provider_status, latest.provider_reply_code, latest.provider_reply_description,
@@ -175,16 +181,21 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
          LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
          LEFT JOIN users u ON u.id = ag.user_id
         WHERE ${LINK_FILTERS}
-          AND ($14::text IS NULL OR (${sort.expr}, pl.id) ${sort.after} ($14::${sort.cast}, $15::uuid))
-        ORDER BY ${sort.expr} ${sort.dir}, pl.id ${sort.dir} LIMIT $16`,
-      [...linkFilterParams(req, scope),
+          AND ($15::text IS NULL OR (${sort.expr}, pl.id) ${sort.after} ($15::${sort.cast}, $16::uuid))
+        ORDER BY ${sort.expr} ${sort.dir}, pl.id ${sort.dir} LIMIT $17`,
+      [...linkFilterParams(req, scope, currency),
         cursor ? cursor.value : null, cursor ? cursor.id : null, limit + 1])).rows;
+    return { rows, currency };
   });
-  const result = page(rows, limit, sort.keyOf, (r) => r.id);
-  res.json({ items: result.items.map(publicLink), nextCursor: result.nextCursor });
+  const result = page(out.rows, limit, sort.keyOf, (r) => r.id);
+  res.json({ items: result.items.map(publicLink), nextCursor: result.nextCursor, currency: out.currency });
 }));
 
 // GET /summary — every matching link and successful payment, before pagination.
+//
+// One currency, resolved server-side and echoed back. Nothing here is ever
+// summed across currencies: gross sales in EUR and in GBP are two different
+// numbers, and adding them would produce a total that means nothing.
 //
 // Two date axes, deliberately. How many links there are, and how many of them
 // converted, is a property of the links created in the window, so those count
@@ -199,9 +210,10 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
   const invalidDate = invalidDateFilter(req.query);
   if (invalidDate) return badRequest(res, `${invalidDate} must be a date`, [invalidDate]);
 
-  const row = await withTransaction(async (c) => {
+  const out = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
-    return (await c.query(
+    const currency = await currencies.resolveReportingCurrency(c, wid(req), req.query.currency);
+    const row = (await c.query(
       `WITH effective AS (
          SELECT pl.*, ${EFFECTIVE_STATUS} AS effective_status,
                 latest.provider_status, latest.provider_transaction_id
@@ -247,13 +259,14 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
            JOIN payments p ON p.id = t.payment_id
            JOIN matching_links ml ON ml.id = p.payment_link_id
           WHERE re.workspace_id = $1 AND p.archived_at IS NULL
+            AND t.currency = $14::text
             AND ${PAYMENT_OCCURRED_IN_RANGE}
        )
-       SELECT link_counts.*, revenue.*,
-              (SELECT currency FROM workspaces WHERE id = $1) AS currency
-         FROM link_counts, revenue`,
-      linkFilterParams(req, scope, false))).rows[0];
+       SELECT link_counts.*, revenue.* FROM link_counts, revenue`,
+      linkFilterParams(req, scope, currency, false))).rows[0];
+    return { row, currency };
   });
+  const { row } = out;
   res.json({
     totalLinks: row.total_links,
     paidLinks: row.paid_links,
@@ -262,6 +275,8 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
     // hands them the platform fee by subtraction.
     ...(hasPermission(req.access, 'data.view_all') ? { grossSales: Number(row.gross_sales) } : {}),
     netAfterFees: Number(row.net_after_fees),
+    // Bands are counts of links priced in `currency`, so the boundaries mean
+    // one thing. They were meaningless the moment two currencies shared them.
     priceBands: [
       { min: 0, max: 50, count: row.band_0_50 },
       { min: 50, max: 100, count: row.band_50_100 },
@@ -269,7 +284,7 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
       { min: 200, max: 500, count: row.band_200_500 },
       { min: 500, max: null, count: row.band_500_plus },
     ],
-    currency: row.currency,
+    currency: out.currency,
   });
 }));
 
@@ -329,15 +344,20 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
   if (description != null && typeof description !== 'string') return badRequest(res, 'description must be text', ['description']);
   if (noExpiry != null && typeof noExpiry !== 'boolean') return badRequest(res, 'noExpiry must be true or false', ['noExpiry']);
   if (!vocab.LINK_TYPE.includes(type)) return badRequest(res, `type must be one of ${vocab.LINK_TYPE.join(', ')}`, ['type']);
-  if (!/^[A-Za-z]{3}$/.test(currency || '')) return badRequest(res, 'currency must be a 3-letter code', ['currency']);
+  if (!currencies.isCurrencyCode(currency)) return badRequest(res, 'currency must be a 3-letter code', ['currency']);
   if (!isValidMoneyAmount(amount)) {
     return badRequest(res, 'amount must be a finite positive number with at most 2 decimal places', ['amount']);
   }
   const amt = amount;
   if (amt < MIN_FIXED_AMOUNT) return badRequest(res, `minimum amount is ${MIN_FIXED_AMOUNT}`, ['amount']);
-  const cur = currency.toUpperCase();
-  if (!config.supportedCurrencies.includes(cur)) {
+  const cur = currencies.normalise(currency);
+  if (!currencies.isPlatformCurrency(cur)) {
     return badRequest(res, `currency ${cur} is not enabled (supported: ${config.supportedCurrencies.join(', ')})`, ['currency']);
+  }
+  // A currency MantaPay has no id for would fail at the hosted page, after the
+  // customer has already been sent there.
+  if (!currencies.isCheckoutSupported(cur)) {
+    return badRequest(res, `MantaPay cannot take a payment in ${cur}`, ['currency']);
   }
 
   // The provider echoes this back unchanged as the attribution key.
@@ -347,19 +367,22 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
     // This conflicts with the platform currency update's FOR UPDATE lock.
     // Currency and limits therefore come from the same state as the insert.
     const ws = (await c.query(
-      'SELECT currency, min_link_amount, max_link_amount, link_ttl_minutes, reusable_links_enabled FROM workspaces WHERE id=$1 FOR SHARE',
+      'SELECT currency, link_ttl_minutes, reusable_links_enabled FROM workspaces WHERE id=$1 FOR SHARE',
       [wid(req)])).rows[0];
-    if (cur !== ws.currency) {
-      return { validation: `currency must match the workspace currency (${ws.currency})`, fields: ['currency'] };
+    // The limits and the checkout fee belong to the currency being charged, so
+    // a amount floor set in euros is not applied to a price in shekels.
+    const enabled = await currencies.getCurrency(c, wid(req), cur);
+    if (!enabled) {
+      return { validation: `currency ${cur} is not enabled for this workspace`, fields: ['currency'] };
     }
     if (type === 'reusable' && !ws.reusable_links_enabled) {
       return { validation: 'reusable links are disabled for this workspace', fields: ['type'] };
     }
-    if (ws.min_link_amount != null && amt < Number(ws.min_link_amount)) {
-      return { validation: `amount is below the workspace minimum of ${Number(ws.min_link_amount)}`, fields: ['amount'] };
+    if (enabled.minLinkAmount != null && amt < enabled.minLinkAmount) {
+      return { validation: `amount is below the ${cur} minimum of ${enabled.minLinkAmount}`, fields: ['amount'] };
     }
-    if (ws.max_link_amount != null && amt > Number(ws.max_link_amount)) {
-      return { validation: `amount is above the workspace maximum of ${Number(ws.max_link_amount)}`, fields: ['amount'] };
+    if (enabled.maxLinkAmount != null && amt > enabled.maxLinkAmount) {
+      return { validation: `amount is above the ${cur} maximum of ${enabled.maxLinkAmount}`, fields: ['amount'] };
     }
 
     const scope = await resolveDataScope(c, req);
@@ -381,8 +404,7 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
     // HigherPays' own fee, paid by the customer on top of the price. Copied
     // onto the link so a later rate change cannot rewrite what this customer
     // was charged, and never part of the amount the agency is credited.
-    const card = (await c.query('SELECT checkout_fee FROM effective_platform_fee($1, now())', [wid(req)])).rows[0];
-    const checkoutFee = Number(card?.checkout_fee || 0);
+    const checkoutFee = enabled.checkoutFee;
     if (config.mantapayFeeMode === 'additive' && checkoutFee >= amt) {
       return {
         validation: `checkout fee must be less than the link amount in additive mode`,
@@ -542,15 +564,18 @@ router.post('/:id/reactivate', requirePermission('archive.manage'), requireArchi
 // GET /:id/impact — how many past payments will remain unchanged. Read before
 // the confirmation, so the dialog can describe the future-only change.
 router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
+  // Summing is safe here: every payment on a link is in the link's currency,
+  // which cannot change once the link exists.
   const row = (await query(`
     SELECT count(*)::int AS payments,
            count(*) FILTER (WHERE re.account_payout_id IS NOT NULL OR re.agent_payout_id IS NOT NULL)::int AS paid_out,
-           COALESCE(SUM(p.amount), 0) AS amount
+           COALESCE(SUM(p.amount), 0) AS amount,
+           (SELECT l.currency FROM payment_links l WHERE l.id = $2 AND l.workspace_id = $1) AS currency
       FROM payments p
       LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
       LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
      WHERE p.workspace_id = $1 AND p.payment_link_id = $2 AND p.archived_at IS NULL`, [wid(req), req.params.id])).rows[0];
-  res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount) });
+  res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount), currency: row.currency });
 }));
 
 // PATCH /:id/attribution  { accountId?, agentId? }

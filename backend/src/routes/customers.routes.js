@@ -1,6 +1,11 @@
 'use strict';
 // Customer access follows the payments that connect the customer to an
 // assigned creator, agent, or account owner.
+//
+// Total spend is computed per currency, never as one number. A fan who paid
+// EUR 40 and GBP 100 has two spends; "140" is their spend in no currency at
+// all. The list and the export report one resolved currency so the column can
+// be sorted and compared; the profile shows every currency the fan used.
 const express = require('express');
 const { query, withTransaction } = require('../db');
 const { requirePermission, requireArchiveManager } = require('../middleware');
@@ -9,6 +14,7 @@ const { audit } = require('../util/audit');
 const { isStr, isOptStr, badRequest, toCSV } = require('../util/validate');
 const { status } = require('../schema/entities');
 const { resolveDataScope } = require('../auth/dataScope');
+const currencies = require('../services/currencies.service');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -16,9 +22,20 @@ const SEGMENTS = status.CUSTOMER_SEGMENT;
 
 const publicCustomer = (r) => ({
   id: r.id, name: r.name, telegramName: r.telegram_name, email: r.email, phone: r.phone, country: r.country,
-  segment: r.segment, totalSpend: Number(r.total_spend), lastPurchaseAt: r.last_purchase_at,
+  segment: r.segment, lastPurchaseAt: r.last_purchase_at,
   archivedAt: r.archived_at, createdAt: r.created_at,
 });
+
+// Spend in one currency: paid, reviewed-clean, unarchived payments only — the
+// same definition the payments summary uses for gross.
+const SPEND_IN_CURRENCY = (currencyPos) => `
+  LEFT JOIN LATERAL (
+    SELECT COALESCE(SUM(p.amount), 0) AS total_spend
+      FROM payments p
+     WHERE p.customer_id = c.id AND p.workspace_id = c.workspace_id
+       AND p.status = 'paid' AND p.review_reason IS NULL AND p.archived_at IS NULL
+       AND p.currency = $${currencyPos}::text
+  ) spend ON true`;
 
 // What a caller may sort by. Not free text: the key picks the column.
 // Mirrored in frontend/src/api/endpoints/customers.ts.
@@ -56,15 +73,16 @@ router.get('/', requirePermission('customers.view'), asyncHandler(async (req, re
   const dir = req.query.dir === 'asc' ? 'ASC' : 'DESC';
   const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
   const offset = Math.max(parseInt(req.query.offset || '0', 10), 0);
-  const rows = await withTransaction(async (c) => {
+  const out = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
+    const currency = await currencies.resolveReportingCurrency(c, wid(req), req.query.currency);
     const where = [
       'c.workspace_id = $1',
       'c.deleted_at IS NULL',
       'c.archived_at IS NULL',
       customerScopePredicate('c', 'scope_payment', { kind: 2, agent: 3, account: 4 }),
     ];
-    const vals = [wid(req), ...scopeValues(scope)];
+    const vals = [wid(req), ...scopeValues(scope), currency];
     if (segment && SEGMENTS.includes(segment)) { vals.push(segment); where.push(`c.segment = $${vals.length}`); }
     if (q) {
       vals.push(`%${String(q).toLowerCase()}%`);
@@ -73,30 +91,40 @@ router.get('/', requirePermission('customers.view'), asyncHandler(async (req, re
                    OR lower(coalesce(c.phone,'')) LIKE $${vals.length})`);
     }
     vals.push(limit, offset);
-    return (await c.query(
-      `SELECT c.* FROM customers c WHERE ${where.join(' AND ')}
+    const rows = (await c.query(
+      `SELECT c.*, spend.total_spend FROM customers c ${SPEND_IN_CURRENCY(5)}
+        WHERE ${where.join(' AND ')}
         ORDER BY ${sortColumn} ${dir} NULLS LAST, created_at DESC
         LIMIT $${vals.length - 1} OFFSET $${vals.length}`, vals)).rows;
+    return { rows, currency };
   });
-  res.json({ customers: rows.map(publicCustomer), limit, offset });
+  res.json({
+    customers: out.rows.map((r) => ({ ...publicCustomer(r), totalSpend: Number(r.total_spend) })),
+    currency: out.currency,
+    limit,
+    offset,
+  });
 }));
 
 // GET /export  (CSV, audited: bulk PII access is always logged)
 router.get('/export', requirePermission('customers.export'), asyncHandler(async (req, res) => {
-  const rows = await withTransaction(async (c) => {
+  const out = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
-    return (await c.query(
-      `SELECT c.name, c.telegram_name, c.email, c.phone, c.segment, c.total_spend, c.last_purchase_at
-         FROM customers c
+    const currency = await currencies.resolveReportingCurrency(c, wid(req), req.query.currency);
+    const rows = (await c.query(
+      `SELECT c.name, c.telegram_name, c.email, c.phone, c.segment, spend.total_spend, c.last_purchase_at
+         FROM customers c ${SPEND_IN_CURRENCY(5)}
         WHERE c.workspace_id = $1 AND c.deleted_at IS NULL AND c.archived_at IS NULL
           AND ${customerScopePredicate('c', 'scope_payment', { kind: 2, agent: 3, account: 4 })}
-        ORDER BY c.total_spend DESC`,
-      [wid(req), ...scopeValues(scope)])).rows;
+        ORDER BY spend.total_spend DESC`,
+      [wid(req), ...scopeValues(scope), currency])).rows;
+    return { rows, currency };
   });
-  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'customer.export', metadata: { count: rows.length }, ip: req.ip || null });
+  const { rows, currency } = out;
+  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'customer.export', metadata: { count: rows.length, currency }, ip: req.ip || null });
   const csv = toCSV(
-    ['name', 'telegram', 'email', 'phone', 'segment', 'total_spend', 'last_purchase'],
-    rows.map((r) => [r.name, r.telegram_name, r.email, r.phone, r.segment, r.total_spend, r.last_purchase_at ? new Date(r.last_purchase_at).toISOString() : '']),
+    ['name', 'telegram', 'email', 'phone', 'segment', 'total_spend', 'currency', 'last_purchase'],
+    rows.map((r) => [r.name, r.telegram_name, r.email, r.phone, r.segment, r.total_spend, currency, r.last_purchase_at ? new Date(r.last_purchase_at).toISOString() : '']),
   );
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="customers_${new Date().toISOString().slice(0, 10)}.csv"`);
@@ -130,12 +158,22 @@ router.get('/:id', requirePermission('customers.view'), asyncHandler(async (req,
             )))
             OR ($3::text = 'account' AND p.account_id = $5::uuid))
         ORDER BY p.occurred_at DESC LIMIT 100`, params)).rows;
-    return { row, payments };
+    // The profile is one fan's facts, so it shows every currency they paid in
+    // rather than one resolved currency. There is no total across them.
+    const spend = (await c.query(
+      `SELECT p.currency, SUM(p.amount) AS total_spend
+         FROM payments p
+        WHERE p.workspace_id = $1 AND p.customer_id = $2
+          AND p.status = 'paid' AND p.review_reason IS NULL AND p.archived_at IS NULL
+        GROUP BY p.currency ORDER BY SUM(p.amount) DESC`,
+      [wid(req), req.params.id])).rows;
+    return { row, payments, spend };
   });
   if (!result) return res.status(404).json({ error: 'not_found' });
-  const { row, payments } = result;
+  const { row, payments, spend } = result;
   res.json({
     ...publicCustomer(row),
+    spendByCurrency: spend.map((s) => ({ currency: s.currency, totalSpend: Number(s.total_spend) })),
     payments: payments.map((p) => ({
       id: p.id, amount: Number(p.amount), currency: p.currency, status: p.status, needsDetails: p.needs_details,
       occurredAt: p.occurred_at,

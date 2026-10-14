@@ -4,7 +4,7 @@
 const config = require('../config');
 const express = require('express');
 const crypto = require('crypto');
-const { query, withTransaction } = require('../db');
+const { pool, query, withTransaction } = require('../db');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { requirePlatformAdmin } = require('../middleware');
@@ -15,6 +15,7 @@ const { ROLE_PERMISSIONS } = require('../auth/permissions');
 const { isStr, badRequest } = require('../util/validate');
 const { sendEmail } = require('../util/email');
 const { status: vocab } = require('../schema/entities');
+const currencies = require('../services/currencies.service');
 
 const hashToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
 const router = express.Router();
@@ -211,15 +212,21 @@ router.get('/overview', asyncHandler(async (req, res) => {
            (SELECT count(*) FROM accounts) AS accounts,
            (SELECT count(*) FROM agents) AS agents,
            (SELECT count(*) FROM users) AS users`)).rows[0];
+  // One row per currency. Agencies are denominated differently and a single
+  // agency may take several currencies, so there is no platform-wide total to
+  // report — adding them would invent one.
   const money = (await query(`
-    SELECT COALESCE(SUM(re.gross) FILTER (WHERE re.entry_type='sale'),0) AS gross,
+    SELECT t.currency,
+           COALESCE(SUM(re.gross) FILTER (WHERE re.entry_type='sale'),0) AS gross,
            COALESCE(SUM(re.psp_fee),0) AS psp_fees,
            COALESCE(SUM(re.platform_fee),0) AS platform_fees,
            COALESCE(SUM(re.platform_margin),0) AS higherpays_margin,
            COUNT(*) FILTER (WHERE re.entry_type='sale') AS sales
       FROM revenue_entries re
       JOIN transactions t ON t.id = re.transaction_id
-      JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL`)).rows[0];
+      JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
+     GROUP BY t.currency
+     ORDER BY 2 DESC`)).rows;
   res.json({ counts, money, supportedCurrencies: config.supportedCurrencies });
 }));
 
@@ -231,8 +238,11 @@ router.get('/workspaces', asyncHandler(async (req, res) => {
            (SELECT count(*) FROM agents ag WHERE ag.workspace_id = w.id) AS agents,
            (SELECT count(*) FROM workspace_users wu WHERE wu.workspace_id = w.id AND wu.status='active') AS members,
            (SELECT count(*) FROM payments p WHERE p.workspace_id = w.id AND p.status='paid' AND p.archived_at IS NULL) AS paid_payments,
+           -- In the agency's base currency only: the row is labelled with that
+           -- currency, so sales in another one cannot be added into it.
            (SELECT COALESCE(SUM(amount),0) FROM payments p
-             WHERE p.workspace_id = w.id AND p.status='paid' AND p.review_reason IS NULL AND p.archived_at IS NULL) AS gross_volume,
+             WHERE p.workspace_id = w.id AND p.currency = w.currency
+               AND p.status='paid' AND p.review_reason IS NULL AND p.archived_at IS NULL) AS gross_volume,
            (SELECT max(created_at) FROM audit_log a WHERE a.workspace_id = w.id) AS last_activity,
            f.blended_rate_pct, f.psp_rate_pct, f.settlement_pct, f.margin_rate_pct,
            f.psp_fixed_fee, f.checkout_fee
@@ -307,6 +317,15 @@ router.patch('/workspaces/:id/currency', asyncHandler(async (req, res) => {
     const updated = (await c.query(
       'UPDATE workspaces SET currency=$2 WHERE id=$1 RETURNING id, currency',
       [workspace.id, currency])).rows[0];
+    // The base currency always has an enabled row. Nothing references the old
+    // one — a workspace with any money history cannot get here — so it goes
+    // rather than silently staying enabled.
+    await c.query(
+      'INSERT INTO workspace_currencies (workspace_id, currency) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+      [workspace.id, currency]);
+    await c.query(
+      'DELETE FROM workspace_currencies WHERE workspace_id=$1 AND currency=$2',
+      [workspace.id, workspace.currency]);
     await c.query(
       `INSERT INTO audit_log
          (workspace_id, actor_user_id, effective_user_id, action, entity_type, entity_id, metadata)
@@ -316,6 +335,90 @@ router.patch('/workspaces/:id/currency', asyncHandler(async (req, res) => {
   });
   if (out.error) return res.status(out.status).json({ error: out.error });
   res.json({ id: out.workspace.id, currency: out.workspace.currency, changed: out.changed });
+}));
+
+// GET /platform/workspaces/:id/currencies — the agency's enabled set.
+router.get('/workspaces/:id/currencies', asyncHandler(async (req, res) => {
+  const w = (await query('SELECT id FROM workspaces WHERE id=$1', [req.params.id])).rows[0];
+  if (!w) return res.status(404).json({ error: 'not_found' });
+  res.json({ currencies: await currencies.listCurrencies(pool, w.id) });
+}));
+
+// PUT /platform/workspaces/:id/currencies
+//   { currencies: [{ currency, checkoutFee?, minLinkAmount?, maxLinkAmount? }] }
+//
+// The whole enabled set, replaced. A platform operator decides which
+// currencies an agency may transact in; an agency cannot enable its own,
+// because each one is a commercial decision about fees.
+//
+// Omit an amount (or send null) to inherit: the rate card's checkout fee, or
+// the workspace-wide link limits. The base currency is always enabled and is
+// added back if the request leaves it out.
+router.put('/workspaces/:id/currencies', asyncHandler(async (req, res) => {
+  const input = Array.isArray(req.body?.currencies) ? req.body.currencies : null;
+  if (!input) return badRequest(res, 'currencies must be an array', ['currencies']);
+
+  const amount = (v) => (v == null || v === '' ? null : Number(v));
+  const wanted = [];
+  for (const raw of input) {
+    const code = currencies.normalise(raw?.currency);
+    if (!currencies.isPlatformCurrency(code)) {
+      return badRequest(res, `currency must be one of ${config.supportedCurrencies.join(', ')}`, ['currency']);
+    }
+    const checkoutFee = amount(raw.checkoutFee);
+    const min = amount(raw.minLinkAmount);
+    const max = amount(raw.maxLinkAmount);
+    if (checkoutFee != null && !(checkoutFee >= 0)) return badRequest(res, 'checkoutFee cannot be negative', ['checkoutFee']);
+    if (min != null && !(min > 0)) return badRequest(res, 'minLinkAmount must be positive', ['minLinkAmount']);
+    if (max != null && !(max > 0)) return badRequest(res, 'maxLinkAmount must be positive', ['maxLinkAmount']);
+    if (min != null && max != null && max < min) return badRequest(res, 'maxLinkAmount must be >= minLinkAmount', ['maxLinkAmount']);
+    if (wanted.some((w) => w.currency === code)) return badRequest(res, `currency ${code} is listed twice`, ['currencies']);
+    wanted.push({ currency: code, checkoutFee, min, max });
+  }
+
+  const out = await withTransaction(async (c) => {
+    const workspace = (await c.query(
+      'SELECT id, currency FROM workspaces WHERE id=$1 FOR UPDATE', [req.params.id])).rows[0];
+    if (!workspace) return { error: 'not_found', status: 404 };
+    if (!wanted.some((w) => w.currency === workspace.currency)) {
+      wanted.push({ currency: workspace.currency, checkoutFee: null, min: null, max: null });
+    }
+    const keep = wanted.map((w) => w.currency);
+    // A currency that priced a link or took a payment cannot be withdrawn:
+    // those rows are denominated in it for good.
+    const inUse = (await c.query(
+      `SELECT wc.currency FROM workspace_currencies wc
+        WHERE wc.workspace_id = $1 AND NOT (wc.currency = ANY($2::text[]))
+          AND (EXISTS (SELECT 1 FROM payment_links pl
+                        WHERE pl.workspace_id = wc.workspace_id AND pl.currency = wc.currency)
+            OR EXISTS (SELECT 1 FROM payments p
+                        WHERE p.workspace_id = wc.workspace_id AND p.currency = wc.currency))`,
+      [workspace.id, keep])).rows.map((r) => r.currency);
+    if (inUse.length) return { error: 'currency_in_use', status: 409, currencies: inUse };
+
+    for (const w of wanted) {
+      await c.query(
+        `INSERT INTO workspace_currencies
+           (workspace_id, currency, checkout_fee, min_link_amount, max_link_amount)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (workspace_id, currency) DO UPDATE
+            SET checkout_fee = EXCLUDED.checkout_fee,
+                min_link_amount = EXCLUDED.min_link_amount,
+                max_link_amount = EXCLUDED.max_link_amount`,
+        [workspace.id, w.currency, w.checkoutFee, w.min, w.max]);
+    }
+    await c.query(
+      'DELETE FROM workspace_currencies WHERE workspace_id=$1 AND NOT (currency = ANY($2::text[]))',
+      [workspace.id, keep]);
+    await c.query(
+      `INSERT INTO audit_log
+         (workspace_id, actor_user_id, effective_user_id, action, entity_type, entity_id, metadata)
+       VALUES ($1,$2,$2,'platform.workspace.currencies','workspace',$1,$3)`,
+      [workspace.id, uid(req), { currencies: keep }]);
+    return { workspaceId: workspace.id };
+  });
+  if (out.error) return res.status(out.status).json({ error: out.error, currencies: out.currencies });
+  res.json({ currencies: await currencies.listCurrencies(pool, out.workspaceId) });
 }));
 
 router.post('/workspaces/:id/owner-recovery', asyncHandler(async (req, res) => {
@@ -459,6 +562,12 @@ router.post('/agencies', asyncHandler(async (req, res) => {
     const ws = (await c.query(
       'INSERT INTO workspaces (name, currency, merchant_id) VALUES ($1,$2,$3) RETURNING id, webhook_endpoint_id',
       [b.name.trim(), currency, b.merchantId || null])).rows[0];
+    // The base currency is enabled from the start: a link cannot be priced in
+    // a currency that has no enabled row. Amounts are left to inherit, so a
+    // single-currency agency needs nothing more.
+    await c.query(
+      'INSERT INTO workspace_currencies (workspace_id, currency) VALUES ($1,$2)',
+      [ws.id, currency]);
     await ensureWorkspaceRoles(c, ws.id);
     // Effective from the beginning of time so any backfilled history is priced.
     await c.query(

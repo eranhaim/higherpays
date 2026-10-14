@@ -11,11 +11,17 @@
 // and any gross or fee figure next to it would give away the platform fee by
 // subtraction. That is why REVENUE below picks the column, and every money
 // aggregate on this route sums REVENUE rather than re.gross.
+//
+// The whole response is about ONE currency, resolved server-side and echoed
+// back. Nothing is converted and nothing is summed across currencies, so the
+// counts are filtered to the same currency too: revenue per link and average
+// order value divide one currency's money by that currency's link count.
 const express = require('express');
 const { withTransaction } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { resolveDataScope } = require('../auth/dataScope');
+const currencies = require('../services/currencies.service');
 
 const router = express.Router({ mergeParams: true });
 const { wid } = require('../lib/scope');
@@ -32,6 +38,7 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
 
   const out = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
+    const currency = await currencies.resolveReportingCurrency(c, wid(req), req.query.currency);
     let col = null, linkCol = null, payCol = null, val = null;
     if (scope.kind === 'agent') {
       col = 're.agent_id'; linkCol = 'pl.created_by_agent_id'; payCol = 'p.agent_id'; val = scope.agentId;
@@ -45,10 +52,11 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
     const scoped = val != null;
     const seesAgencyFigures = scope.kind === 'workspace';
     const REVENUE = seesAgencyFigures ? 're.gross' : 're.distributable';
-    // $1 from, $2 to, $3 workspace, ($4 scope)
-    const P = scoped ? [from, to, wid(req), val] : [from, to, wid(req)];
+    // $1 from, $2 to, $3 workspace, $4 currency, ($5 scope)
+    const P = scoped ? [from, to, wid(req), currency, val] : [from, to, wid(req), currency];
     const RE_FROM = 'FROM revenue_entries re JOIN transactions t ON t.id = re.transaction_id JOIN payments p ON p.id = t.payment_id';
-    const RE_WHERE = 'WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND p.archived_at IS NULL' + (scoped ? ` AND ${col} = $4` : '');
+    const RE_WHERE = 'WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND p.archived_at IS NULL'
+      + ' AND t.currency = $4::text' + (scoped ? ` AND ${col} = $5` : '');
 
     const h = (await c.query(`
       SELECT
@@ -75,8 +83,9 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
       .map((r) => ({ d: r.d, net: num(r.net), ...(seesAgencyFigures ? { gross: num(r.gross) } : {}) }));
 
     // Link funnel: links issued in the window, and what happened to them.
-    const linkWhere = 'WHERE pl.workspace_id = $3 AND pl.created_at >= $1 AND pl.created_at <= $2 AND pl.archived_at IS NULL';
-    const scopedLinkWhere = linkWhere + (scoped ? ` AND ${linkCol} = $4` : '');
+    const linkWhere = 'WHERE pl.workspace_id = $3 AND pl.created_at >= $1 AND pl.created_at <= $2'
+      + ' AND pl.archived_at IS NULL AND pl.currency = $4::text';
+    const scopedLinkWhere = linkWhere + (scoped ? ` AND ${linkCol} = $5` : '');
     const fn = (await c.query(`
       SELECT COUNT(*) AS created,
         COUNT(*) FILTER (WHERE pl.status IN ('pending','done') OR pl.paid_at IS NOT NULL
@@ -88,8 +97,8 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
     const failed = num((await c.query(`
       SELECT COUNT(*) AS c FROM payments p
        WHERE p.workspace_id = $3 AND p.status = 'failed' AND p.archived_at IS NULL
-         AND p.occurred_at >= $1 AND p.occurred_at <= $2
-         ${scoped ? `AND ${payCol} = $4` : ''}`, P)).rows[0].c);
+         AND p.occurred_at >= $1 AND p.occurred_at <= $2 AND p.currency = $4::text
+         ${scoped ? `AND ${payCol} = $5` : ''}`, P)).rows[0].c);
 
     const agents = (await c.query(`
       SELECT u.full_name AS name, ag.id AS agent_id,
@@ -117,20 +126,22 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
     const topShare = (share) => { const k = Math.max(1, Math.ceil(perCust.length * share)); return Math.round(perCust.slice(0, k).reduce((a, b) => a + b, 0) / totRev * 100); };
 
     // Repeat buying is all-time, not period-scoped: a fan is a repeat buyer
-    // whenever their second purchase happened.
+    // whenever their second purchase happened. It is counted within the
+    // reporting currency, so it answers "do this currency's buyers come back".
     const repeat = (await c.query(`
       SELECT COUNT(*) FILTER (WHERE n>=2) AS repeat_c, COUNT(*) AS any_c, COALESCE(AVG(n),0) AS freq
         FROM (SELECT p.customer_id, COUNT(*) n FROM payments p
                WHERE p.workspace_id = $1 AND p.status='paid' AND p.archived_at IS NULL AND p.customer_id IS NOT NULL
+                 AND p.currency = $3::text
                  AND ($2::uuid IS NULL OR ${payCol || 'p.id'} = $2::uuid)
-               GROUP BY p.customer_id) q`, [wid(req), scoped ? val : null])).rows[0];
+               GROUP BY p.customer_id) q`, [wid(req), scoped ? val : null, currency])).rows[0];
     const categories = (await c.query(`
       SELECT COALESCE(ca.name, 'Uncategorised') AS category, COALESCE(SUM(${REVENUE}),0) AS rev
       ${RE_FROM} LEFT JOIN categories ca ON ca.id = p.category_id
       ${RE_WHERE} AND re.entry_type='sale' GROUP BY ca.name ORDER BY rev DESC`, P)).rows
       .map((r) => ({ category: r.category, revenue: num(r.rev) }));
     const nr = (await c.query(`
-      WITH firsts AS (SELECT customer_id, MIN(occurred_at) AS first_ts FROM payments WHERE workspace_id = $3 AND status='paid' AND archived_at IS NULL GROUP BY customer_id)
+      WITH firsts AS (SELECT customer_id, MIN(occurred_at) AS first_ts FROM payments WHERE workspace_id = $3 AND status='paid' AND archived_at IS NULL AND currency = $4::text GROUP BY customer_id)
       SELECT COALESCE(SUM(${REVENUE}) FILTER (WHERE f.first_ts >= $1),0) AS new_rev,
              COALESCE(SUM(${REVENUE}) FILTER (WHERE f.first_ts <  $1),0) AS ret_rev
       ${RE_FROM} JOIN firsts f ON f.customer_id = p.customer_id
@@ -144,6 +155,7 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
 
     return {
       range: { from, to, days }, scope: seesAgencyFigures ? 'agency' : scope.kind,
+      currency,
       timeseries: ts,
       headline: {
         net: num(h.net),
