@@ -614,9 +614,11 @@ router.patch('/:id/details', requirePermission('payments.complete'), asyncHandle
   res.json(publicPayment(out.row, { seesFees: hasPermission(req.access, 'data.view_all') }));
 }));
 
-// GET /:id/impact — whether this payment has already been paid out. Read
-// before the confirmation, so the dialog can say it in numbers rather than in
-// general. Same shape as a link's impact, over the one payment.
+// GET /:id/impact — how much money reassigning this payment's order would
+// move, and how much of it a payout has already settled. Read before the
+// confirmation, so the dialog can say it in numbers rather than in general.
+// Only settled payments are counted: a declined or superseded attempt moves
+// with the order, but it is not money and must not appear in a money figure.
 router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
   const row = (await query(`
     SELECT count(*)::int AS payments,
@@ -625,14 +627,21 @@ router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(asyn
       FROM payments p
       LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
       LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
-     WHERE p.workspace_id = $1 AND p.id = $2 AND p.archived_at IS NULL`, [wid(req), req.params.id])).rows[0];
+     WHERE p.workspace_id = $1 AND p.archived_at IS NULL
+       AND p.status IN ('paid', 'refunded')
+       AND (p.id = $2 OR p.payment_link_id = (
+             SELECT pl.id FROM payments src
+               JOIN payment_links pl ON pl.id = src.payment_link_id
+              WHERE src.id = $2 AND src.workspace_id = $1 AND pl.type = 'single_use'))`,
+    [wid(req), req.params.id])).rows[0];
   res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount) });
 }));
 
 // PATCH /:id/attribution  { accountId?, agentId? }
-// Moves one payment to another creator or agent. The sale is re-posted against
-// the new attribution, so a payout that already paid the old creator for it is
-// left overpaid — /impact says so before confirming.
+// Moves a payment, and the rest of its single-use order, to another creator or
+// agent. Each sale is re-posted against the new attribution, so a payout that
+// already paid the old creator for it is left overpaid — /impact says so
+// before confirming.
 router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
   const { accountId, agentId } = req.body || {};
   if (accountId === undefined && agentId === undefined) {
@@ -654,20 +663,32 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
     });
     if (next.err) return next;
 
-    await c.query(
-      'UPDATE payments SET account_id = $2, agent_id = $3 WHERE id = $1',
-      [payment.id, next.accountId, next.agentId]);
-    // A single-use link carries exactly this payment, so it follows it. A
-    // reusable link stays where it is: its other payments have not moved.
+    // A single-use link is one order, so the link and every attempt on it
+    // follow the payment. Moving the winner alone is what left
+    // HP-NXEW-YCSX-EVMS showing one Completed payment under one creator and
+    // two beaten attempts under another. A reusable link stays where it is:
+    // its other payments are other orders and have not moved.
+    let orderPaymentIds = [payment.id];
     if (payment.payment_link_id) {
-      await c.query(
-        "UPDATE payment_links SET account_id = $2, created_by_agent_id = $3 WHERE id = $1 AND type = 'single_use'",
-        [payment.payment_link_id, next.accountId, next.agentId]);
+      const link = (await c.query(
+        "UPDATE payment_links SET account_id = $2, created_by_agent_id = $3 WHERE id = $1 AND type = 'single_use' RETURNING id",
+        [payment.payment_link_id, next.accountId, next.agentId])).rows[0];
+      if (link) {
+        orderPaymentIds = (await c.query(
+          `SELECT id FROM payments
+            WHERE payment_link_id = $1 AND workspace_id = $2
+              AND archived_at IS NULL AND review_reason IS NULL`,
+          [link.id, wid(req)])).rows.map((r) => r.id);
+      }
     }
-    const reposted = await repostSales(c, [payment.id]);
+    await c.query(
+      'UPDATE payments SET account_id = $2, agent_id = $3 WHERE workspace_id = $4 AND id = ANY($1::uuid[])',
+      [orderPaymentIds, next.accountId, next.agentId, wid(req)]);
+    const reposted = await repostSales(c, orderPaymentIds);
     return {
       row: await loadScoped(c, req, payment.id),
       reposted,
+      moved: orderPaymentIds.length,
       from: { accountId: payment.account_id, agentId: payment.agent_id },
     };
   });
@@ -680,10 +701,15 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
     metadata: {
       from: out.from,
       to: { accountId: out.row.account_id, agentId: out.row.agent_id },
+      moved: out.moved,
       reposted: out.reposted,
     },
   });
-  res.json({ ...publicPayment(out.row, { seesFees: hasPermission(req.access, 'data.view_all') }), reposted: out.reposted });
+  res.json({
+    ...publicPayment(out.row, { seesFees: hasPermission(req.access, 'data.view_all') }),
+    moved: out.moved,
+    reposted: out.reposted,
+  });
 }));
 
 // A refund or chargeback reverses the sale in the ledger and records a second
