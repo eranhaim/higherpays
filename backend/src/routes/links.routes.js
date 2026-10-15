@@ -13,7 +13,7 @@ const { status: vocab } = require('../schema/entities');
 const config = require('../config');
 const linksService = require('../services/links.service');
 const { recordLinkEvent } = require('../services/linkEvents');
-const { resolveAttribution } = require('../services/attribution');
+const { resolveAttribution, repostSales } = require('../services/attribution');
 const { generateOrderReference } = require('../lib/orderReference');
 
 const router = express.Router({ mergeParams: true });
@@ -33,7 +33,12 @@ function isValidMoneyAmount(value) {
 const EFFECTIVE_STATUS = `CASE WHEN pl.status = 'active' AND pl.expires_at IS NOT NULL AND pl.expires_at < now()
                                THEN 'expired' ELSE pl.status END`;
 
-const LATEST_ATTEMPT = `
+// The order's outcome at MantaPay, not its last attempt. An approved order is
+// often retried afterwards -- HP-NXEW-YCSX-EVMS was approved at 21:13 and
+// declined twice by 21:23 -- and picking the latest attempt made a paid link
+// report "Declined", which is the contradiction the agency keeps reporting.
+// An approval wins; otherwise the most recent attempt stands.
+const PROVIDER_OUTCOME = `
   LEFT JOIN LATERAL (
     SELECT t.status AS provider_status,
            t.provider_transaction_id,
@@ -53,7 +58,7 @@ const LATEST_ATTEMPT = `
       FROM payments p
       JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment' AND p.archived_at IS NULL
      WHERE p.payment_link_id = pl.id
-     ORDER BY t.occurred_at DESC, t.id DESC
+     ORDER BY (t.status = 'approved') DESC, t.occurred_at DESC, t.id DESC
      LIMIT 1
   ) latest ON true`;
 
@@ -65,7 +70,7 @@ const publicLink = (l) => ({
   archivedAt: l.archived_at, createdAt: l.created_at,
   accountId: l.account_id, account: l.account,
   agentId: l.created_by_agent_id, agent: l.agent,
-  latestProviderAttempt: l.provider_status ? {
+  providerOutcome: l.provider_status ? {
     status: l.provider_status,
     replyCode: l.provider_reply_code,
     replyDescription: l.provider_reply_description,
@@ -165,7 +170,7 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
                 latest.provider_status, latest.provider_reply_code, latest.provider_reply_description,
                 latest.provider_transaction_id, latest.provider_occurred_at
            FROM payment_links pl
-           ${LATEST_ATTEMPT}
+           ${PROVIDER_OUTCOME}
           WHERE pl.workspace_id = $1
        )
        SELECT pl.*, pl.effective_status AS status,
@@ -206,7 +211,7 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
          SELECT pl.*, ${EFFECTIVE_STATUS} AS effective_status,
                 latest.provider_status, latest.provider_transaction_id
            FROM payment_links pl
-           ${LATEST_ATTEMPT}
+           ${PROVIDER_OUTCOME}
           WHERE pl.workspace_id = $1
        ),
        matching_links AS (
@@ -285,7 +290,7 @@ router.get('/:id', requirePermission('links.view'), asyncHandler(async (req, res
          JOIN accounts a ON a.id = pl.account_id
          LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
          LEFT JOIN users u ON u.id = ag.user_id
-         ${LATEST_ATTEMPT}
+         ${PROVIDER_OUTCOME}
         WHERE pl.workspace_id = $1 AND pl.id = $2
           AND ($3::uuid IS NULL OR pl.created_by_agent_id = $3::uuid)
           AND ($4::uuid IS NULL OR pl.account_id = $4::uuid)`,
@@ -539,8 +544,11 @@ router.post('/:id/reactivate', requirePermission('archive.manage'), requireArchi
   res.json(publicLink(row));
 }));
 
-// GET /:id/impact — how many past payments will remain unchanged. Read before
-// the confirmation, so the dialog can describe the future-only change.
+// GET /:id/impact — how much money reassigning this link would move, and how
+// much of it a payout has already settled. Read before the confirmation, so the
+// dialog can say it in numbers rather than in general.
+// Only settled payments are counted: a declined or superseded attempt moves
+// with the order, but it is not money and must not appear in a money figure.
 router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
   const row = (await query(`
     SELECT count(*)::int AS payments,
@@ -549,13 +557,18 @@ router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(asyn
       FROM payments p
       LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
       LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
-     WHERE p.workspace_id = $1 AND p.payment_link_id = $2 AND p.archived_at IS NULL`, [wid(req), req.params.id])).rows[0];
+     WHERE p.workspace_id = $1 AND p.payment_link_id = $2 AND p.archived_at IS NULL
+       AND p.status IN ('paid', 'refunded')`, [wid(req), req.params.id])).rows[0];
   res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount) });
 }));
 
 // PATCH /:id/attribution  { accountId?, agentId? }
-// Changes the attribution used for future payments on this link. Existing
-// payments keep their original attribution and ledger entries.
+// Moves the link and the payments already taken on it to another creator or
+// agent, re-posting each sale against the new attribution so the ledger, the
+// payout figures and analytics all agree with the page. A payout that already
+// paid the old creator is left overpaid -- /impact says so before confirming.
+// A reversed payment cannot move: only its sale entry would be re-posted,
+// leaving the refund that mirrors it against the old creator.
 router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
   const { accountId, agentId } = req.body || {};
   if (accountId === undefined && agentId === undefined) {
@@ -573,11 +586,27 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
     });
     if (next.err) return next;
 
+    const reversed = (await c.query(
+      `SELECT 1 FROM payments
+        WHERE payment_link_id = $1 AND status = 'refunded' AND archived_at IS NULL LIMIT 1`,
+      [link.id])).rows[0];
+    if (reversed) return { err: 'payment_reversed', fields: [] };
+
     await c.query(
       'UPDATE payment_links SET account_id = $2, created_by_agent_id = $3 WHERE id = $1',
       [link.id, next.accountId, next.agentId]);
 
+    const moved = (await c.query(
+      `UPDATE payments SET account_id = $2, agent_id = $3
+        WHERE payment_link_id = $1 AND workspace_id = $4
+          AND archived_at IS NULL AND review_reason IS NULL
+        RETURNING id`,
+      [link.id, next.accountId, next.agentId, wid(req)])).rows.map((r) => r.id);
+    const reposted = moved.length ? await repostSales(c, moved) : 0;
+
     return {
+      moved: moved.length,
+      reposted,
       link: (await c.query(`
         SELECT pl.*, ${EFFECTIVE_STATUS} AS status, a.name AS account, u.full_name AS agent,
                latest.provider_status, latest.provider_reply_code, latest.provider_reply_description,
@@ -586,9 +615,8 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
           JOIN accounts a ON a.id = pl.account_id
           LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
           LEFT JOIN users u ON u.id = ag.user_id
-          ${LATEST_ATTEMPT}
+          ${PROVIDER_OUTCOME}
          WHERE pl.id = $1`, [link.id])).rows[0],
-      futureOnly: true,
       from: { accountId: link.account_id, agentId: link.created_by_agent_id },
     };
   });
@@ -601,10 +629,11 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
     metadata: {
       from: out.from,
       to: { accountId: out.link.account_id, agentId: out.link.created_by_agent_id },
-      futureOnly: out.futureOnly,
+      moved: out.moved,
+      reposted: out.reposted,
     },
   });
-  res.json({ ...publicLink(out.link), futureOnly: out.futureOnly });
+  res.json({ ...publicLink(out.link), moved: out.moved, reposted: out.reposted });
 }));
 
 // POST /reconcile — the same reconciliation the server runs on a timer, on

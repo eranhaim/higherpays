@@ -57,7 +57,7 @@ export interface PaymentLink {
   account: string;
   agentId: string | null;
   agent: string | null;
-  latestProviderAttempt: ProviderAttempt | null;
+  providerOutcome: ProviderOutcome | null;
 }
 
 export type LinkEventType =
@@ -86,7 +86,12 @@ export const PROVIDER_ATTEMPT_STATUS_LABELS: Record<ProviderAttemptStatus, strin
   declined: 'Declined',
 };
 
-export interface ProviderAttempt {
+/**
+ * What MantaPay says became of this order. An approved attempt is the outcome
+ * even when the customer retried afterwards and was declined, so this never
+ * contradicts a paid link.
+ */
+export interface ProviderOutcome {
   status: ProviderAttemptStatus;
   replyCode: string | null;
   replyDescription: string | null;

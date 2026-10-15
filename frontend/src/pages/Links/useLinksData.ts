@@ -93,7 +93,6 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
       archived ? linksApi.archive(id) : linksApi.reactivate(id),
     onSuccess: invalidateLinks,
   });
-  // Link reassignment changes only the attribution for future payments.
   const reassign = useMutation({
     mutationFn: ({ id, input }: { id: string; input: ReassignInput }) => linksApi.reassign(id, input),
     onSuccess: invalidateLinks,

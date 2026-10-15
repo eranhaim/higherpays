@@ -20,7 +20,7 @@ test('a single-use link carries its HigherPays order in the public URL and has a
     `expires in ~${config.linkTtlMinutes}m, got ${minutes}`);
 });
 
-test('link attempts and summaries use all matching rows without replacing lifecycle status', async () => {
+test('the link list reports the provider outcome and summaries use all matching rows without replacing lifecycle status', async () => {
   const t = await createTenant(app, { checkoutFee: 2 });
   const account = await createAccount(app, t);
   const create = (type, amount) => request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
@@ -41,10 +41,10 @@ test('link attempts and summaries use all matching rows without replacing lifecy
     .set(t.authHeaders).expect(200)).body;
   assert.equal(list.items.length, 1);
   assert.equal(list.items[0].status, 'active');
-  assert.equal(list.items[0].latestProviderAttempt.status, 'approved');
-  assert.equal(list.items[0].latestProviderAttempt.replyCode, '000');
-  assert.equal(list.items[0].latestProviderAttempt.replyDescription, 'Approved');
-  assert.ok(transactionIds.includes(list.items[0].latestProviderAttempt.transactionId));
+  assert.equal(list.items[0].providerOutcome.status, 'approved');
+  assert.equal(list.items[0].providerOutcome.replyCode, '000');
+  assert.equal(list.items[0].providerOutcome.replyDescription, 'Approved');
+  assert.ok(transactionIds.includes(list.items[0].providerOutcome.transactionId));
 
   const summary = (await request(app).get(`/workspaces/${t.workspaceId}/links/summary`)
     .set(t.authHeaders).expect(200)).body;
