@@ -44,7 +44,9 @@ const LINK_EVENT_TYPE = [
 //   paid      the provider approved the charge
 //   failed    the provider declined it
 //   refunded  a paid charge was reversed, by refund or chargeback
-const PAYMENT_STATUS = ['pending', 'paid', 'failed', 'refunded'];
+// 'superseded': an attempt that a later approval of the same order beat. See
+// migrations/037_superseded_attempts.sql.
+const PAYMENT_STATUS = ['pending', 'paid', 'failed', 'refunded', 'superseded'];
 const TRANSACTION_TYPE = ['payment', 'refund', 'chargeback', 'adjustment'];
 const TRANSACTION_STATUS = ['pending', 'approved', 'declined', 'refunded', 'charged_back'];
 const REVENUE_ENTRY_TYPE = ['sale', 'refund', 'chargeback'];

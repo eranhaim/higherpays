@@ -16,6 +16,11 @@ const { log } = require('../lib/log');
 const { recordLinkEvent } = require('./linkEvents');
 const { declineFields } = require('../providers/mantapay-reply');
 
+// A single-use link an approval may still claim. 'pending', 'done' and
+// 'refunded' already have their winner, and a second approval there is the
+// duplicate charge that review_reason exists for.
+const REOPENABLE_LINK_STATUSES = ['active', 'expired', 'cancelled'];
+
 /**
  * @param {import('pg').PoolClient} client  a client inside an open transaction
  * @param {string} workspaceId
@@ -195,10 +200,27 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   // 4) A paid single-use link waits for the agent to complete the details.
   //    A reusable link stays open; a declined attempt leaves either untouched
   //    so the customer can try again.
+  //
+  //    'expired' and 'cancelled' are in the list because MantaPay approves an
+  //    order days after the link closed. The money arrived, so the link owes
+  //    its details whatever we had written it off as.
   if (payment.status === 'paid' && !payment.review_reason
-      && link.type === 'single_use' && link.status === 'active') {
+      && link.type === 'single_use' && REOPENABLE_LINK_STATUSES.includes(link.status)) {
     await client.query(
       "UPDATE payment_links SET status = 'pending', paid_at = now() WHERE id = $1", [link.id]);
+  }
+
+  // 4b) A single-use order has one outcome. MantaPay re-identifies an attempt
+  //     when it approves an order it had declined, so the decline survives
+  //     under its old id and reads as money the agency never received. Mark
+  //     the attempts this approval beat; the provider's evidence stays.
+  if (payment.status === 'paid' && !payment.review_reason && link.type === 'single_use') {
+    await client.query(
+      `UPDATE payments SET status = 'superseded'
+        WHERE payment_link_id = $1 AND id <> $2
+          AND status IN ('pending', 'failed')
+          AND archived_at IS NULL`,
+      [link.id, payment.id]);
   }
 
   // 5) Post the sale to the ledger once.
