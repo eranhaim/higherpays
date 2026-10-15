@@ -5,14 +5,15 @@ import type { WorkspaceLabels } from '../types';
 import type { LinkType, ReassignImpact, ReassignInput } from './links';
 
 /** Mirrors PAYMENT_STATUS in the schema. */
-export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded';
-export const PAYMENT_STATUSES: PaymentStatus[] = ['pending', 'paid', 'failed', 'refunded'];
+export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded' | 'superseded';
+export const PAYMENT_STATUSES: PaymentStatus[] = ['pending', 'paid', 'failed', 'refunded', 'superseded'];
 
 export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
   pending: 'Waiting for payment',
   paid: 'Completed',
   failed: 'Failed',
   refunded: 'Refunded',
+  superseded: 'Retried and paid',
 };
 
 export function paymentStatusLabel(payment: { status: PaymentStatus; needsDetails?: boolean }): string {

@@ -442,18 +442,18 @@ export default function LinksPage() {
                 <DetailRow label="Last opened"><DateCell ts={detailQuery.data.lastOpenedAt} /></DetailRow>
               </>
             )}
-            {detailData.latestProviderAttempt && (
+            {detailData.providerOutcome && (
               <>
-                <DetailRow label="MantaPay attempt (internal)">
-                  <Pill tone={PROVIDER_STATUS_TONE[detailData.latestProviderAttempt.status]}>
-                    {PROVIDER_ATTEMPT_STATUS_LABELS[detailData.latestProviderAttempt.status]}
+                <DetailRow label="MantaPay outcome">
+                  <Pill tone={PROVIDER_STATUS_TONE[detailData.providerOutcome.status]}>
+                    {PROVIDER_ATTEMPT_STATUS_LABELS[detailData.providerOutcome.status]}
                   </Pill>
                 </DetailRow>
-                <DetailRow label="MantaPay transaction ID">{detailData.latestProviderAttempt.transactionId ?? '—'}</DetailRow>
+                <DetailRow label="MantaPay transaction ID">{detailData.providerOutcome.transactionId ?? '—'}</DetailRow>
                 <DetailRow label="MantaPay reply">
-                  {[detailData.latestProviderAttempt.replyCode, detailData.latestProviderAttempt.replyDescription].filter(Boolean).join(' · ') || '—'}
+                  {[detailData.providerOutcome.replyCode, detailData.providerOutcome.replyDescription].filter(Boolean).join(' · ') || '—'}
                 </DetailRow>
-                <DetailRow label="Provider attempt time"><DateCell ts={detailData.latestProviderAttempt.occurredAt} /></DetailRow>
+                <DetailRow label="MantaPay outcome time"><DateCell ts={detailData.providerOutcome.occurredAt} /></DetailRow>
               </>
             )}
             <div className="field">

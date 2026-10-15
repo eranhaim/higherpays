@@ -43,11 +43,18 @@ function PaymentAmount({ payment }: { payment: Payment }) {
   );
 }
 
-const STATUS_TONE: Record<Exclude<PaymentStatus, 'pending'>, 'ok' | 'no'> = {
+const STATUS_TONE: Record<Exclude<PaymentStatus, 'pending'>, 'ok' | 'no' | 'warn'> = {
   paid: 'ok',
   failed: 'no',
   refunded: 'no',
+  superseded: 'warn',
 };
+
+// A superseded attempt is not lost money: MantaPay approved the same order
+// under a new transaction id, and the Completed payment beside it is that
+// approval. Saying so on the row is what stops the agency reading its own
+// history as a failure.
+const SUPERSEDED_NOTE = 'This attempt did not go through; the same order was approved on a later attempt.';
 
 function StatusPill({ payment }: { payment: Payment }) {
   if (payment.status === 'pending') return <span className="sub">Waiting for payment</span>;
@@ -56,6 +63,14 @@ function StatusPill({ payment }: { payment: Payment }) {
 }
 
 function PaymentStatus({ payment }: { payment: Payment }) {
+  if (payment.status === 'superseded') {
+    return (
+      <div>
+        <StatusPill payment={payment} />
+        <div className="sub" title={SUPERSEDED_NOTE}>Superseded by a later approval</div>
+      </div>
+    );
+  }
   if (payment.status !== 'failed') return <StatusPill payment={payment} />;
   const reason = declineReasonLabel(payment.declineReason);
   const code = payment.declineCode ? ` (${payment.declineCode})` : '';
@@ -447,6 +462,9 @@ export default function PaymentsPage() {
                 : '—'}
             </DetailRow>
             <DetailRow label="MantaPay transaction ID">{detail.providerTransactionId ?? '—'}</DetailRow>
+            {detail.status === 'superseded' && (
+              <div className="callout"><p className="sub">{SUPERSEDED_NOTE}</p></div>
+            )}
             {detail.status === 'failed' && (
               <>
                 <DetailRow label="MantaPay decline reason">{declineReasonLabel(detail.declineReason)}</DetailRow>
