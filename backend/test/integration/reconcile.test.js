@@ -168,4 +168,9 @@ test('a closed link MantaPay still calls pending records nothing', async () => {
 
   assert.deepEqual(await paymentsOf(link.id), []);
   assert.equal(await linkStatusOf(link.id), 'expired');
+  // Stamped, so the batch rotates: ~1,150 closed orders are inside the window
+  // in production and polling all of them every run is not an option.
+  const stamp = (await pool.query(
+    'SELECT late_check_at FROM payment_links WHERE id = $1', [link.id])).rows[0];
+  assert.ok(stamp.late_check_at, 'the sweep records that it asked');
 });

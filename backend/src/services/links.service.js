@@ -24,9 +24,13 @@ const DEFAULT_GRACE_MINUTES = 10;
 const LOOP_INTERVAL_MS = 10 * 60_000;
 
 // How long after a closed link was created a MantaPay approval is still
-// believed. Long enough for the real cases (the 14 Oct batch was 9 days old),
-// short enough that the sweep stays a small, bounded set of orders.
+// believed. Long enough for the real cases — the 14 Oct batch was 9 days old.
 const LATE_APPROVAL_WINDOW_DAYS = 45;
+
+// How many closed links one run may ask MantaPay about. In production ~1,150
+// orders are inside the window, so the sweep rotates through them (oldest
+// check first) rather than polling every one of them every ten minutes.
+const LATE_APPROVAL_BATCH = 25;
 
 // Only a settled attempt becomes a payment here. MantaPay hands back a fresh
 // transaction id for a checkout that is still open, so every poll of an unpaid
@@ -161,8 +165,17 @@ async function sweepLateApprovals(c, ws, summary) {
           SELECT 1 FROM payments p
            WHERE p.payment_link_id = pl.id
              AND p.status IN ('paid', 'refunded')
-             AND p.archived_at IS NULL)`,
-    [ws.id, String(LATE_APPROVAL_WINDOW_DAYS)])).rows;
+             AND p.archived_at IS NULL)
+      ORDER BY pl.late_check_at NULLS FIRST
+      LIMIT $3`,
+    [ws.id, String(LATE_APPROVAL_WINDOW_DAYS), LATE_APPROVAL_BATCH])).rows;
+
+  // Stamped before the polling, so a provider error does not park the sweep on
+  // the same batch for good.
+  if (closed.length) {
+    await c.query('UPDATE payment_links SET late_check_at = now() WHERE id = ANY($1::uuid[])',
+      [closed.map((l) => l.id)]);
+  }
 
   for (const link of closed) {
     summary.checked++;

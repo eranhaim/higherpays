@@ -381,6 +381,7 @@ const PaymentLink = entity('payment_links', {
     expiresAt:             timestamp(),   // single_use only; creation + TTL, or null for a no-expiry link
     paidAt:                timestamp(),   // single_use only; reusable links read payments
     archivedAt:            timestamp(),   // hidden from the default operations list
+    lateCheckAt:           timestamp(),   // last late-approval poll; see migration 038
   },
   checks: [
     "pricing_mode = 'open' OR (amount IS NOT NULL AND amount > 0)",
