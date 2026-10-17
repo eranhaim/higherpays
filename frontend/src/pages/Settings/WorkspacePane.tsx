@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { type LinkLimits, type PlatformWorkspaceDetail, type WorkspaceSettings } from '../../api/endpoints';
+import { HttpError } from '../../api/http';
+import { type LinkLimits, type PlatformWorkspaceDetail, type WorkspaceCurrencies, type WorkspaceSettings } from '../../api/endpoints';
 import { feeBreakdown, type RateCard } from '../../business/feeBreakdown';
 import { useCan } from '../../hooks/usePermission';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
@@ -7,7 +8,7 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useRateCard } from '../../hooks/useRateCard';
 import { toast } from '../../lib/toast';
 import { CopyButton, ErrorCard, LoadingCard, Money } from '../../components/ui';
-import { useGeneralSettings, usePlatformFees, type RateCardInput } from './useSettingsData';
+import { useGeneralSettings, usePlatformFees, useWorkspaceCurrencies, type RateCardInput } from './useSettingsData';
 
 export function WorkspacePane() {
   const can = useCan();
@@ -15,16 +16,19 @@ export function WorkspacePane() {
   const { activeWorkspaceId } = useCurrentSession();
   const { rateCard, isLoading: rateCardLoading, isError: rateCardError } = useRateCard();
   const { workspace, linkLimits, update, saveLinkLimits } = useGeneralSettings();
+  const currencies = useWorkspaceCurrencies();
   const platformFees = usePlatformFees();
 
-  if (rateCardLoading || linkLimits.isLoading || workspace.isLoading) return <LoadingCard />;
-  if (rateCardError || linkLimits.isError || workspace.isError || !linkLimits.data || !workspace.data) return <ErrorCard />;
+  if (rateCardLoading || linkLimits.isLoading || workspace.isLoading || currencies.query.isLoading) return <LoadingCard />;
+  if (rateCardError || linkLimits.isError || workspace.isError || currencies.query.isError || !linkLimits.data || !workspace.data || !currencies.query.data) return <ErrorCard />;
 
   return (
     <div className="stack">
       {/* Keyed by workspace: the cards seed form state from their props once,
           so switching workspace must give them a fresh mount. */}
-      <WorkspaceCard key={`ws-${activeWorkspaceId}`} editable={editable} workspace={workspace.data}
+      <WorkspaceCard key={`ws-${activeWorkspaceId}-${currencies.query.data.currencies.map((c) => c.currency).join()}`}
+        editable={editable} workspace={workspace.data}
+        currencies={currencies.query.data} onSaveCurrencies={(list) => currencies.save.mutateAsync(list)}
         onSave={(input) => update.mutateAsync(input)} />
       {/* Also keyed by the rate version: the operator's rate card arrives after
           this pane renders, and a save writes a new version, so the form has to
@@ -94,9 +98,80 @@ function MantaPayCard({ editable, workspace, onSave }: {
   );
 }
 
-function WorkspaceCard({ editable, workspace, onSave }: {
+function errorDetail(err: unknown, fallback: string): string {
+  if (err instanceof HttpError && typeof err.body === 'object' && err.body !== null
+    && 'detail' in err.body && typeof err.body.detail === 'string') {
+    return err.body.detail;
+  }
+  return err instanceof Error ? err.message : fallback;
+}
+
+/** Which currencies the agency may create payment links in. Saved on its own, apart from the names and labels. */
+function CurrenciesRow({ editable, data, onSave }: {
+  editable: boolean;
+  data: WorkspaceCurrencies;
+  onSave: (currencies: string[]) => Promise<unknown>;
+}) {
+  const saved = data.currencies.map((c) => c.currency).sort();
+  const [selected, setSelected] = useState(saved);
+  const [isSaving, setIsSaving] = useState(false);
+  const dirty = [...selected].sort().join() !== saved.join();
+  useUnsavedChanges('workspace-currencies', dirty);
+
+  const toggle = (currency: string, on: boolean) =>
+    setSelected(on ? [...selected, currency] : selected.filter((c) => c !== currency));
+
+  const save = async () => {
+    setIsSaving(true);
+    try { await onSave(selected); toast('Currencies saved.'); }
+    catch (err) { toast(errorDetail(err, 'Could not save the currencies.')); }
+    finally { setIsSaving(false); }
+  };
+
+  const hintFor = (currency: string): string => {
+    const current = data.currencies.find((c) => c.currency === currency);
+    if (current?.isBase) return 'workspace currency';
+    if (current?.inUse) return 'used by payment links';
+    if (!data.selectable.find((s) => s.currency === currency)?.checkoutSupported) return 'links not supported by the payment provider yet';
+    return '';
+  };
+
+  return (
+    <div className="setrow">
+      <div>
+        <div className="k">Currencies</div>
+        <div className="d">Payment links can be created in any of these. Amounts in different currencies are never added together.</div>
+      </div>
+      {editable
+        ? (
+          <div className="controls">
+            <div>
+              {data.selectable.map(({ currency }) => {
+                const current = data.currencies.find((c) => c.currency === currency);
+                const locked = Boolean(current?.isBase || current?.inUse);
+                const hint = hintFor(currency);
+                return (
+                  <label key={currency} className="check-row">
+                    <input type="checkbox" checked={selected.includes(currency)} disabled={locked || isSaving}
+                      onChange={(e) => toggle(currency, e.target.checked)} />
+                    <span>{currency}{hint && <span className="sub"> · {hint}</span>}</span>
+                  </label>
+                );
+              })}
+            </div>
+            <button className="btn" onClick={save} disabled={isSaving || !dirty}>{isSaving ? 'Saving…' : 'Save currencies'}</button>
+          </div>
+        )
+        : <span className="mono-val">{saved.join(', ')}</span>}
+    </div>
+  );
+}
+
+function WorkspaceCard({ editable, workspace, currencies, onSave, onSaveCurrencies }: {
   editable: boolean;
   workspace: WorkspaceSettings;
+  currencies: WorkspaceCurrencies;
+  onSaveCurrencies: (currencies: string[]) => Promise<unknown>;
   onSave: (input: { name: string; accountLabel: string; accountLabelPlural: string; agentLabel: string; agentLabelPlural: string }) => Promise<unknown>;
 }) {
   const [name, setName] = useState(workspace.name);
@@ -149,13 +224,7 @@ function WorkspaceCard({ editable, workspace, onSave }: {
           ? <div className="controls"><input id="workspace-name" type="text" value={name} onChange={(e) => setName(e.target.value)} /></div>
           : <span className="mono-val">{name}</span>}
       </div>
-      <div className="setrow">
-        <div>
-          <div className="k">Currency</div>
-          <div className="d">All amounts are in this currency. Multi-currency is not enabled.</div>
-        </div>
-        <span className="mono-val">{workspace.currency}</span>
-      </div>
+      <CurrenciesRow editable={editable} data={currencies} onSave={onSaveCurrencies} />
       <div className="sechead">Vocabulary</div>
       <p className="sub">What this agency calls its creators and agents. Used across the console; it changes no data.</p>
       {labelRow('label-account', `${workspace.labels.account}, singular`, 'e.g. Talent or Model', account, setAccount)}

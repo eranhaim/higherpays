@@ -11,6 +11,7 @@ const { revokeUserSessions } = require('../auth/sessions');
 const { hashPassword, validatePasswordStrength } = require('../auth/passwords');
 const { PERMISSIONS, ROLE_PERMISSIONS, validatePermissions, hasPermission } = require('../auth/permissions');
 const { isStr, badRequest } = require('../util/validate');
+const currencies = require('../services/currencies.service');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -98,6 +99,7 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
   // A platform admin's seat refuses every edit below. Whoever manages the
   // team is told which seats those are, rather than offered a 409.
   const managesTeam = hasPermission(req.access, 'team.manage');
+  const currency = await currencies.resolveReportingCurrency({ query }, wid(req), req.query.currency);
   const rows = (await query(
     `WITH customer_paid AS (
        SELECT p.agent_id,
@@ -117,6 +119,7 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
           AND p.archived_at IS NULL
           AND t.type IN ('payment', 'refund', 'chargeback')
           AND t.status IN ('approved', 'refunded', 'charged_back')
+          AND t.currency = $4::char(3)
           AND ($2::date IS NULL OR t.occurred_at >= $2::date)
           AND ($3::date IS NULL OR t.occurred_at < ($3::date + interval '1 day'))
         GROUP BY p.agent_id, p.account_id
@@ -146,8 +149,10 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
        LEFT JOIN customer_paid agent_sales ON agent_sales.agent_id = ag.id
        LEFT JOIN customer_paid account_sales ON account_sales.account_id = ac.id
       WHERE wu.workspace_id = $1
-      ORDER BY wu.role, u.full_name`, [wid(req), range.from, range.to])).rows;
+      ORDER BY wu.role, u.full_name`, [wid(req), range.from, range.to, currency])).rows;
   res.json({
+    // totalCustomerPaid is in this one currency; a total across currencies would be meaningless.
+    currency,
     members: rows.map((r) => ({
       userId: r.user_id, name: r.name, email: r.email, role: r.role,
       roleName: roleName(r.role, r), permissions: r.permissions || [], status: r.status,

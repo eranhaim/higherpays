@@ -1,6 +1,6 @@
 'use strict';
 const express = require('express');
-const { query } = require('../db');
+const { query, withTransaction } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
@@ -8,6 +8,7 @@ const { isStr, badRequest } = require('../util/validate');
 const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const { hasPermission } = require('../auth/permissions');
 const config = require('../config');
+const currencies = require('../services/currencies.service');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -60,6 +61,40 @@ router.patch('/', requirePermission('settings.edit'), asyncHandler(async (req, r
   res.json(publicWorkspace(w));
 }));
 
+// GET /workspaces/:id/currencies — the currencies this agency may price a link in.
+// `checkoutSupported` is false for a currency MantaPay has no id for: it can be
+// allowed, but no link may be priced in it. `selectable` is every code an
+// admin may add.
+router.get('/currencies', requirePermission('payments.view'), asyncHandler(async (req, res) => {
+  res.json({
+    currencies: await currencies.listCurrencies({ query }, wid(req)),
+    selectable: currencies.SELECTABLE_CURRENCIES.map((code) => ({
+      currency: code, checkoutSupported: currencies.isCheckoutSupported(code),
+    })),
+  });
+}));
+
+// PUT /workspaces/:id/currencies  { currencies: ['USD', 'EUR', ...] }
+// Replaces the allowed set. The base currency stays, and a currency that links
+// already use cannot be removed.
+router.put('/currencies', requirePermission('settings.edit'), asyncHandler(async (req, res) => {
+  const requested = req.body?.currencies;
+  if (!Array.isArray(requested) || !requested.length) {
+    return badRequest(res, 'currencies must be a non-empty list of currency codes', ['currencies']);
+  }
+  const result = await withTransaction((c) => currencies.setAllowedCurrencies(c, wid(req), requested));
+  if (result.error) return res.status(409).json({ error: 'currency_set_refused', detail: result.error });
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'workspace.currencies',
+    metadata: { currencies: result.currencies.map((c) => c.currency) },
+  });
+  res.json({
+    currencies: result.currencies,
+    selectable: currencies.SELECTABLE_CURRENCIES.map((code) => ({
+      currency: code, checkoutSupported: currencies.isCheckoutSupported(code),
+    })),
+  });
+}));
 // GET /workspaces/:id/platform-fee — the rate the agency is charged.
 router.get('/platform-fee', requirePermission('payments.view'), asyncHandler(async (req, res) => {
   const r = (await query(

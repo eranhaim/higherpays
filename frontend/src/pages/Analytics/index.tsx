@@ -5,12 +5,13 @@
 import { useState } from 'react';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useCan } from '../../hooks/usePermission';
+import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import type { AnalyticsReport } from '../../api/endpoints';
 import { toIsoDate, toLocalDateInput, MONTHS_SHORT } from '../../lib/format';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, DataTable, DetailRow, LoadingCard, ErrorCard,
-  FilterBar, DateRangePicker, type Column, type DateRange,
+  FilterBar, DateRangePicker, CurrencyPicker, type Column, type DateRange,
 } from '../../components/ui';
 import { BarChart, Heatmap, MetricRow, type BarPoint } from './charts';
 import {
@@ -134,7 +135,8 @@ type AgentRow = AnalyticsReport['agents'][number] & { rank: number };
 type AccountRow = AnalyticsReport['accounts'][number];
 
 export default function AnalyticsPage() {
-  const { activeWorkspace, currency, labels } = useCurrentSession();
+  const { activeWorkspace, labels } = useCurrentSession();
+  const { currency } = useReportingCurrency();
   const can = useCan();
   // Whoever sees the whole workspace may also pivot to one account or agent and
   // read the agency-side figures. A scoped caller gets neither, and the server
@@ -156,17 +158,17 @@ export default function AnalyticsPage() {
   const agentColumns: Column<AgentRow>[] = [
     { key: 'rank', header: '#', width: 48, render: (r) => <span className="mono">{r.rank}</span> },
     { key: 'name', header: labels.agent, render: (r) => <span className="cname">{r.name}</span> },
-    { key: 'revenue', header: 'Revenue', align: 'right', render: (r) => <Money amount={r.revenue} direction="in" /> },
+    { key: 'revenue', header: 'Revenue', align: 'right', render: (r) => <Money currency={currency} amount={r.revenue} direction="in" /> },
     { key: 'sales', header: 'Sales', align: 'right', render: (r) => <span className="mono">{r.sales}</span> },
     { key: 'conversion', header: 'Conversion', align: 'right', render: (r) => <span className="mono">{r.conversionPct === null ? '—' : pct(r.conversionPct)}</span> },
-    { key: 'aov', header: 'Avg order', align: 'right', render: (r) => <Money amount={r.aov} /> },
+    { key: 'aov', header: 'Avg order', align: 'right', render: (r) => <Money currency={currency} amount={r.aov} /> },
   ];
 
   const accountColumns: Column<AccountRow>[] = [
     { key: 'name', header: labels.account, render: (r) => <span className="cname">{r.name}</span> },
-    { key: 'revenue', header: 'Revenue', align: 'right', render: (r) => <Money amount={r.revenue} direction="in" /> },
-    { key: 'payout', header: `${labels.account} payout`, align: 'right', render: (r) => <Money amount={r.accountPayout} direction="out" /> },
-    { key: 'profit', header: 'Agency profit', align: 'right', render: (r) => <Money amount={r.agencyProfit} direction="in" /> },
+    { key: 'revenue', header: 'Revenue', align: 'right', render: (r) => <Money currency={currency} amount={r.revenue} direction="in" /> },
+    { key: 'payout', header: `${labels.account} payout`, align: 'right', render: (r) => <Money currency={currency} amount={r.accountPayout} direction="out" /> },
+    { key: 'profit', header: 'Agency profit', align: 'right', render: (r) => <Money currency={currency} amount={r.agencyProfit} direction="in" /> },
   ];
 
   const range: DateRange = { from: filters.from, to: filters.to };
@@ -180,6 +182,7 @@ export default function AnalyticsPage() {
       />
       <FilterBar>
         <DateRangePicker value={range} onChange={setRange} />
+        <CurrencyPicker />
         {canScope && (
           <>
             <select aria-label={`Filter by ${labels.account}`} value={filters.accountId} onChange={(e) => setFilters((f) => ({ ...f, accountId: e.target.value, agentId: '' }))}>
@@ -237,12 +240,12 @@ export default function AnalyticsPage() {
         {/* An agent or creator reads net only. Gross beside it would give away
             the platform fee by subtraction. */}
         {h.gross !== undefined && (
-          <StatCard label="Gross" value={<Money amount={h.gross} direction="in" />} sub={grossDelta?.text} trend={grossDelta?.trend} />
+          <StatCard label="Gross" value={<Money currency={currency} amount={h.gross} direction="in" />} sub={grossDelta?.text} trend={grossDelta?.trend} />
         )}
-        <StatCard label="Net revenue" value={<Money amount={h.net} direction="in" emphasis />}
+        <StatCard label="Net revenue" value={<Money currency={currency} amount={h.net} direction="in" emphasis />}
           sub={netDelta?.text ?? 'Revenue after all fees'} trend={netDelta?.trend} />
         {h.takeRatePct !== undefined && <StatCard label="Take rate" value={pct(h.takeRatePct)} sub={takeDelta?.text} trend={takeDelta?.trend} />}
-        <StatCard label="Avg order" value={<Money amount={h.aov} />} sub={aovDelta?.text} trend={aovDelta?.trend} />
+        <StatCard label="Avg order" value={<Money currency={currency} amount={h.aov} />} sub={aovDelta?.text} trend={aovDelta?.trend} />
         <StatCard label="Paid sales" value={h.paidCount} sub={paidDelta?.text} trend={paidDelta?.trend} />
         <StatCard label="Unique buyers" value={h.uniqueBuyers} sub={buyersDelta?.text} trend={buyersDelta?.trend} />
       </StatGrid>
@@ -281,7 +284,7 @@ export default function AnalyticsPage() {
               </div>
               {parts.map((part) => (
                 <MetricRow key={part.label} label={part.label} sharePct={share(part.amount, distributed)} tone={part.tone}
-                  value={<><Money amount={part.amount} direction={part.direction} /> · {pct(share(part.amount, distributed))}</>} />
+                  value={<><Money currency={currency} amount={part.amount} direction={part.direction} /> · {pct(share(part.amount, distributed))}</>} />
               ))}
             </div>
           )}
@@ -300,7 +303,7 @@ export default function AnalyticsPage() {
             <DetailRow label="Failed attempts">{f.failed}</DetailRow>
             <DetailRow label="Expired">{f.expired}</DetailRow>
             <DetailRow label="Cancelled">{f.cancelled}</DetailRow>
-            <DetailRow label="Revenue per link"><Money amount={f.revenuePerLink} direction="in" /></DetailRow>
+            <DetailRow label="Revenue per link"><Money currency={currency} amount={f.revenuePerLink} direction="in" /></DetailRow>
           </div>
         </div>
 
@@ -337,13 +340,13 @@ export default function AnalyticsPage() {
             <h2 className="sechead">Revenue by category</h2>
             {cu.categories.length === 0 && <p className="sub">No completed sales in this period.</p>}
             {cu.categories.map((s) => (
-              <MetricRow key={s.category} label={s.category} sharePct={share(s.revenue, categoryMax)} value={<Money amount={s.revenue} direction="in" />} />
+              <MetricRow key={s.category} label={s.category} sharePct={share(s.revenue, categoryMax)} value={<Money currency={currency} amount={s.revenue} direction="in" />} />
             ))}
             <h2 className="sechead">New vs returning</h2>
             <MetricRow label="New customers" sharePct={share(cu.newVsReturning.newRev, newVsReturningTotal)}
-              value={<><Money amount={cu.newVsReturning.newRev} direction="in" /> · {pct(share(cu.newVsReturning.newRev, newVsReturningTotal))}</>} />
+              value={<><Money currency={currency} amount={cu.newVsReturning.newRev} direction="in" /> · {pct(share(cu.newVsReturning.newRev, newVsReturningTotal))}</>} />
             <MetricRow label="Returning customers" sharePct={share(cu.newVsReturning.retRev, newVsReturningTotal)}
-              value={<><Money amount={cu.newVsReturning.retRev} direction="in" /> · {pct(share(cu.newVsReturning.retRev, newVsReturningTotal))}</>} />
+              value={<><Money currency={currency} amount={cu.newVsReturning.retRev} direction="in" /> · {pct(share(cu.newVsReturning.retRev, newVsReturningTotal))}</>} />
           </div>
         </div>
 
@@ -355,14 +358,14 @@ export default function AnalyticsPage() {
           <DetailRow label="Rate by count">{pct(rv.ratePct)}</DetailRow>
           <DetailRow label="Rate by value">{pct(rv.rateValuePct)}</DetailRow>
           {rv.feeCost !== undefined && (
-            <DetailRow label="Fee cost"><Money amount={rv.feeCost} direction="out" /></DetailRow>
+            <DetailRow label="Fee cost"><Money currency={currency} amount={rv.feeCost} direction="out" /></DetailRow>
           )}
-          <DetailRow label="Reversed value"><Money amount={rv.valueReversed} direction="out" /></DetailRow>
+          <DetailRow label="Reversed value"><Money currency={currency} amount={rv.valueReversed} direction="out" /></DetailRow>
           {byBearer && (
             <>
               <h2 className="sechead">Who absorbs the loss</h2>
-              <MetricRow label={labels.accounts} sharePct={share(byBearer.account, lossTotal)} value={<Money amount={byBearer.account} direction="out" />} />
-              <MetricRow label="Agency" sharePct={share(byBearer.agency, lossTotal)} value={<Money amount={byBearer.agency} direction="out" />} />
+              <MetricRow label={labels.accounts} sharePct={share(byBearer.account, lossTotal)} value={<Money currency={currency} amount={byBearer.account} direction="out" />} />
+              <MetricRow label="Agency" sharePct={share(byBearer.agency, lossTotal)} value={<Money currency={currency} amount={byBearer.agency} direction="out" />} />
             </>
           )}
         </div>

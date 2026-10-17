@@ -3,6 +3,8 @@ import { workspacePath } from '../workspacePath';
 
 export interface PayoutBreakdown {
   range: { from: string; to: string };
+  /** Every figure is in this one currency. */
+  currency: string;
   summary: {
     grossSales: number;
     distributable: number;
@@ -23,6 +25,8 @@ export interface RunPayoutInput {
   targetId?: string;
   from?: string;
   to?: string;
+  /** The one currency to pay out. A payout never mixes currencies. */
+  currency?: string;
 }
 
 /** One payout that was run: who, how much, for which period. */
@@ -47,8 +51,8 @@ export interface PayoutHistoryFilters {
 }
 
 export const payoutsApi = {
-  getBreakdown(from: string, to: string): Promise<PayoutBreakdown> {
-    const qs = new URLSearchParams({ from, to });
+  getBreakdown(from: string, to: string, currency: string): Promise<PayoutBreakdown> {
+    const qs = new URLSearchParams({ from, to, currency });
     return api.get<PayoutBreakdown>(workspacePath(`/payouts/breakdown?${qs.toString()}`));
   },
 

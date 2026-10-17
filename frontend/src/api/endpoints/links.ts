@@ -131,6 +131,8 @@ export interface ReassignImpact {
   /** How many of them are in a payout that has already been paid. */
   paidOut: number;
   amount: number;
+  /** The link's own currency; the amount is never mixed. */
+  currency: string;
 }
 
 /** Who a link or a payment should belong to from now on. */
@@ -174,8 +176,12 @@ export const linksApi = {
     return api.get<Page<PaymentLink>>(workspacePath(`/links?${qs.toString()}`));
   },
 
-  summary: (filters: ListLinksQuery = {}) =>
-    api.get<LinksSummary>(workspacePath(`/links/summary?${filterParams(filters).toString()}`)),
+  /** Totals are in one currency; pass the one to report in. */
+  summary(filters: ListLinksQuery = {}, currency?: string) {
+    const qs = filterParams(filters);
+    if (currency) qs.set('currency', currency);
+    return api.get<LinksSummary>(workspacePath(`/links/summary?${qs.toString()}`));
+  },
 
   create: (input: CreateLinkInput) => api.post<PaymentLink>(workspacePath('/links'), input),
 

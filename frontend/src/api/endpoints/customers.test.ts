@@ -10,6 +10,7 @@ const completedCustomer: Customer = {
   country: null,
   segment: 'regular',
   totalSpend: 75,
+  currency: 'EUR',
   lastPurchaseAt: '2026-09-09T10:00:00.000Z',
   archivedAt: null,
   createdAt: '2026-09-01T10:00:00.000Z',

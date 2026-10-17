@@ -156,6 +156,19 @@ const Workspace = entity('workspaces', {
   timestamps: 'both',
 });
 
+// The currencies an agency may price a link in. workspaces.currency is its base
+// currency and is always in the set. There are no per-currency fee or limit
+// overrides: every currency inherits the workspace's rate card and link limits.
+const WorkspaceCurrency = entity('workspace_currencies', {
+  fields: {
+    workspaceId: uuid().references('workspaces').notNull(),
+    currency:    char(3).notNull(),
+  },
+  primaryKey: ['workspaceId', 'currency'],
+  checks: ["currency ~ '^[A-Z]{3}$'"],
+  timestamps: 'created',
+});
+
 // Effective-dated platform rate card. marginRatePct is HigherPays' own cut:
 // never expose it to a workspace, which sees only the blended rate.
 const PlatformFeeRate = entity('platform_fee_rates', {
@@ -345,7 +358,6 @@ const Customer = entity('customers', {
     phone:          text(),
     country:        char(2),
     segment:        enumOf(CUSTOMER_SEGMENT).notNull().default("'new'"),
-    totalSpend:     money().notNull().default('0'),   // cached, recomputed on payment
     lastPurchaseAt: timestamp(),
     archivedAt:     timestamp(),   // reversible operational archive
     deletedAt:      timestamp(),
@@ -386,6 +398,10 @@ const PaymentLink = entity('payment_links', {
   checks: [
     "pricing_mode = 'open' OR (amount IS NOT NULL AND amount > 0)",
     "type = 'single_use' OR (expires_at IS NULL AND paid_at IS NULL)",
+  ],
+  // A link can only be priced in a currency this agency is allowed.
+  foreignKeys: [
+    { columns: ['workspaceId', 'currency'], table: 'workspace_currencies', references: ['workspaceId', 'currency'] },
   ],
   indexes: [
     'workspaceId', 'accountId', 'customerId',
@@ -734,7 +750,7 @@ const AuditLog = entity('audit_log', {
 
 module.exports = {
   // global
-  User, RefreshToken, ImpersonationSession, Workspace, PlatformFeeRate,
+  User, RefreshToken, ImpersonationSession, Workspace, WorkspaceCurrency, PlatformFeeRate,
   // access
   WorkspaceRole, WorkspaceUser, Invite,
   // commercial

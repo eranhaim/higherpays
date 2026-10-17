@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import {
@@ -148,9 +148,13 @@ export default function PlatformPage() {
 
       <StatGrid>
         <StatCard isUnknown={!overview} label="Agencies" value={overview?.counts.workspaces_active ?? 0} sub={`${overview?.counts.workspaces ?? 0} in total`} />
-        <StatCard isUnknown={!overview} label="Gross processed" value={<Money amount={overview?.money.gross ?? 0} direction="in" />} sub={`${overview?.money.sales ?? 0} sales`} />
-        <StatCard isUnknown={!overview} label="Platform fees" value={<Money amount={overview?.money.platform_fees ?? 0} />} sub="Charged to agencies" />
-        <StatCard isUnknown={!overview} label="HigherPays margin" value={<Money amount={overview?.money.higherpays_margin ?? 0} direction="in" emphasis />} sub="After PSP costs" />
+        {overview?.moneyByCurrency.map((m) => (
+          <Fragment key={m.currency}>
+            <StatCard label={`Gross processed · ${m.currency}`} value={<Money amount={m.gross} currency={m.currency} direction="in" />} sub={`${m.sales} sales`} />
+            <StatCard label={`Platform fees · ${m.currency}`} value={<Money amount={m.platform_fees} currency={m.currency} />} sub="Charged to agencies" />
+            <StatCard label={`HigherPays margin · ${m.currency}`} value={<Money amount={m.higherpays_margin} currency={m.currency} direction="in" emphasis />} sub="After PSP costs" />
+          </Fragment>
+        ))}
       </StatGrid>
 
       {isLoading ? <LoadingCard label="Loading agencies…" />

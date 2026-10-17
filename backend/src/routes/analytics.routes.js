@@ -16,6 +16,7 @@ const { withTransaction } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { resolveDataScope } = require('../auth/dataScope');
+const currencies = require('../services/currencies.service');
 
 const router = express.Router({ mergeParams: true });
 const { wid } = require('../lib/scope');
@@ -45,10 +46,15 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
     const scoped = val != null;
     const seesAgencyFigures = scope.kind === 'workspace';
     const REVENUE = seesAgencyFigures ? 're.gross' : 're.distributable';
-    // $1 from, $2 to, $3 workspace, ($4 scope)
+    // Every figure is in one currency; summing across currencies would be meaningless.
+    const currency = await currencies.resolveReportingCurrency(c, wid(req), req.query.currency);
+    // $1 from, $2 to, $3 workspace, ($4 scope), then the currency
     const P = scoped ? [from, to, wid(req), val] : [from, to, wid(req)];
+    P.push(currency);
+    const CUR = `$${P.length}::char(3)`;
     const RE_FROM = 'FROM revenue_entries re JOIN transactions t ON t.id = re.transaction_id JOIN payments p ON p.id = t.payment_id';
-    const RE_WHERE = 'WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND p.archived_at IS NULL' + (scoped ? ` AND ${col} = $4` : '');
+    const RE_WHERE = 'WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND p.archived_at IS NULL'
+      + ` AND t.currency = ${CUR}` + (scoped ? ` AND ${col} = $4` : '');
 
     const h = (await c.query(`
       SELECT
@@ -75,7 +81,7 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
       .map((r) => ({ d: r.d, net: num(r.net), ...(seesAgencyFigures ? { gross: num(r.gross) } : {}) }));
 
     // Link funnel: links issued in the window, and what happened to them.
-    const linkWhere = 'WHERE pl.workspace_id = $3 AND pl.created_at >= $1 AND pl.created_at <= $2 AND pl.archived_at IS NULL';
+    const linkWhere = `WHERE pl.workspace_id = $3 AND pl.created_at >= $1 AND pl.created_at <= $2 AND pl.archived_at IS NULL AND pl.currency = ${CUR}`;
     const scopedLinkWhere = linkWhere + (scoped ? ` AND ${linkCol} = $4` : '');
     const fn = (await c.query(`
       SELECT COUNT(*) AS created,
@@ -87,7 +93,7 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
     const created = num(fn.created);
     const failed = num((await c.query(`
       SELECT COUNT(*) AS c FROM payments p
-       WHERE p.workspace_id = $3 AND p.status = 'failed' AND p.archived_at IS NULL
+       WHERE p.workspace_id = $3 AND p.status = 'failed' AND p.archived_at IS NULL AND p.currency = ${CUR}
          AND p.occurred_at >= $1 AND p.occurred_at <= $2
          ${scoped ? `AND ${payCol} = $4` : ''}`, P)).rows[0].c);
 
@@ -122,8 +128,9 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
       SELECT COUNT(*) FILTER (WHERE n>=2) AS repeat_c, COUNT(*) AS any_c, COALESCE(AVG(n),0) AS freq
         FROM (SELECT p.customer_id, COUNT(*) n FROM payments p
                WHERE p.workspace_id = $1 AND p.status='paid' AND p.archived_at IS NULL AND p.customer_id IS NOT NULL
+                 AND p.currency = $3::char(3)
                  AND ($2::uuid IS NULL OR ${payCol || 'p.id'} = $2::uuid)
-               GROUP BY p.customer_id) q`, [wid(req), scoped ? val : null])).rows[0];
+               GROUP BY p.customer_id) q`, [wid(req), scoped ? val : null, currency])).rows[0];
     const categories = (await c.query(`
       SELECT COALESCE(ca.name, 'Uncategorised') AS category, COALESCE(SUM(${REVENUE}),0) AS rev
       ${RE_FROM} LEFT JOIN categories ca ON ca.id = p.category_id
@@ -143,7 +150,7 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
     heatRows.forEach((r) => { heatmap[r.dow][r.hr] = num(r.rev); });
 
     return {
-      range: { from, to, days }, scope: seesAgencyFigures ? 'agency' : scope.kind,
+      range: { from, to, days }, currency, scope: seesAgencyFigures ? 'agency' : scope.kind,
       timeseries: ts,
       headline: {
         net: num(h.net),

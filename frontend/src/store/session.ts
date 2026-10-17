@@ -11,7 +11,10 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 
 interface SessionState {
   activeWorkspaceId: string | null;
+  /** The currency the user chose to read money in, per workspace. */
+  reportingCurrency: Record<string, string>;
   setActiveWorkspaceId: (id: string | null) => void;
+  setReportingCurrency: (workspaceId: string, currency: string) => void;
   clear: () => void;
 }
 
@@ -19,8 +22,11 @@ export const useSessionStore = create<SessionState>()(
   persist(
     (set) => ({
       activeWorkspaceId: null,
+      reportingCurrency: {},
       setActiveWorkspaceId: (id) => set({ activeWorkspaceId: id }),
-      clear: () => set({ activeWorkspaceId: null }),
+      setReportingCurrency: (workspaceId, currency) =>
+        set((s) => ({ reportingCurrency: { ...s.reportingCurrency, [workspaceId]: currency } })),
+      clear: () => set({ activeWorkspaceId: null, reportingCurrency: {} }),
     }),
     {
       name: 'higherpays.session',

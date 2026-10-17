@@ -2,6 +2,28 @@ import { api } from '../http';
 import { workspacePath } from '../workspacePath';
 import type { Page, WorkspaceLabels, WorkspaceRole } from '../types';
 
+/** One currency this agency may price a link in. Mirrors workspace_currencies. */
+export interface WorkspaceCurrency {
+  currency: string;
+  /** The agency's base currency: always allowed, what reports default to, what a salary is paid in. */
+  isBase: boolean;
+  /** Payment links already use it, so it cannot be removed. */
+  inUse: boolean;
+  /** False when MantaPay cannot charge in it: it can be allowed, but no link may be priced in it. */
+  checkoutSupported: boolean;
+}
+
+/** A currency an admin may add to the allowed set. */
+export interface SelectableCurrency {
+  currency: string;
+  checkoutSupported: boolean;
+}
+
+export interface WorkspaceCurrencies {
+  currencies: WorkspaceCurrency[];
+  selectable: SelectableCurrency[];
+}
+
 /** Response from `GET /workspaces/:wid/platform-fee`. */
 export interface PlatformFee {
   blendedRatePct: number;
@@ -76,6 +98,10 @@ export const workspacesApi = {
   get: () => api.get<WorkspaceSettings>(workspacePath('')),
 
   update: (input: UpdateWorkspaceInput) => api.patch<WorkspaceSettings>(workspacePath(''), input),
+
+  getCurrencies: () => api.get<WorkspaceCurrencies>(workspacePath('/currencies')),
+
+  setCurrencies: (currencies: string[]) => api.put<WorkspaceCurrencies>(workspacePath('/currencies'), { currencies }),
 
   getPlatformFee: () => api.get<PlatformFee>(workspacePath('/platform-fee')),
 

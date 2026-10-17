@@ -1,5 +1,6 @@
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
+import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import {
   linksApi, accountsApi, workspacesApi, paymentsApi,
   type ListLinksQuery, type PaymentLink, type PaymentLinkDetail, type LinksSummary, type Account, type LinkLimits, type LinkType, type ReassignInput,
@@ -10,6 +11,7 @@ export interface CreateLinkFormInput {
   accountId: string;
   type: LinkType;
   amount: number;
+  currency: string;
   description?: string;
   /** single_use only: create a link that never times out. */
   noExpiry?: boolean;
@@ -37,7 +39,8 @@ export interface UseLinksDataResult {
 }
 
 export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
-  const { activeWorkspaceId, currency } = useCurrentSession();
+  const { activeWorkspaceId } = useCurrentSession();
+  const { currency } = useReportingCurrency();
   const queryClient = useQueryClient();
   const enabled = Boolean(activeWorkspaceId);
 
@@ -55,8 +58,8 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
   });
   const accounts = useQuery({ queryKey: ['accounts', activeWorkspaceId], queryFn: () => accountsApi.list(), enabled });
   const summary = useQuery({
-    queryKey: ['links-summary', activeWorkspaceId, filters],
-    queryFn: () => linksApi.summary(filters),
+    queryKey: ['links-summary', activeWorkspaceId, filters, currency],
+    queryFn: () => linksApi.summary(filters, currency),
     enabled,
     placeholderData: keepPreviousData,
   });
@@ -79,7 +82,7 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
   };
 
   const create = useMutation({
-    mutationFn: (input: CreateLinkFormInput) => linksApi.create({ ...input, currency }),
+    mutationFn: (input: CreateLinkFormInput) => linksApi.create(input),
     onSuccess: invalidateLinks,
   });
   const cancel = useMutation({ mutationFn: (id: string) => linksApi.cancel(id), onSuccess: invalidateLinks });

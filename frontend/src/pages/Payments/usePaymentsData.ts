@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
+import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import {
   paymentsApi, accountsApi, agentsApi,
   type Payment, type ListPaymentsQuery, type Account, type Agent, type PaymentFilterOptions,
@@ -37,6 +38,7 @@ export interface UsePaymentsDataResult {
 
 export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): UsePaymentsDataResult {
   const { activeWorkspaceId } = useCurrentSession();
+  const { currency } = useReportingCurrency();
   const queryClient = useQueryClient();
   const enabled = Boolean(activeWorkspaceId);
 
@@ -50,8 +52,8 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     enabled,
   });
   const summary = useQuery({
-    queryKey: ['payments-summary', activeWorkspaceId, filters],
-    queryFn: () => paymentsApi.summary(filters),
+    queryKey: ['payments-summary', activeWorkspaceId, filters, currency],
+    queryFn: () => paymentsApi.summary(filters, currency),
     enabled,
   });
   const filterOptions = useQuery({

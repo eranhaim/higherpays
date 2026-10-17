@@ -212,15 +212,19 @@ router.get('/overview', asyncHandler(async (req, res) => {
            (SELECT count(*) FROM agents) AS agents,
            (SELECT count(*) FROM users) AS users`)).rows[0];
   const money = (await query(`
-    SELECT COALESCE(SUM(re.gross) FILTER (WHERE re.entry_type='sale'),0) AS gross,
+    SELECT t.currency,
+           COALESCE(SUM(re.gross) FILTER (WHERE re.entry_type='sale'),0) AS gross,
            COALESCE(SUM(re.psp_fee),0) AS psp_fees,
            COALESCE(SUM(re.platform_fee),0) AS platform_fees,
            COALESCE(SUM(re.platform_margin),0) AS higherpays_margin,
            COUNT(*) FILTER (WHERE re.entry_type='sale') AS sales
       FROM revenue_entries re
       JOIN transactions t ON t.id = re.transaction_id
-      JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL`)).rows[0];
-  res.json({ counts, money, supportedCurrencies: config.supportedCurrencies });
+      JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
+     GROUP BY t.currency ORDER BY t.currency`)).rows;
+  // One row per currency: agencies trade in different currencies, and a total
+  // across them would be meaningless.
+  res.json({ counts, moneyByCurrency: money, supportedCurrencies: config.supportedCurrencies });
 }));
 
 // GET /platform/workspaces — every agency with its rate and live counters.
@@ -232,7 +236,8 @@ router.get('/workspaces', asyncHandler(async (req, res) => {
            (SELECT count(*) FROM workspace_users wu WHERE wu.workspace_id = w.id AND wu.status='active') AS members,
            (SELECT count(*) FROM payments p WHERE p.workspace_id = w.id AND p.status='paid' AND p.archived_at IS NULL) AS paid_payments,
            (SELECT COALESCE(SUM(amount),0) FROM payments p
-             WHERE p.workspace_id = w.id AND p.status='paid' AND p.review_reason IS NULL AND p.archived_at IS NULL) AS gross_volume,
+             WHERE p.workspace_id = w.id AND p.status='paid' AND p.review_reason IS NULL AND p.archived_at IS NULL
+               AND p.currency = w.currency) AS gross_volume,
            (SELECT max(created_at) FROM audit_log a WHERE a.workspace_id = w.id) AS last_activity,
            f.blended_rate_pct, f.psp_rate_pct, f.settlement_pct, f.margin_rate_pct,
            f.psp_fixed_fee, f.checkout_fee
@@ -566,7 +571,7 @@ router.get('/fees', asyncHandler(async (req, res) => {
   const to = req.query.to ? new Date(req.query.to) : new Date();
   const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 86400000);
   const rows = (await query(
-    `SELECT w.id AS workspace_id, w.name AS agency,
+    `SELECT w.id AS workspace_id, w.name AS agency, COALESCE(t.currency, w.currency) AS currency,
             COUNT(re.id) FILTER (WHERE re.entry_type='sale')                    AS sales,
             COALESCE(SUM(re.gross) FILTER (WHERE re.entry_type='sale'),0)       AS gross,
             COALESCE(SUM(re.fee_mdr),0) AS mdr, COALESCE(SUM(re.fee_fixed),0) AS fixed,
@@ -580,7 +585,7 @@ router.get('/fees', asyncHandler(async (req, res) => {
        LEFT JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
        LEFT JOIN LATERAL effective_platform_fee(w.id, now()) p ON true
       WHERE (t.id IS NOT NULL AND pay.id IS NOT NULL) OR re.id IS NULL
-      GROUP BY w.id, w.name, p.fee_model, p.mdr_pct, p.settlement_pct, p.psp_fixed_fee, p.margin_rate_pct, p.psp_rate_pct
+      GROUP BY w.id, w.name, COALESCE(t.currency, w.currency), p.fee_model, p.mdr_pct, p.settlement_pct, p.psp_fixed_fee, p.margin_rate_pct, p.psp_rate_pct
       ORDER BY gross DESC`, [from.toISOString(), to.toISOString()])).rows;
 
   const agencies = rows.map((x) => {
@@ -588,7 +593,7 @@ router.get('/fees', asyncHandler(async (req, res) => {
     const providerTotal = n(x.mdr) + n(x.fixed) + n(x.settlement);
     const ourRevenue = n(x.hp_margin) + n(x.surcharge);
     return {
-      workspaceId: x.workspace_id, agency: x.agency, sales: n(x.sales), gross: r2(gross),
+      workspaceId: x.workspace_id, agency: x.agency, currency: x.currency, sales: n(x.sales), gross: r2(gross),
       providerFees: { mdr: r2(x.mdr), fixed: r2(x.fixed), settlement: r2(x.settlement), reversalFees: r2(x.reversal_fees), total: r2(providerTotal), percentOfGross: gross ? r2(providerTotal / gross * 100) : 0 },
       higherPays: { margin: r2(x.hp_margin), surcharge: r2(x.surcharge), total: r2(ourRevenue), percentOfGross: gross ? r2(ourRevenue / gross * 100) : 0 },
       totalDeducted: r2(x.total_deducted),
@@ -598,11 +603,16 @@ router.get('/fees', asyncHandler(async (req, res) => {
   res.json({
     range: { from: from.toISOString(), to: to.toISOString() },
     agencies,
-    totals: {
-      gross: r2(agencies.reduce((s, a) => s + a.gross, 0)),
-      providerFees: r2(agencies.reduce((s, a) => s + a.providerFees.total, 0)),
-      higherPaysRevenue: r2(agencies.reduce((s, a) => s + a.higherPays.total, 0)),
-    },
+    // One total per currency, never one across currencies.
+    totals: [...new Set(agencies.map((a) => a.currency))].sort().map((currency) => {
+      const rows = agencies.filter((a) => a.currency === currency);
+      return {
+        currency,
+        gross: r2(rows.reduce((s, a) => s + a.gross, 0)),
+        providerFees: r2(rows.reduce((s, a) => s + a.providerFees.total, 0)),
+        higherPaysRevenue: r2(rows.reduce((s, a) => s + a.higherPays.total, 0)),
+      };
+    }),
   });
 }));
 
