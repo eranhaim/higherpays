@@ -117,6 +117,14 @@ async function startApm(o = {}) {
   if (!response.ok) {
     throw Object.assign(new Error('mantapay_apm_failed'), { status: 502, detail: text.slice(0, 300) });
   }
+  // Reply 503: the MantaPay merchant account is not enabled for this currency.
+  if (reply === '503') {
+    throw Object.assign(new Error('This currency is not enabled for payments yet.'), {
+      status: 422,
+      code: 'currency_not_enabled',
+      detail: fields.ReplyDesc,
+    });
+  }
   if (!redirect) {
     throw Object.assign(new Error('mantapay_apm_no_redirect'), {
       status: 502,
