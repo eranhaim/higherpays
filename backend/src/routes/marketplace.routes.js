@@ -223,6 +223,35 @@ router.post('/orders', asyncHandler(async (req, res) => {
   res.status(201).json(publicOrder(result.order));
 }));
 
+// Platform-level on purpose: lists every agency so the marketplace admin can
+// link a creator to real records. Integration token only; ids and names only.
+router.get('/directory', asyncHandler(async (req, res) => {
+  if (!authorized(req)) return res.status(401).json({ error: 'invalid_integration_token' });
+  const [workspaces, agents, accounts] = await Promise.all([
+    query(`SELECT id, name FROM workspaces WHERE status='active' ORDER BY name`),
+    query(
+      `SELECT ag.id, ag.workspace_id, u.full_name AS name
+         FROM agents ag
+         JOIN users u ON u.id=ag.user_id
+         JOIN workspace_users wu ON wu.workspace_id=ag.workspace_id AND wu.user_id=ag.user_id
+        WHERE wu.status='active'
+        ORDER BY u.full_name`,
+    ),
+    query(`SELECT id, workspace_id, name FROM accounts WHERE status <> 'archived' ORDER BY name`),
+  ]);
+  const byWorkspace = (rows, workspaceId) => rows
+    .filter((row) => row.workspace_id === workspaceId)
+    .map((row) => ({ id: row.id, name: row.name }));
+  res.json({
+    workspaces: workspaces.rows.map((workspace) => ({
+      id: workspace.id,
+      name: workspace.name,
+      agents: byWorkspace(agents.rows, workspace.id),
+      accounts: byWorkspace(accounts.rows, workspace.id),
+    })),
+  });
+}));
+
 router.get('/orders/:marketplaceOrderId', asyncHandler(async (req, res) => {
   if (!authorized(req)) return res.status(401).json({ error: 'invalid_integration_token' });
   const order = await withTransaction((c) => lookupOrder(c, req.params.marketplaceOrderId));
