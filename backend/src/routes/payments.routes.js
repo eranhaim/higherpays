@@ -14,6 +14,7 @@ const { resolveAttribution, repostSales } = require('../services/attribution');
 const paymentsService = require('../services/payments.service');
 const { recordLinkEvent } = require('../services/linkEvents');
 const config = require('../config');
+const currencies = require('../services/currencies.service');
 const {
   enqueueLifecycleEventForReference,
   drainMarketplaceOutbox,
@@ -195,11 +196,14 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
   if (invalidDate) return badRequest(res, `${invalidDate} must be a date`, [invalidDate]);
   const out = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
+    // Every total below is in one currency; summing across currencies would be meaningless.
+    const currency = await currencies.resolveReportingCurrency(c, wid(req), req.query.currency);
     const row = (await c.query(
       `WITH matching AS (
          ${SELECT}
           WHERE p.workspace_id = $1
             AND ${PAYMENT_FILTERS}
+            AND p.currency = $17::char(3)
        )
        SELECT COALESCE(SUM(amount) FILTER (WHERE status = 'paid' AND review_reason IS NULL), 0) AS gross_content,
               COALESCE(SUM(COALESCE(platform_fee, 0)) FILTER (WHERE status = 'paid' AND review_reason IS NULL), 0) AS platform_fees,
@@ -215,11 +219,11 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
               COALESCE(SUM(surcharge) FILTER (
                 WHERE status IN ('paid', 'refunded') AND review_reason IS NULL
               ), 0) AS checkout_fees,
-              (SELECT currency FROM workspaces WHERE id = $1) AS currency
+              $17::char(3) AS currency
          FROM matching`,
-      paymentFilterParams(req, scope, {
+      [...paymentFilterParams(req, scope, {
         canFilterFees: hasPermission(req.access, 'data.view_all'),
-      }))).rows[0];
+      }), currency])).rows[0];
     const platform = !req.user.actorId && (await c.query(
       'SELECT is_platform_admin FROM users WHERE id = $1', [req.user.id])).rows[0]?.is_platform_admin === true;
     return { row, platform };
@@ -382,10 +386,6 @@ router.post('/:id/archive', requirePermission('archive.manage'), requireArchiveM
     if (archived?.customer_id) {
       await c.query(
         `UPDATE customers SET
-            total_spend = (SELECT COALESCE(SUM(amount), 0)
-                             FROM payments
-                            WHERE customer_id = $1 AND status = 'paid'
-                              AND review_reason IS NULL AND archived_at IS NULL),
             last_purchase_at = (SELECT MAX(occurred_at)
                                   FROM payments
                                  WHERE customer_id = $1 AND status = 'paid'
@@ -413,10 +413,6 @@ router.post('/:id/reactivate', requirePermission('archive.manage'), requireArchi
     if (restored?.customer_id) {
       await c.query(
         `UPDATE customers SET
-            total_spend = (SELECT COALESCE(SUM(amount), 0)
-                             FROM payments
-                            WHERE customer_id = $1 AND status = 'paid'
-                              AND review_reason IS NULL AND archived_at IS NULL),
             last_purchase_at = (SELECT MAX(occurred_at)
                                   FROM payments
                                  WHERE customer_id = $1 AND status = 'paid'
@@ -589,8 +585,7 @@ router.patch('/:id/details', requirePermission('payments.complete'), asyncHandle
       'UPDATE payments SET category_id = $2, customer_id = $3 WHERE id = $1', [payment.id, category.id, resolvedCustomerId]);
     if (resolvedCustomerId) {
       await c.query(
-        `UPDATE customers SET total_spend = (SELECT COALESCE(SUM(amount),0) FROM payments WHERE customer_id = $1 AND status = 'paid' AND review_reason IS NULL AND archived_at IS NULL),
-                              last_purchase_at = GREATEST(coalesce(last_purchase_at, $2), $2)
+        `UPDATE customers SET last_purchase_at = GREATEST(coalesce(last_purchase_at, $2), $2)
           WHERE id = $1`, [resolvedCustomerId, payment.occurred_at]);
     }
     // A single-use link is finished once its one payment is complete.
@@ -623,7 +618,8 @@ router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(asyn
   const row = (await query(`
     SELECT count(*)::int AS payments,
            count(*) FILTER (WHERE re.account_payout_id IS NOT NULL OR re.agent_payout_id IS NOT NULL)::int AS paid_out,
-           COALESCE(SUM(p.amount), 0) AS amount
+           COALESCE(SUM(p.amount), 0) AS amount,
+           (SELECT currency FROM payments WHERE workspace_id = $1 AND id = $2) AS currency
       FROM payments p
       LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
       LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
@@ -634,7 +630,8 @@ router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(asyn
                JOIN payment_links pl ON pl.id = src.payment_link_id
               WHERE src.id = $2 AND src.workspace_id = $1 AND pl.type = 'single_use'))`,
     [wid(req), req.params.id])).rows[0];
-  res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount) });
+  // One order is one currency, so this sum is never mixed.
+  res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount), currency: row.currency });
 }));
 
 // PATCH /:id/attribution  { accountId?, agentId? }

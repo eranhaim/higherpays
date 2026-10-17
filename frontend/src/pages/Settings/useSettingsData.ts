@@ -6,6 +6,18 @@ import {
 import { useAuthStore } from '../../store/auth';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 
+export function useWorkspaceCurrencies() {
+  const { activeWorkspaceId } = useCurrentSession();
+  const qc = useQueryClient();
+  const key = ['workspace-currencies', activeWorkspaceId];
+  const query = useQuery({ queryKey: key, queryFn: () => workspacesApi.getCurrencies(), enabled: Boolean(activeWorkspaceId) });
+  const save = useMutation({
+    mutationFn: (currencies: string[]) => workspacesApi.setCurrencies(currencies),
+    onSuccess: (saved) => qc.setQueryData(key, saved),
+  });
+  return { query, save };
+}
+
 export function useGeneralSettings() {
   const { activeWorkspaceId } = useCurrentSession();
   const qc = useQueryClient();

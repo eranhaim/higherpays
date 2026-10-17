@@ -138,11 +138,7 @@ router.post('/:type/:id/restore', requirePermission('archive.manage'), requireAr
       if (customerId) {
         await c.query(
           `UPDATE customers SET
-              total_spend = (SELECT COALESCE(SUM(amount), 0)
-                               FROM payments
-                              WHERE customer_id = $1 AND status = 'paid'
-                                AND review_reason IS NULL AND archived_at IS NULL),
-              last_purchase_at = (SELECT MAX(occurred_at)
+            last_purchase_at = (SELECT MAX(occurred_at)
                                     FROM payments
                                    WHERE customer_id = $1 AND status = 'paid'
                                      AND archived_at IS NULL)

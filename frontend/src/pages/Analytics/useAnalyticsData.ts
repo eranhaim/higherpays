@@ -10,6 +10,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { analyticsApi, accountsApi, agentsApi } from '../../api/endpoints';
+import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import { DAY_MS, toLocalDateInput, startOfLocalDay, endOfLocalDay } from '../../lib/format';
 
 export interface AnalyticsFilters {
@@ -50,10 +51,11 @@ export function toDateWindow(filters: AnalyticsFilters): DateWindow | null {
 
 export function useAnalyticsData(filters: AnalyticsFilters, canScope: boolean) {
   const { activeWorkspaceId } = useCurrentSession();
+  const { currency } = useReportingCurrency();
   const dateWindow = toDateWindow(filters);
   const enabled = Boolean(activeWorkspaceId) && dateWindow !== null;
 
-  const scope = { accountId: filters.accountId || undefined, agentId: filters.agentId || undefined };
+  const scope = { accountId: filters.accountId || undefined, agentId: filters.agentId || undefined, currency };
 
   const currentRange = dateWindow
     ? { from: new Date(dateWindow.fromMs).toISOString(), to: new Date(dateWindow.toMs).toISOString() }

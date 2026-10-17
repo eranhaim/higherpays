@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
+import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
 import { HttpError } from '../../api/http';
@@ -9,7 +10,7 @@ import { sortRows, type SortValues } from '../../lib/sortRows';
 import { toast } from '../../lib/toast';
 import Modal from '../../components/Modal';
 import {
-  DataTable, FilterBar, Money, PageHeader, Pill, Select, ViewPicker,
+  DataTable, FilterBar, CurrencyPicker, Money, PageHeader, Pill, Select, ViewPicker,
   type Column, type SortState,
 } from '../../components/ui';
 import type { Invite, Member } from '../../api/endpoints';
@@ -80,6 +81,7 @@ const SORT_VALUES: SortValues<Member> = {
 export default function AgencyPage() {
   const can = useCan();
   const { labels, role: currentRole, user } = useCurrentSession();
+  const { currency } = useReportingCurrency();
   const canManageMembers = can('team.manage');
   const canManageCreators = can('accounts.manage');
   const canManageAgents = can('agents.manage');
@@ -346,7 +348,7 @@ export default function AgencyPage() {
       render: (row: Row) => {
         if (row.kind === 'invite' || row.member.totalCustomerPaid == null) return <span className="sub">—</span>;
         const amount = row.member.totalCustomerPaid;
-        return <Money amount={amount} direction={amount < 0 ? 'out' : 'in'} />;
+        return <Money amount={amount} currency={currency} direction={amount < 0 ? 'out' : 'in'} />;
       },
     }] : []),
   ];
@@ -416,6 +418,7 @@ export default function AgencyPage() {
       <PageHeader title="Agency" actions={addActions} />
 
       <FilterBar>
+        <CurrencyPicker />
         <input
           className="search-input" type="search" aria-label="Search members"
           placeholder="Search name, email or creator"

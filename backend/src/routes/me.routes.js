@@ -12,6 +12,8 @@ const { withTransaction } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { resolveDataScope } = require('../auth/dataScope');
+const currencies = require('../services/currencies.service');
+const { wid } = require('../lib/scope');
 
 const router = express.Router({ mergeParams: true });
 const n = (v) => Number(v || 0);
@@ -31,6 +33,8 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
     const paidCol = isAccount ? 're.account_payout_id' : 're.agent_payout_id';
     const scopeCol = isAccount ? 're.account_id' : 're.agent_id';
     const scopeVal = isAccount ? scope.accountId : scope.agentId;
+    // Earnings are in one currency at a time; never summed across currencies.
+    const currency = await currencies.resolveReportingCurrency(c, wid(req), req.query.currency);
 
     // A salaried creator scores 0 on every sale, exactly as fn_post_sale
     // computes it. Reporting their revenue_split_pct here would promise a
@@ -51,8 +55,8 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
          FROM revenue_entries re
          JOIN transactions t ON t.id = re.transaction_id
          JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
-        WHERE ${scopeCol} = $1 AND t.occurred_at >= $2 AND t.occurred_at <= $3`,
-      [scopeVal, F, T])).rows[0];
+        WHERE ${scopeCol} = $1 AND t.occurred_at >= $2 AND t.occurred_at <= $3 AND t.currency = $4`,
+      [scopeVal, F, T, currency])).rows[0];
 
     // Balances are all-time: what you are owed is what was never settled.
     const balance = (await c.query(
@@ -61,17 +65,18 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
          FROM revenue_entries re
          JOIN transactions t ON t.id = re.transaction_id
          JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
-        WHERE ${scopeCol} = $1`, [scopeVal])).rows[0];
+        WHERE ${scopeCol} = $1 AND t.currency = $2`, [scopeVal, currency])).rows[0];
 
-    return { isAccount, profile, period, balance };
+    return { isAccount, profile, period, balance, currency };
   });
 
   if (!data) return res.status(404).json({ error: 'no_profile' });
 
-  const { isAccount, profile, period, balance } = data;
+  const { isAccount, profile, period, balance, currency } = data;
   const onSalary = isAccount && profile.pay_model === 'salary';
   res.json({
     range: { from: F, to: T },
+    currency,
     role: isAccount ? 'account_owner' : 'agent',
     payModel: isAccount ? profile.pay_model : null,
     // A salaried creator is owed a fixed amount per payout period, not a cut

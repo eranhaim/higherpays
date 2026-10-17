@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
+import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import {
   accountsApi, agentsApi, invitesApi, platformApi, teamApi,
   type Account, type Agent, type CreateAccountInput, type CreateAgentInput,
@@ -53,12 +54,13 @@ export function useAgencyData(
   canManageRoster: boolean,
 ): UseAgencyDataResult {
   const { activeWorkspaceId } = useCurrentSession();
+  const { currency } = useReportingCurrency();
   const queryClient = useQueryClient();
   const enabled = Boolean(activeWorkspaceId);
 
   const members = useQuery({
-    queryKey: ['team', activeWorkspaceId, salesRange],
-    queryFn: () => teamApi.list(salesRange),
+    queryKey: ['team', activeWorkspaceId, salesRange, currency],
+    queryFn: () => teamApi.list({ ...salesRange, currency }),
     enabled,
   });
   const invites = useQuery({ queryKey: ['invites', activeWorkspaceId], queryFn: () => invitesApi.list(), enabled });

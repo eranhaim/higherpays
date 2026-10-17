@@ -10,6 +10,8 @@ import { workspacePath } from '../workspacePath';
  */
 export interface Earnings {
   range: { from: string; to: string };
+  /** Every figure except the salary is in this one currency. */
+  currency: string;
   role: 'agent' | 'account_owner';
   /** Null for an agent, who is always paid a commission. */
   payModel: 'share' | 'salary' | null;
@@ -27,8 +29,8 @@ export interface Earnings {
 }
 
 export const meApi = {
-  earnings(from: string, to: string): Promise<Earnings> {
-    const qs = new URLSearchParams({ from, to });
+  earnings(from: string, to: string, currency: string): Promise<Earnings> {
+    const qs = new URLSearchParams({ from, to, currency });
     return api.get<Earnings>(workspacePath(`/me/earnings?${qs.toString()}`));
   },
 };

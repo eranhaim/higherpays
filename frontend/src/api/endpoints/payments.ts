@@ -271,8 +271,12 @@ export const paymentsApi = {
     return api.get<Page<Payment>>(workspacePath(`/payments?${qs.toString()}`));
   },
 
-  summary: (filters: ListPaymentsQuery = {}) =>
-    api.get<PaymentsSummary>(workspacePath(`/payments/summary?${filterParams(filters).toString()}`)),
+  /** Totals are in one currency; pass the one to report in. */
+  summary(filters: ListPaymentsQuery = {}, currency?: string) {
+    const qs = filterParams(filters);
+    if (currency) qs.set('currency', currency);
+    return api.get<PaymentsSummary>(workspacePath(`/payments/summary?${qs.toString()}`));
+  },
 
   filters: () => api.get<PaymentFilterOptions>(workspacePath('/payments/filters')),
 

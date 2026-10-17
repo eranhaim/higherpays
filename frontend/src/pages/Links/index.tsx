@@ -4,6 +4,7 @@ import { useDebounced } from '../../hooks/useDebounced';
 import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useRateCard } from '../../hooks/useRateCard';
+import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import { feeBreakdown } from '../../business/feeBreakdown';
 import { formatMoney, toInstantRange } from '../../lib/format';
 import Modal from '../../components/Modal';
@@ -12,7 +13,7 @@ import CompletePaymentModal from '../../components/CompletePaymentModal';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DateCell, CopyButton, DetailRow, Select,
-  DataTable, FilterBar, DateRangePicker, ViewPicker, RowViewButton,
+  DataTable, FilterBar, DateRangePicker, CurrencyPicker, ViewPicker, RowViewButton,
   type Column, type DateRange, type SortState,
 } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
@@ -61,6 +62,10 @@ export default function LinksPage() {
   const can = useCan();
   const { labels } = useCurrentSession();
   const { rateCard } = useRateCard();
+  const { currency: reportingCurrency, currencies: allowedCurrencies } = useReportingCurrency();
+  // The currency a new link is priced in. Only checkout-supported ones can be chosen.
+  const [linkCurrency, setLinkCurrency] = useState(reportingCurrency);
+  const formatLinkMoney = (n: number) => formatMoney(n, linkCurrency);
   const canCreate = can('links.create');
   const canArchive = can('archive.manage');
   const canComplete = can('payments.complete');
@@ -167,6 +172,8 @@ export default function LinksPage() {
 
   const openCreate = () => {
     setAccountId(activeAccounts[0]?.id ?? '');
+    setLinkCurrency(allowedCurrencies.find((c) => c.currency === reportingCurrency && c.checkoutSupported)?.currency
+      ?? allowedCurrencies.find((c) => c.checkoutSupported)?.currency ?? reportingCurrency);
     setType('single_use');
     setNoExpiry(false);
     setAmountText('');
@@ -182,12 +189,12 @@ export default function LinksPage() {
 
   const submitCreate = async () => {
     if (!accountId) { toast(`Pick a ${labels.account.toLowerCase()}.`); return; }
-    if (!(amount >= minAmount)) { toast(`Minimum link amount is ${formatMoney(minAmount)}.`); return; }
-    if (aboveMax) { toast(`Maximum link amount is ${formatMoney(maxAmount ?? 0)}.`); return; }
+    if (!(amount >= minAmount)) { toast(`Minimum link amount is ${formatLinkMoney(minAmount)}.`); return; }
+    if (aboveMax) { toast(`Maximum link amount is ${formatLinkMoney(maxAmount ?? 0)}.`); return; }
     setIsCreating(true);
     try {
       const created = await createLink({
-        accountId, type, amount,
+        accountId, type, amount, currency: linkCurrency,
         description: description.trim() || undefined,
         noExpiry: type === 'single_use' ? noExpiry : undefined,
       });
@@ -337,6 +344,7 @@ export default function LinksPage() {
         {orderBy(statCards, statsView.visibleKeys).map((c) => <Fragment key={c.key}>{c.card}</Fragment>)}
       </StatGrid>
       <FilterBar>
+        <CurrencyPicker />
         <input type="search" className="search-input" aria-label="Search links" placeholder="Search HigherPays Order, MantaPay ID, agent"
           value={filters.search} onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))} />
         <Select label="Type" hideLabel value={filters.type} onChange={(v) => setFilters((f) => ({ ...f, type: v as LinksFilters['type'] }))}>
@@ -548,14 +556,23 @@ export default function LinksPage() {
             <span>No expiry — keep this link open until it is paid or cancelled.</span>
           </label>
         )}
+        {allowedCurrencies.length > 1 && (
+          <Select id="link-currency" label="Currency" value={linkCurrency} onChange={setLinkCurrency}>
+            {allowedCurrencies.map((c) => (
+              <option key={c.currency} value={c.currency} disabled={!c.checkoutSupported}>
+                {c.checkoutSupported ? c.currency : `${c.currency} (not supported by the payment provider yet)`}
+              </option>
+            ))}
+          </Select>
+        )}
         <div className="field">
           <label htmlFor="link-amount">Amount</label>
           <input id="link-amount" type="number" min={minAmount} max={maxAmount ?? undefined} step={0.01} placeholder="0.00"
             value={amountText} onChange={(e) => setAmountText(e.target.value)} />
           <p className="sub">
-            {belowMin ? <span className="text-neg">Below the {formatMoney(minAmount)} minimum.</span>
-              : aboveMax ? <span className="text-neg">Above the {formatMoney(maxAmount ?? 0)} maximum.</span>
-                : [`Minimum ${formatMoney(minAmount)}`, maxAmount != null ? `Maximum ${formatMoney(maxAmount)}` : null].filter(Boolean).join(' · ')}
+            {belowMin ? <span className="text-neg">Below the {formatLinkMoney(minAmount)} minimum.</span>
+              : aboveMax ? <span className="text-neg">Above the {formatLinkMoney(maxAmount ?? 0)} maximum.</span>
+                : [`Minimum ${formatLinkMoney(minAmount)}`, maxAmount != null ? `Maximum ${formatLinkMoney(maxAmount)}` : null].filter(Boolean).join(' · ')}
           </p>
         </div>
         <div className="field">
@@ -567,33 +584,33 @@ export default function LinksPage() {
         <div className={`pl-fees${fees && fees.effectivePct >= 18 ? ' hot' : fees && fees.effectivePct >= 15 ? ' warm' : ''}`}>
           <div className="fee-line">
             <span>Customer pays</span>
-            <b className="fee-val">{fees ? formatMoney(fees.customerTotal) : '—'}</b>
+            <b className="fee-val">{fees ? formatLinkMoney(fees.customerTotal) : '—'}</b>
           </div>
           <div className="fee-line">
-            <span>MDR ({rateCard.pspRate}% of {fees ? formatMoney(fees.customerTotal) : '—'})</span>
-            <b className="fee-val">{fees ? formatMoney(fees.mdrFee) : '—'}</b>
+            <span>MDR ({rateCard.pspRate}% of {fees ? formatLinkMoney(fees.customerTotal) : '—'})</span>
+            <b className="fee-val">{fees ? formatLinkMoney(fees.mdrFee) : '—'}</b>
           </div>
           <div className="fee-line">
             <span>Transaction fee</span>
-            <b className="fee-val">{fees ? formatMoney(fees.fixed) : '—'}</b>
+            <b className="fee-val">{fees ? formatLinkMoney(fees.fixed) : '—'}</b>
           </div>
           <div className="fee-line">
-            <span>Settlement fee ({rateCard.settlementRate}% of {fees ? formatMoney(fees.settlementBase) : '—'})</span>
-            <b className="fee-val">{fees ? formatMoney(fees.settlementFee) : '—'}</b>
+            <span>Settlement fee ({rateCard.settlementRate}% of {fees ? formatLinkMoney(fees.settlementBase) : '—'})</span>
+            <b className="fee-val">{fees ? formatLinkMoney(fees.settlementFee) : '—'}</b>
           </div>
           {rateCard.marginRate > 0 && (
             <div className="fee-line">
-              <span>HigherPays margin ({rateCard.marginRate}% of {fees ? formatMoney(fees.amount) : '—'})</span>
-              <b className="fee-val">{fees ? formatMoney(fees.marginFee) : '—'}</b>
+              <span>HigherPays margin ({rateCard.marginRate}% of {fees ? formatLinkMoney(fees.amount) : '—'})</span>
+              <b className="fee-val">{fees ? formatLinkMoney(fees.marginFee) : '—'}</b>
             </div>
           )}
           <div className="fee-tot">
             <span>Total fees</span>
-            <span className="fee-val">{fees ? formatMoney(fees.total) : '—'}</span>
+            <span className="fee-val">{fees ? formatLinkMoney(fees.total) : '—'}</span>
           </div>
           <div className="fee-net">
             <span>Net profit</span>
-            <span className="fee-val">{fees ? formatMoney(fees.net) : '—'}</span>
+            <span className="fee-val">{fees ? formatLinkMoney(fees.net) : '—'}</span>
           </div>
         </div>
 

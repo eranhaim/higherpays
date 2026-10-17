@@ -1,5 +1,5 @@
 export { authApi, type TwoFactorSetup, type Session } from './auth';
-export { workspacesApi, type PlatformFee, type LinkLimits, type WorkspacePermissions, type WorkspaceSettings, type UpdateWorkspaceInput, type AuditEntry } from './workspaces';
+export { workspacesApi, type WorkspaceCurrency, type SelectableCurrency, type WorkspaceCurrencies, type PlatformFee, type LinkLimits, type WorkspacePermissions, type WorkspaceSettings, type UpdateWorkspaceInput, type AuditEntry } from './workspaces';
 export {
   platformApi,
   type PlatformWorkspace, type PlatformOverview, type OnboardAgencyInput,

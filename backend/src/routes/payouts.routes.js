@@ -6,6 +6,7 @@ const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { cashPosition } = require('../services/cash');
 const { status: vocab } = require('../schema/entities');
+const currencies = require('../services/currencies.service');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -56,12 +57,17 @@ router.get('/', requirePermission('revenue.view'), asyncHandler(async (req, res)
 // the provider holds, and whether the agency can pay everyone today.
 router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (req, res) => {
   const { F, T } = range(req, req.query);
+  // Every figure here is in one currency; summing across currencies would be meaningless.
+  const currency = await currencies.resolveReportingCurrency({ query }, wid(req), req.query.currency);
+  const baseCurrency = await currencies.getBaseCurrency({ query }, wid(req));
   // A salaried creator earns nothing per sale; they are owed one salary for
-  // the period, unless a payout already covers part of it.
+  // the period, unless a payout already covers part of it. A salary is owed in
+  // the base currency only.
+  // $4 is the reporting currency, $5 the base currency.
   const perAccount = (await query(`
     SELECT a.id, a.name, a.pay_model, COALESCE(agg.revenue,0) AS revenue,
            CASE WHEN a.pay_model = 'salary'
-                THEN CASE WHEN paid.covered THEN 0 ELSE a.salary_amount END
+                THEN CASE WHEN paid.covered OR $4::char(3) <> $5::char(3) THEN 0 ELSE a.salary_amount END
                 ELSE COALESCE(agg.owed,0) END AS owed
       FROM accounts a
       LEFT JOIN (
@@ -70,14 +76,14 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
           FROM revenue_entries re
           JOIN transactions t ON t.id = re.transaction_id
           JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
-         WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 GROUP BY re.account_id
+         WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND t.currency = $4::char(3) GROUP BY re.account_id
       ) agg ON agg.account_id = a.id
       LEFT JOIN LATERAL (
         SELECT true AS covered FROM payouts p
          WHERE p.workspace_id = $3 AND p.account_id = a.id
            AND p.period_start <= $2::date AND p.period_end >= $1::date LIMIT 1
       ) paid ON true
-     WHERE a.workspace_id = $3 ORDER BY owed DESC`, [F, T, wid(req)])).rows;
+     WHERE a.workspace_id = $3 ORDER BY owed DESC`, [F, T, wid(req), currency, baseCurrency])).rows;
   const perAgent = (await query(`
     SELECT ag.id, u.full_name AS name, COALESCE(agg.owed,0) AS owed, COALESCE(agg.sales,0) AS sales
       FROM agents ag JOIN users u ON u.id = ag.user_id
@@ -87,9 +93,9 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
           FROM revenue_entries re
           JOIN transactions t ON t.id = re.transaction_id
           JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
-         WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 GROUP BY re.agent_id
+         WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND t.currency = $4 GROUP BY re.agent_id
       ) agg ON agg.agent_id = ag.id
-     WHERE ag.workspace_id = $3 ORDER BY owed DESC`, [F, T, wid(req)])).rows;
+     WHERE ag.workspace_id = $3 ORDER BY owed DESC`, [F, T, wid(req), currency])).rows;
 
   // Rolling reserve: the provider holds a % of settled volume. It is the
   // agency's own money, released later, but until then the agency fronts it.
@@ -98,7 +104,7 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
   const settled = (await query(
     `SELECT count(*) AS imported, COALESCE(SUM(reserve) FILTER (
         WHERE reserve > 0 AND ($2 = 0 OR (settlement_date + ($2 || ' days')::interval)::date > now()::date)), 0) AS held
-       FROM settlements WHERE workspace_id = $1`, [wid(req), String(days)])).rows[0];
+       FROM settlements WHERE workspace_id = $1 AND currency = $3`, [wid(req), String(days), currency])).rows[0];
   let reserve;
   if (num(settled.imported) > 0) {
     reserve = { pct, releaseDays: days, held: round2(num(settled.held)), source: 'settlements' };
@@ -108,8 +114,8 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
          FROM revenue_entries re
          JOIN transactions t ON t.id = re.transaction_id
          JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
-        WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2`,
-      [F, T, wid(req)])).rows[0].g;
+        WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND t.currency = $4`,
+      [F, T, wid(req), currency])).rows[0].g;
     reserve = { pct, releaseDays: days, held: round2(num(gross) * pct / 100), source: 'estimated' };
   }
 
@@ -118,7 +124,7 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
        FROM revenue_entries re
        JOIN transactions t ON t.id = re.transaction_id
        JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
-      WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2`, [F, T, wid(req)])).rows[0].received);
+      WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND t.currency = $4`, [F, T, wid(req), currency])).rows[0].received);
   const accountsOwed = perAccount.reduce((s, r) => s + num(r.owed), 0);
   const agentsOwed = perAgent.reduce((s, r) => s + num(r.owed), 0);
   const summary = (await query(
@@ -128,16 +134,17 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
        FROM revenue_entries re
        JOIN transactions t ON t.id = re.transaction_id
        JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
-      WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2`,
-    [F, T, wid(req)])).rows[0];
+      WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND t.currency = $4`,
+    [F, T, wid(req), currency])).rows[0];
   const paidToDate = (await query(
     `SELECT COALESCE(SUM(net),0) AS paid
        FROM payouts
-      WHERE workspace_id=$1 AND status IN ('approved','paid')`,
-    [wid(req)])).rows[0].paid;
+      WHERE workspace_id=$1 AND status IN ('approved','paid') AND currency = $2`,
+    [wid(req), currency])).rows[0].paid;
 
   res.json({
     range: { from: F, to: T },
+    currency,
     summary: {
       grossSales: num(summary.gross_sales),
       distributable: num(summary.distributable),
@@ -155,7 +162,9 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
 }));
 
 // One fixed statement set per payee type: the money path carries no
-// string-built SQL. $1 workspace, $2 from, $3 to, $4 optional target (NULL = everyone).
+// string-built SQL. $1 workspace, $2 from, $3 to, $4 optional target (NULL = everyone),
+// $5 the currency being paid out. A payout is one currency: it never settles entries
+// of another.
 const PAYOUT_SQL = {
   account: {
     unpaid: `
@@ -164,7 +173,7 @@ const PAYOUT_SQL = {
         FROM revenue_entries re
         JOIN transactions t ON t.id = re.transaction_id
         JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
-       WHERE re.workspace_id = $1 AND t.occurred_at >= $2 AND t.occurred_at <= $3
+       WHERE re.workspace_id = $1 AND t.occurred_at >= $2 AND t.occurred_at <= $3 AND t.currency = $5
          AND re.account_payout_id IS NULL AND re.account_id IS NOT NULL
          AND ($4::uuid IS NULL OR re.account_id = $4::uuid)
        GROUP BY re.account_id HAVING SUM(re.account_amount) > 0`,
@@ -177,7 +186,7 @@ const PAYOUT_SQL = {
          AND transaction_id IN (
            SELECT t.id FROM transactions t
            JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
-          WHERE t.occurred_at >= $3 AND t.occurred_at <= $4
+          WHERE t.occurred_at >= $3 AND t.occurred_at <= $4 AND t.currency = $6
          )`,
   },
   agent: {
@@ -187,7 +196,7 @@ const PAYOUT_SQL = {
         FROM revenue_entries re
         JOIN transactions t ON t.id = re.transaction_id
         JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
-       WHERE re.workspace_id = $1 AND t.occurred_at >= $2 AND t.occurred_at <= $3
+       WHERE re.workspace_id = $1 AND t.occurred_at >= $2 AND t.occurred_at <= $3 AND t.currency = $5
          AND re.agent_payout_id IS NULL AND re.agent_id IS NOT NULL
          AND ($4::uuid IS NULL OR re.agent_id = $4::uuid)
        GROUP BY re.agent_id HAVING SUM(re.agent_amount) > 0`,
@@ -200,7 +209,7 @@ const PAYOUT_SQL = {
          AND transaction_id IN (
            SELECT t.id FROM transactions t
            JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
-          WHERE t.occurred_at >= $3 AND t.occurred_at <= $4
+          WHERE t.occurred_at >= $3 AND t.occurred_at <= $4 AND t.currency = $6
          )`,
   },
 };
@@ -217,12 +226,13 @@ router.post('/run', requirePermission('revenue.manage'), asyncHandler(async (req
 
   const runs = await withTransaction(async (c) => {
     await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`payout:${wid(req)}:${payeeType}`]);
-    const cur = (await c.query('SELECT currency FROM workspaces WHERE id=$1', [wid(req)])).rows[0].currency;
-    const rows = (await c.query(sql.unpaid, [wid(req), F, T, targetId])).rows;
+    const cur = await currencies.resolveReportingCurrency(c, wid(req), req.body?.currency);
+    const baseCurrency = await currencies.getBaseCurrency(c, wid(req));
+    const rows = (await c.query(sql.unpaid, [wid(req), F, T, targetId, cur])).rows;
     const out = [];
     for (const r of rows) {
       const pay = (await c.query(sql.insert, [wid(req), r.rid, r.ps || F.slice(0, 10), r.pe || T.slice(0, 10), r.amount, cur])).rows[0];
-      const settled = await c.query(sql.settle, [pay.id, r.rid, F, T, wid(req)]);
+      const settled = await c.query(sql.settle, [pay.id, r.rid, F, T, wid(req), cur]);
       if (settled.rowCount === 0) throw new Error(`payout ${pay.id} settled no entries`);
       out.push({ recipientId: r.rid, amount: Number(r.amount), payoutId: pay.id });
     }
@@ -230,7 +240,8 @@ router.post('/run', requirePermission('revenue.manage'), asyncHandler(async (req
     // A salary has no revenue entries to settle: it is owed for the period
     // itself. An overlapping payout means this period is already covered, so
     // running the same range twice cannot pay it twice.
-    if (payeeType === 'account') {
+    // A salary is owed in the base currency only, so only a base-currency run pays it.
+    if (payeeType === 'account' && cur === baseCurrency) {
       const salaried = (await c.query(`
         SELECT a.id, a.salary_amount FROM accounts a
          WHERE a.workspace_id = $1 AND a.pay_model = 'salary' AND a.salary_amount > 0

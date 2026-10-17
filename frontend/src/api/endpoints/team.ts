@@ -38,10 +38,12 @@ export const teamApi = {
   create: (input: { email: string; password: string; fullName?: string; role: 'workspace_admin' | 'member'; permissions: Permission[] }) =>
     api.post<{ userId: string; role: string }>(workspacePath('/team'), input),
 
-  async list(range?: { from?: string; to?: string }): Promise<Member[]> {
+  /** currency is the one currency each member's sales total is in. */
+  async list(range?: { from?: string; to?: string; currency?: string }): Promise<Member[]> {
     const search = new URLSearchParams();
     if (range?.from) search.set('from', range.from);
     if (range?.to) search.set('to', range.to);
+    if (range?.currency) search.set('currency', range.currency);
     const raw = await api.get<{ members: Member[] }>(`${workspacePath('/team')}${search.size ? `?${search}` : ''}`);
     return raw.members;
   },

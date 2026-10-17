@@ -24,7 +24,9 @@ export interface Customer {
   phone: string | null;
   country: string | null;
   segment: CustomerSegment;
+  /** Spend in `currency` only; spend in other currencies is not added in. */
   totalSpend: number;
+  currency: string | null;
   lastPurchaseAt: string | null;
   archivedAt: string | null;
   createdAt: string;
@@ -58,6 +60,8 @@ export interface ListCustomersQuery {
   dir?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
+  /** The one currency spend is computed in. */
+  currency?: string;
 }
 
 export interface CreateCustomerInput {
@@ -90,12 +94,14 @@ export const customersApi = {
     if (query.dir) qs.set('dir', query.dir);
     if (query.limit != null) qs.set('limit', String(query.limit));
     if (query.offset != null) qs.set('offset', String(query.offset));
+    if (query.currency) qs.set('currency', query.currency);
     const suffix = qs.toString() ? `/customers?${qs.toString()}` : '/customers';
     const raw = await api.get<{ customers?: Customer[] }>(workspacePath(suffix));
     return customersFromResponse(raw);
   },
 
-  get: (id: string) => api.get<CustomerDetail>(workspacePath(`/customers/${id}`)),
+  get: (id: string, currency?: string) =>
+    api.get<CustomerDetail>(workspacePath(`/customers/${id}${currency ? `?currency=${currency}` : ''}`)),
 
   create: (input: CreateCustomerInput) => api.post<Customer>(workspacePath('/customers'), input),
 
@@ -104,7 +110,7 @@ export const customersApi = {
   /** Erasure: name and contact details are wiped; their payments stay, anonymised. */
   erase: (id: string) => api.del<void>(workspacePath(`/customers/${id}`)),
 
-  exportCsv() {
-    return api.download(workspacePath('/customers/export'), 'customers.csv');
+  exportCsv(currency?: string) {
+    return api.download(workspacePath(currency ? `/customers/export?currency=${currency}` : '/customers/export'), 'customers.csv');
   },
 };

@@ -12,6 +12,7 @@ const { hasPermission } = require('../auth/permissions');
 const { status: vocab } = require('../schema/entities');
 const config = require('../config');
 const linksService = require('../services/links.service');
+const currencies = require('../services/currencies.service');
 const { recordLinkEvent } = require('../services/linkEvents');
 const { resolveAttribution, repostSales } = require('../services/attribution');
 const { generateOrderReference } = require('../lib/orderReference');
@@ -206,6 +207,9 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
 
   const row = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
+    // Counts, price bands and revenue are about one currency; summing across
+    // currencies would be meaningless.
+    const currency = await currencies.resolveReportingCurrency(c, wid(req), req.query.currency);
     return (await c.query(
       `WITH effective AS (
          SELECT pl.*, ${EFFECTIVE_STATUS} AS effective_status,
@@ -220,7 +224,7 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
            JOIN accounts a ON a.id = pl.account_id
            LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
            LEFT JOIN users u ON u.id = ag.user_id
-          WHERE ${LINK_FILTERS_UNDATED}
+          WHERE ${LINK_FILTERS_UNDATED} AND pl.currency = $14::char(3)
        ),
        links_in_range AS (
          SELECT pl.id, pl.amount,
@@ -254,10 +258,9 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
           WHERE re.workspace_id = $1 AND p.archived_at IS NULL
             AND ${PAYMENT_OCCURRED_IN_RANGE}
        )
-       SELECT link_counts.*, revenue.*,
-              (SELECT currency FROM workspaces WHERE id = $1) AS currency
+       SELECT link_counts.*, revenue.*, $14::char(3) AS currency
          FROM link_counts, revenue`,
-      linkFilterParams(req, scope, false))).rows[0];
+      [...linkFilterParams(req, scope, false), currency])).rows[0];
   });
   res.json({
     totalLinks: row.total_links,
@@ -341,8 +344,8 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
   const amt = amount;
   if (amt < MIN_FIXED_AMOUNT) return badRequest(res, `minimum amount is ${MIN_FIXED_AMOUNT}`, ['amount']);
   const cur = currency.toUpperCase();
-  if (!config.supportedCurrencies.includes(cur)) {
-    return badRequest(res, `currency ${cur} is not enabled (supported: ${config.supportedCurrencies.join(', ')})`, ['currency']);
+  if (!currencies.isCheckoutSupported(cur)) {
+    return badRequest(res, `links cannot be created in ${cur} yet: the payment provider does not support it`, ['currency']);
   }
 
   // The provider echoes this back unchanged as the attribution key.
@@ -352,10 +355,11 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
     // This conflicts with the platform currency update's FOR UPDATE lock.
     // Currency and limits therefore come from the same state as the insert.
     const ws = (await c.query(
-      'SELECT currency, min_link_amount, max_link_amount, link_ttl_minutes, reusable_links_enabled FROM workspaces WHERE id=$1 FOR SHARE',
+      'SELECT min_link_amount, max_link_amount, link_ttl_minutes, reusable_links_enabled FROM workspaces WHERE id=$1 FOR SHARE',
       [wid(req)])).rows[0];
-    if (cur !== ws.currency) {
-      return { validation: `currency must match the workspace currency (${ws.currency})`, fields: ['currency'] };
+    const allowed = await c.query('SELECT 1 FROM workspace_currencies WHERE workspace_id=$1 AND currency=$2', [wid(req), cur]);
+    if (!allowed.rowCount) {
+      return { validation: `currency ${cur} is not allowed for this workspace`, fields: ['currency'] };
     }
     if (type === 'reusable' && !ws.reusable_links_enabled) {
       return { validation: 'reusable links are disabled for this workspace', fields: ['type'] };
@@ -553,13 +557,15 @@ router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(asyn
   const row = (await query(`
     SELECT count(*)::int AS payments,
            count(*) FILTER (WHERE re.account_payout_id IS NOT NULL OR re.agent_payout_id IS NOT NULL)::int AS paid_out,
-           COALESCE(SUM(p.amount), 0) AS amount
+           COALESCE(SUM(p.amount), 0) AS amount,
+           (SELECT currency FROM payment_links WHERE workspace_id = $1 AND id = $2) AS currency
       FROM payments p
       LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
       LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
      WHERE p.workspace_id = $1 AND p.payment_link_id = $2 AND p.archived_at IS NULL
        AND p.status IN ('paid', 'refunded')`, [wid(req), req.params.id])).rows[0];
-  res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount) });
+  // One link is one currency, so this sum is never mixed.
+  res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount), currency: row.currency });
 }));
 
 // PATCH /:id/attribution  { accountId?, agentId? }
