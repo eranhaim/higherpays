@@ -6,6 +6,7 @@ import { ROLE_PERMISSIONS } from '../../rbac/permissions';
 import { AccessField } from './fields';
 import { PermissionsField } from './PermissionsField';
 import { passwordProblem, type PermissionState } from './permissionState';
+import { useGrantable } from './useGrantable';
 
 export type PlainType = 'workspace_admin' | 'member';
 
@@ -40,6 +41,7 @@ export function MemberEditorModal({
   onSetPlatformAdmin: (enabled: boolean) => Promise<void>;
 }) {
   const creating = !member;
+  const { grantsAnything, onlyGrantable } = useGrantable();
   // A seat behind a profile cannot change type: the profile's foreign key is
   // what ties the person to this workspace.
   const fixedRole = member && (member.agentId || member.accountId)
@@ -49,7 +51,7 @@ export function MemberEditorModal({
   const [email, setEmail] = useState(member?.email ?? '');
   const [role, setRole] = useState<PlainType>(member?.role === 'workspace_admin' ? 'workspace_admin' : 'member');
   const [permissions, setPermissions] = useState<PermissionState>(
-    { roleKey: member?.customRoleKey ?? null, permissions: member?.permissions ?? [...ROLE_PERMISSIONS.member] },
+    { roleKey: member?.customRoleKey ?? null, permissions: member?.permissions ?? onlyGrantable(ROLE_PERMISSIONS.member) },
   );
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
@@ -108,12 +110,12 @@ export function MemberEditorModal({
           onChange={(event) => {
             const next = event.target.value as PlainType;
             setRole(next);
-            setPermissions({ roleKey: null, permissions: [...ROLE_PERMISSIONS[next]] });
+            setPermissions({ roleKey: null, permissions: onlyGrantable(ROLE_PERMISSIONS[next]) });
           }}
         >
           {fixedRole ? <option value={fixedRole.value}>{fixedRole.label}</option> : null}
           <option value="member">Member</option>
-          <option value="workspace_admin">Admin</option>
+          <option value="workspace_admin" disabled={!grantsAnything}>Admin</option>
         </select>
         {fixedRole && <p className="sub">This type comes from the person's profile. Changing it would strand their record, so it is fixed.</p>}
       </div>

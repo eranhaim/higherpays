@@ -1,9 +1,8 @@
 import { useState } from 'react';
-import { useCan } from '../../hooks/usePermission';
-import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { Select } from '../../components/ui';
 import { ROLE_PERMISSION_GROUPS, toggleRolePermission, type RoleDefinition } from '../../api/endpoints';
 import type { PermissionState } from './permissionState';
+import { useGrantable } from './useGrantable';
 
 /**
  * Pick a custom role, or set permissions one by one. Ticking a box leaves the
@@ -18,9 +17,7 @@ export function PermissionsField({ roles, value, onChange, hideRole }: {
   /** The role editor edits the role's own list, so it has no role to pick. */
   hideRole?: boolean;
 }) {
-  const can = useCan();
-  const { role } = useCurrentSession();
-  const grantsAnything = role === 'workspace_owner' || role === 'workspace_admin';
+  const { isGrantable } = useGrantable();
   const [search, setSearch] = useState('');
 
   const term = search.trim().toLowerCase();
@@ -56,11 +53,10 @@ export function PermissionsField({ roles, value, onChange, hideRole }: {
               <div className="field-label">{group.label}</div>
               {group.permissions.map((permission) => {
                 const isOn = value.permissions.includes(permission.key);
-                const isGrantable = grantsAnything || can(permission.key) || isOn;
                 return (
                   <label className="check-row" key={permission.key}>
                     <input
-                      type="checkbox" checked={isOn} disabled={!isGrantable}
+                      type="checkbox" checked={isOn} disabled={!isGrantable(permission.key)}
                       onChange={() => onChange({ roleKey: null, permissions: toggleRolePermission(value.permissions, permission.key) })}
                     />
                     <span>{permission.label}</span>
