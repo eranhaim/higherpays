@@ -41,6 +41,8 @@ export interface OnboardAgencyInput {
   currency: string;
   merchantId?: string;
   adminEmail: string;
+  /** When set, the first admin can sign in at once with this password and no invite is sent. */
+  adminPassword?: string;
   pspRatePct: number;
   settlementPct: number;
   marginRatePct: number;

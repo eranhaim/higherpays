@@ -14,6 +14,8 @@ const { ensureWorkspaceRoles } = require('../services/workspaceRoles');
 const { ROLE_PERMISSIONS } = require('../auth/permissions');
 const { isStr, badRequest } = require('../util/validate');
 const { sendEmail } = require('../util/email');
+const { validatePasswordStrength } = require('../auth/passwords');
+const { grantWorkspaceRole } = require('../services/people');
 const { status: vocab } = require('../schema/entities');
 
 const hashToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
@@ -445,7 +447,8 @@ router.patch('/workspaces/:id/status', asyncHandler(async (req, res) => {
 
 // POST /platform/agencies — onboard a new agency in one step: workspace,
 // rate card, settlement fees, default split, and an invite for its first
-// admin (who sets their own password via the link).
+// admin. The admin sets their own password through the invite link, or the
+// operator sets it here when email delivery is not available.
 router.post('/agencies', asyncHandler(async (req, res) => {
   const b = req.body || {};
   const currency = (b.currency || 'EUR').toUpperCase();
@@ -458,6 +461,10 @@ router.post('/agencies', asyncHandler(async (req, res) => {
   if (!pct(settlementPct)) return badRequest(res, 'settlementPct must be 0..100', ['settlementPct']);
   const checkoutFeeError = checkoutFeeValidation(checkoutFee);
   if (checkoutFeeError) return badRequest(res, checkoutFeeError, ['checkoutFee']);
+
+  const setsPasswordNow = b.adminPassword != null;
+  const passwordError = setsPasswordNow ? validatePasswordStrength(b.adminPassword) : null;
+  if (passwordError) return badRequest(res, passwordError, ['adminPassword']);
 
   const token = crypto.randomBytes(32).toString('base64url');
   const out = await withTransaction(async (c) => {
@@ -480,16 +487,22 @@ router.post('/agencies', asyncHandler(async (req, res) => {
       `INSERT INTO revenue_rules (workspace_id, account_split_pct, agency_split_pct, agent_pct, effective_from, created_by_user_id)
        VALUES ($1,0,100,0,'-infinity',$2)`, [ws.id, uid(req)]);
     await grantPlatformAdminsAccess(c, ws.id);
-    await c.query(
-      `INSERT INTO invites (workspace_id, email, role, permissions, token_hash, invited_by_user_id, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [ws.id, b.adminEmail, 'workspace_owner', [...ROLE_PERMISSIONS.workspace_owner],
-        hashToken(token), uid(req), new Date(Date.now() + 7 * 86400 * 1000)]);
+    if (setsPasswordNow) {
+      await grantWorkspaceRole(c, ws.id, { email: b.adminEmail, fullName: isStr(b.adminName, 120) ? b.adminName.trim() : b.adminEmail, password: b.adminPassword }, 'workspace_owner');
+    } else {
+      await c.query(
+        `INSERT INTO invites (workspace_id, email, role, permissions, token_hash, invited_by_user_id, expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [ws.id, b.adminEmail, 'workspace_owner', [...ROLE_PERMISSIONS.workspace_owner],
+          hashToken(token), uid(req), new Date(Date.now() + 7 * 86400 * 1000)]);
+    }
     return ws;
   });
 
-  const link = `${config.appPublicBase}/accept-invite?token=${token}`;
-  await sendEmail({ to: b.adminEmail, subject: `You're invited to run ${b.name} on HigherPays`, body: `Set up your login: ${link}` });
+  if (!setsPasswordNow) {
+    const link = `${config.appPublicBase}/accept-invite?token=${token}`;
+    await sendEmail({ to: b.adminEmail, subject: `You're invited to run ${b.name} on HigherPays`, body: `Set up your login: ${link}` });
+  }
   await audit({ workspaceId: out.id, actorUserId: uid(req), action: 'platform.agency.onboard', entityType: 'workspace', entityId: out.id, metadata: { name: b.name, adminEmail: b.adminEmail } });
   res.status(201).json({
     workspaceId: out.id,

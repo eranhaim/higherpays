@@ -175,7 +175,9 @@ export default function PlatformPage() {
           onSubmit={async (input) => {
             const created = await onboardAgency(input);
             setOnboardOpen(false);
-            toast(`${input.name} created. Invite sent to ${input.adminEmail}.`);
+            toast(input.adminPassword
+              ? `${input.name} created. ${input.adminEmail} can sign in now.`
+              : `${input.name} created. Invite sent to ${input.adminEmail}.`);
             return created;
           }}
         />
@@ -204,6 +206,7 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
   const [currency, setCurrency] = useState(currencies[0] ?? CURRENCIES[0]);
   const [merchantId, setMerchantId] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
   const [pspRate, setPspRate] = useState('8');
   const [margin, setMargin] = useState('5');
   const [fixedFee, setFixedFee] = useState('0.50');
@@ -226,6 +229,7 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
     try {
       await onSubmit({
         name: name.trim(), currency, merchantId: merchantId.trim() || undefined, adminEmail: adminEmail.trim(),
+        ...(adminPassword ? { adminPassword } : {}),
         pspRatePct: pct.psp, settlementPct: pct.settlement, marginRatePct: pct.margin,
         pspFixedFee: fees.fixed, checkoutFee: fees.checkout,
       });
@@ -253,7 +257,7 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
   );
 
   return (
-    <Modal open onClose={onClose} title="Add agency" subtitle="Creates the workspace with its rate card and sends its first admin an invite to set their password.">
+    <Modal open onClose={onClose} title="Add agency" subtitle="Creates the workspace with its rate card. Its first admin gets an invite to set a password, or you set one here.">
       <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
         <div className="form-row">
           <div className="field">
@@ -273,6 +277,11 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
             <label htmlFor="agency-mid">MantaPay merchant ID</label>
             <input id="agency-mid" type="text" maxLength={64} placeholder="Optional" value={merchantId} onChange={(e) => setMerchantId(e.target.value)} />
           </div>
+        </div>
+        <div className="field">
+          <label htmlFor="agency-admin-password">First admin's password</label>
+          <input id="agency-admin-password" type="password" autoComplete="new-password" placeholder="Optional" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
+          <p className="sub">Leave empty to email an invite. Set one when email is not available: 12+ characters with upper case, lower case and a number.</p>
         </div>
 
         <div className="sechead">Rate card</div>
