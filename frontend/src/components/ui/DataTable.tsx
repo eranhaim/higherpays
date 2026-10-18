@@ -53,6 +53,14 @@ interface DataTableProps<T> {
   mobileSummary?: (row: T, state: { expanded: boolean; toggle: () => void }) => ReactNode;
 }
 
+/**
+ * A button, link or field inside a row is its own action; activating it must
+ * not also open the row. Shared by the table row and the phone card.
+ */
+function isInteractiveTarget(target: EventTarget): boolean {
+  return (target as HTMLElement).closest('button, a, input, select, label') !== null;
+}
+
 /** Enough placeholder rows to hold the table's height while it loads. */
 const SKELETON_ROWS = [0, 1, 2, 3, 4, 5];
 
@@ -137,7 +145,7 @@ export function DataTable<T>(props: DataTableProps<T>) {
                   // A button or link inside the row is its own action; clicking
                   // it must not also open the row.
                   onClick={onRowClick ? (e) => {
-                    if ((e.target as HTMLElement).closest('button, a, input, select, label')) return;
+                    if (isInteractiveTarget(e.target)) return;
                     onRowClick(row);
                   } : undefined}
                 >
@@ -167,11 +175,20 @@ export function DataTable<T>(props: DataTableProps<T>) {
             const key = keyFor(row, index);
             const expanded = expandedMobileRows.has(key);
             return (
-              // Deliberately not clickable as a whole. A phone card already
-              // holds two or three real buttons, so making the card a fourth
-              // target meant guessing what a tap would do; the summary's own
-              // View control is the way in.
-              <div className={['mobile-data-card', rowClassName?.(row)].filter(Boolean).join(' ')} key={key}>
+              // Touch shortcut, same as the table row: the card is not a button
+              // and not a tab stop, because the View control inside it is the
+              // keyboard path. A control inside the card keeps its own action.
+              // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
+              <div
+                className={[
+                  'mobile-data-card', onRowClick ? 'pressable' : null, rowClassName?.(row),
+                ].filter(Boolean).join(' ')}
+                key={key}
+                onClick={onRowClick ? (e) => {
+                  if (isInteractiveTarget(e.target)) return;
+                  onRowClick(row);
+                } : undefined}
+              >
                 {mobileSummary(row, { expanded, toggle: () => toggleMobileRow(key) })}
                 {expanded && (
                   <div className="mobile-data-card-details">

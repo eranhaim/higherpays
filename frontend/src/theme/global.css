@@ -1024,6 +1024,10 @@ label.setrow { cursor: pointer; }
   .mobile-card-list { display: grid; gap: 8px; padding: 8px; }
   .mobile-data-card { background: var(--surface-2); border: 1px solid var(--rule); border-radius: var(--radius); }
   /* The members list keeps its type edge on the phone card. */
+  /* A card that opens its row: tappable, with press feedback and a visible focus ring. */
+  .mobile-data-card.pressable { cursor: pointer; }
+  .mobile-data-card.pressable:active { background: var(--brand-wash); }
+  .mobile-data-card.pressable:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
   .mobile-data-card.memberrow { border-left: 3px solid var(--muted); }
   .mobile-data-card.memberrow-owner { border-left-color: var(--accent); }
   .mobile-data-card.memberrow-admin { border-left-color: var(--brand); }
