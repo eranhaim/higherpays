@@ -62,7 +62,8 @@ export default function LinksPage() {
   const can = useCan();
   const { labels } = useCurrentSession();
   const { rateCard } = useRateCard();
-  const { currency: reportingCurrency, currencies: allowedCurrencies } = useReportingCurrency();
+  const { currency: reportingCurrency, currencies: knownCurrencies } = useReportingCurrency();
+  const allowedCurrencies = knownCurrencies.filter((c) => c.enabled);
   // The currency a new link is priced in. Only checkout-supported ones can be chosen.
   const [linkCurrency, setLinkCurrency] = useState(reportingCurrency);
   const formatLinkMoney = (n: number) => formatMoney(n, linkCurrency);

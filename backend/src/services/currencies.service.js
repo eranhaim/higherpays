@@ -29,7 +29,7 @@ function isCheckoutSupported(code) {
 /** Every selectable currency, with whether this agency allows it. Base first, then A-Z. */
 async function listCurrencies(client, workspaceId) {
   const rows = (await client.query(
-    `SELECT wc.currency, w.currency AS base_currency,
+    `SELECT wc.currency, wc.enabled, w.currency AS base_currency,
             EXISTS (SELECT 1 FROM payment_links pl
                      WHERE pl.workspace_id = wc.workspace_id AND pl.currency = wc.currency) AS in_use
        FROM workspace_currencies wc
@@ -39,6 +39,7 @@ async function listCurrencies(client, workspaceId) {
     [workspaceId])).rows;
   return rows.map((r) => ({
     currency: r.currency,
+    enabled: r.enabled,
     isBase: r.currency === r.base_currency,
     inUse: r.in_use,
     checkoutSupported: isCheckoutSupported(r.currency),
@@ -46,10 +47,10 @@ async function listCurrencies(client, workspaceId) {
 }
 
 /**
- * Replaces the allowed set. The base currency can never be dropped, and a
- * currency that links already use cannot be removed (the foreign key on
- * payment_links would refuse it too; this gives the caller a readable error).
- * Returns { error, fields } on a refusal, otherwise { currencies }.
+ * Replaces the set of currencies new links may use. The base currency can
+ * never be dropped. A currency that links already use is switched off, not
+ * deleted: payment_links keeps a foreign key to it, and reports still need it.
+ * Returns { error } on a refusal, otherwise { currencies }.
  */
 async function setAllowedCurrencies(client, workspaceId, requested) {
   const wanted = [...new Set((requested || []).map(normalise))];
@@ -62,17 +63,18 @@ async function setAllowedCurrencies(client, workspaceId, requested) {
   if (!wanted.includes(base)) {
     return { error: `the workspace currency ${base} cannot be removed` };
   }
-  const current = await listCurrencies(client, workspaceId);
-  const blocked = current.filter((c) => c.inUse && !wanted.includes(c.currency)).map((c) => c.currency);
-  if (blocked.length) {
-    return { error: `${blocked.join(', ')} cannot be removed: payment links already use it` };
-  }
   await client.query(
-    'DELETE FROM workspace_currencies WHERE workspace_id = $1 AND NOT (currency = ANY($2::char(3)[]))',
+    `DELETE FROM workspace_currencies wc
+      WHERE wc.workspace_id = $1 AND NOT (wc.currency = ANY($2::char(3)[]))
+        AND NOT EXISTS (SELECT 1 FROM payment_links pl
+                         WHERE pl.workspace_id = wc.workspace_id AND pl.currency = wc.currency)`,
     [workspaceId, wanted]);
   await client.query(
     `INSERT INTO workspace_currencies (workspace_id, currency)
      SELECT $1, UNNEST($2::char(3)[]) ON CONFLICT DO NOTHING`,
+    [workspaceId, wanted]);
+  await client.query(
+    'UPDATE workspace_currencies SET enabled = (currency = ANY($2::char(3)[])) WHERE workspace_id = $1',
     [workspaceId, wanted]);
   return { currencies: await listCurrencies(client, workspaceId) };
 }

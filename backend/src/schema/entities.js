@@ -163,6 +163,7 @@ const WorkspaceCurrency = entity('workspace_currencies', {
   fields: {
     workspaceId: uuid().references('workspaces').notNull(),
     currency:    char(3).notNull(),
+    enabled:     bool().notNull().default('true'),  // false: kept for history, no new links
   },
   primaryKey: ['workspaceId', 'currency'],
   checks: ["currency ~ '^[A-Z]{3}$'"],

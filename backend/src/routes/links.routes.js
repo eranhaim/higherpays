@@ -352,7 +352,7 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
     const ws = (await c.query(
       'SELECT min_link_amount, max_link_amount, link_ttl_minutes, reusable_links_enabled FROM workspaces WHERE id=$1 FOR SHARE',
       [wid(req)])).rows[0];
-    const allowed = await c.query('SELECT 1 FROM workspace_currencies WHERE workspace_id=$1 AND currency=$2', [wid(req), cur]);
+    const allowed = await c.query('SELECT 1 FROM workspace_currencies WHERE workspace_id=$1 AND currency=$2 AND enabled', [wid(req), cur]);
     if (!allowed.rowCount) {
       return { validation: `currency ${cur} is not allowed for this workspace`, fields: ['currency'] };
     }

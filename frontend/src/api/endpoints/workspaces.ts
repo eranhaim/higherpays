@@ -5,9 +5,11 @@ import type { Page, WorkspaceLabels, WorkspaceRole } from '../types';
 /** One currency this agency may price a link in. Mirrors workspace_currencies. */
 export interface WorkspaceCurrency {
   currency: string;
+  /** False once switched off: kept for history and reports, but no new link may use it. */
+  enabled: boolean;
   /** The agency's base currency: always allowed, what reports default to, what a salary is paid in. */
   isBase: boolean;
-  /** Payment links already use it, so it cannot be removed. */
+  /** Payment links already use it. */
   inUse: boolean;
   /** False when MantaPay cannot charge in it: it can be allowed, but no link may be priced in it. */
   checkoutSupported: boolean;

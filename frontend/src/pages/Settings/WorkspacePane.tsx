@@ -112,7 +112,7 @@ function CurrenciesRow({ editable, data, onSave }: {
   data: WorkspaceCurrencies;
   onSave: (currencies: string[]) => Promise<unknown>;
 }) {
-  const saved = data.currencies.map((c) => c.currency).sort();
+  const saved = data.currencies.filter((c) => c.enabled).map((c) => c.currency).sort();
   const [selected, setSelected] = useState(saved);
   const [isSaving, setIsSaving] = useState(false);
   const dirty = [...selected].sort().join() !== saved.join();
@@ -131,7 +131,6 @@ function CurrenciesRow({ editable, data, onSave }: {
   const hintFor = (currency: string): string => {
     const current = data.currencies.find((c) => c.currency === currency);
     if (current?.isBase) return 'workspace currency';
-    if (current?.inUse) return 'used by payment links';
     if (!data.selectable.find((s) => s.currency === currency)?.checkoutSupported) return 'links not supported by the payment provider yet';
     return '';
   };
@@ -148,7 +147,7 @@ function CurrenciesRow({ editable, data, onSave }: {
             <div>
               {data.selectable.map(({ currency }) => {
                 const current = data.currencies.find((c) => c.currency === currency);
-                const locked = Boolean(current?.isBase || current?.inUse);
+                const locked = Boolean(current?.isBase);
                 const hint = hintFor(currency);
                 return (
                   <label key={currency} className="check-row">
