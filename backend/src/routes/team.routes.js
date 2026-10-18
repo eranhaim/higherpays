@@ -8,8 +8,10 @@ const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { revokeUserSessions } = require('../auth/sessions');
-const { hashPassword, validatePasswordStrength } = require('../auth/passwords');
-const { PERMISSIONS, ROLE_PERMISSIONS, validatePermissions, hasPermission } = require('../auth/permissions');
+const { hashPassword, validatePasswordStrength, PASSWORD_RULE } = require('../auth/passwords');
+const {
+  ROLE_PERMISSIONS, hasPermission, validateGrantablePermissions, seatOutranksCaller,
+} = require('../auth/permissions');
 const { isStr, badRequest } = require('../util/validate');
 const currencies = require('../services/currencies.service');
 
@@ -21,12 +23,12 @@ const PLAIN_MEMBER_TYPES = new Set(['workspace_admin', 'member']);
 // profile stays either way, so sales attribution does not move (migration 029).
 const AGENT_SEAT_ROLES = new Set(['agent', 'workspace_admin']);
 
-function canGrantAllPermissions(req) {
-  return req.access.role === 'workspace_owner' || req.access.role === 'workspace_admin';
-}
-
-function validateMemberPermissions(req, permissions) {
-  return validatePermissions(permissions, canGrantAllPermissions(req) ? PERMISSIONS : [...req.access.permissions]);
+// A custom role is a named permission set of this workspace; system roles are
+// never offered here, they are the seat's structural type.
+async function findCustomRole(client, workspaceId, key) {
+  return (await client.query(
+    'SELECT key, name, permissions FROM workspace_roles WHERE workspace_id=$1 AND key=$2 AND NOT is_system',
+    [workspaceId, key])).rows[0];
 }
 
 function roleName(role, labels) {
@@ -47,19 +49,28 @@ function dateRange(query) {
 
 // POST / — create a login and active workspace seat without email delivery.
 router.post('/', requirePermission('team.manage'), asyncHandler(async (req, res) => {
-  const { email, password, fullName, role = 'member', permissions } = req.body || {};
+  const { email, password, fullName, role = 'member', permissions, customRoleKey } = req.body || {};
   if (!isStr(email, 100) || !email.includes('@')) return badRequest(res, 'a valid email is required', ['email']);
-  if (!isStr(password, 200) || validatePasswordStrength(password)) return badRequest(res, 'password is not strong enough', ['password']);
+  if (!isStr(password, 200) || validatePasswordStrength(password)) return badRequest(res, PASSWORD_RULE, ['password']);
   if (!PLAIN_MEMBER_TYPES.has(role)) {
     return badRequest(res, 'role is not available for direct member creation', ['role']);
   }
-  const seatPermissions = permissions ?? [...(ROLE_PERMISSIONS[role] || [])];
-  const permissionError = validateMemberPermissions(req, seatPermissions);
-  if (permissionError) return res.status(400).json({ error: permissionError });
+  if (customRoleKey != null && permissions != null) {
+    return badRequest(res, 'send a custom role or a permission list, not both', ['customRoleKey', 'permissions']);
+  }
 
   const out = await withTransaction(async (client) => {
+    let seatPermissions = permissions ?? [...(ROLE_PERMISSIONS[role] || [])];
+    if (customRoleKey != null) {
+      const customRole = await findCustomRole(client, wid(req), String(customRoleKey));
+      if (!customRole) return { error: 'custom_role_unknown', status: 400 };
+      seatPermissions = customRole.permissions;
+    }
+    const permissionError = validateGrantablePermissions(req.access, seatPermissions);
+    if (permissionError) return { error: permissionError, status: 400 };
+
     const existing = (await client.query('SELECT id FROM users WHERE email=$1', [email])).rows[0];
-    if (existing) return { error: 'user_exists', status: 409 };
+    if (existing) return { error: 'user_exists', status: 409, detail: 'this email already has a HigherPays login, so it cannot be added with a new password' };
 
     const user = (await client.query(
       `INSERT INTO users (email, full_name, password_hash)
@@ -67,16 +78,16 @@ router.post('/', requirePermission('team.manage'), asyncHandler(async (req, res)
       [email, isStr(fullName, 120) ? fullName.trim() : email, await hashPassword(password)]
     )).rows[0];
     await client.query(
-      'INSERT INTO workspace_users (workspace_id, user_id, role, permissions) VALUES ($1,$2,$3,$4)',
-      [wid(req), user.id, role, seatPermissions]
+      'INSERT INTO workspace_users (workspace_id, user_id, role, permissions, custom_role_key) VALUES ($1,$2,$3,$4,$5)',
+      [wid(req), user.id, role, seatPermissions, customRoleKey ?? null]
     );
-    return { userId: user.id, role, permissions: seatPermissions };
+    return { userId: user.id, role, permissions: seatPermissions, customRoleKey: customRoleKey ?? null };
   });
 
-  if (out.error) return res.status(out.status).json({ error: out.error });
+  if (out.error) return res.status(out.status).json({ error: out.error, detail: out.detail });
   await audit({
     workspaceId: wid(req), actorUserId: uid(req), action: 'team.member.create',
-    entityType: 'user', entityId: out.userId, metadata: { email, role: out.role, permissions: out.permissions },
+    entityType: 'user', entityId: out.userId, metadata: { email, role: out.role, customRoleKey: out.customRoleKey, permissions: out.permissions },
   });
   res.status(201).json(out);
 }));
@@ -128,6 +139,7 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
         GROUP BY p.agent_id, p.account_id
      )
      SELECT wu.user_id, wu.role, wu.permissions, wu.status, wu.created_at,
+            wu.custom_role_key, cr.name AS custom_role_name,
             u.full_name AS name, u.email, u.is_platform_admin,
             w.account_label, w.agent_label,
             ag.id AS agent_id, ac.id AS account_id, ac.name AS account_name,
@@ -147,6 +159,7 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
        FROM workspace_users wu
        JOIN users u ON u.id = wu.user_id
        JOIN workspaces w ON w.id = wu.workspace_id
+       LEFT JOIN workspace_roles cr ON cr.workspace_id = wu.workspace_id AND cr.key = wu.custom_role_key
        LEFT JOIN agents ag ON ag.workspace_id = wu.workspace_id AND ag.user_id = wu.user_id
        LEFT JOIN accounts ac ON ac.workspace_id = wu.workspace_id AND ac.user_id = wu.user_id
        LEFT JOIN customer_paid agent_sales ON agent_sales.agent_id = ag.id
@@ -159,6 +172,7 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
     members: rows.map((r) => ({
       userId: r.user_id, name: r.name, email: r.email, role: r.role,
       roleName: roleName(r.role, r), permissions: r.permissions || [], status: r.status,
+      customRoleKey: r.custom_role_key, customRoleName: r.custom_role_name,
       agentId: r.agent_id, accountId: r.account_id, accountName: r.account_name, accountStatus: r.account_status,
       isSelf: r.user_id === uid(req), joinedAt: r.created_at,
       ...(managesTeam ? { isPlatformAdmin: !!r.is_platform_admin } : {}),
@@ -178,7 +192,7 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
 
 async function targetForRoleChange(client, workspaceId, userId) {
   return (await client.query(
-    `SELECT wu.role, wu.status, wu.permissions, u.full_name, u.email, u.is_platform_admin,
+    `SELECT wu.role, wu.status, wu.permissions, wu.custom_role_key, u.full_name, u.email, u.is_platform_admin,
             EXISTS (SELECT 1 FROM agents WHERE workspace_id=wu.workspace_id AND user_id=wu.user_id) AS has_agent,
             EXISTS (SELECT 1 FROM accounts WHERE workspace_id=wu.workspace_id AND user_id=wu.user_id) AS has_account
        FROM workspace_users wu
@@ -197,8 +211,9 @@ router.patch('/:userId', requirePermission('team.manage'), asyncHandler(async (r
   const hasEmail = Object.hasOwn(body, 'email');
   const hasRole = Object.hasOwn(body, 'role');
   const hasPermissions = Object.hasOwn(body, 'permissions');
+  const hasCustomRole = Object.hasOwn(body, 'customRoleKey');
   const hasPassword = Object.hasOwn(body, 'password');
-  if (!hasName && !hasEmail && !hasRole && !hasPermissions && !hasPassword) {
+  if (!hasName && !hasEmail && !hasRole && !hasPermissions && !hasCustomRole && !hasPassword) {
     return res.status(400).json({ error: 'no_changes' });
   }
   if (hasName && !isStr(body.fullName, 120)) return badRequest(res, 'fullName is required', ['fullName']);
@@ -206,14 +221,17 @@ router.patch('/:userId', requirePermission('team.manage'), asyncHandler(async (r
   if (hasPassword) {
     if (req.user.actorId) return res.status(403).json({ error: 'impersonation_password_forbidden' });
     if (body.password !== body.passwordConfirm) return badRequest(res, 'password confirmation does not match', ['passwordConfirm']);
-    if (validatePasswordStrength(body.password)) return badRequest(res, 'password is not strong enough', ['password']);
+    if (validatePasswordStrength(body.password)) return badRequest(res, PASSWORD_RULE, ['password']);
     const editor = (await query('SELECT two_factor_enabled FROM users WHERE id=$1', [uid(req)])).rows[0];
     if (editor?.two_factor_enabled && !req.user.twoFactorAuthenticated) {
       return res.status(403).json({ error: 'two_factor_authentication_required' });
     }
   }
+  if (hasCustomRole && hasPermissions) {
+    return badRequest(res, 'send a custom role or a permission list, not both', ['customRoleKey', 'permissions']);
+  }
   if (hasPermissions) {
-    const permissionError = validateMemberPermissions(req, body.permissions);
+    const permissionError = validateGrantablePermissions(req.access, body.permissions);
     if (permissionError) return res.status(400).json({ error: permissionError });
   }
 
@@ -222,6 +240,7 @@ router.patch('/:userId', requirePermission('team.manage'), asyncHandler(async (r
     if (!target) return { error: 'not_found', status: 404 };
     if (target.role === 'workspace_owner') return { error: 'owner_role_fixed', status: 409 };
     if (target.is_platform_admin) return { error: 'platform_admin_role_fixed', status: 409 };
+    if (seatOutranksCaller(req.access, target)) return { error: 'seat_outranks_caller', status: 403 };
 
     let nextRole = target.role;
     if (hasRole) {
@@ -230,12 +249,23 @@ router.patch('/:userId', requirePermission('team.manage'), asyncHandler(async (r
       if (!allowedRoles.has(body.role)) return { error: 'role_not_available', status: 400 };
       nextRole = body.role;
     }
-    const nextPermissions = hasPermissions
-      ? body.permissions
-      : hasRole && (nextRole === 'workspace_admin' || nextRole === 'agent')
-        ? [...ROLE_PERMISSIONS[nextRole]]
-        : target.permissions;
-    const permissionError = validateMemberPermissions(req, nextPermissions);
+    let nextCustomRoleKey = target.custom_role_key;
+    let nextPermissions = target.permissions;
+    if (hasCustomRole && body.customRoleKey != null) {
+      const customRole = await findCustomRole(client, wid(req), String(body.customRoleKey));
+      if (!customRole) return { error: 'custom_role_unknown', status: 400 };
+      nextCustomRoleKey = customRole.key;
+      nextPermissions = customRole.permissions;
+    } else if (hasPermissions) {
+      nextCustomRoleKey = null;
+      nextPermissions = body.permissions;
+    } else if (hasRole && (nextRole === 'workspace_admin' || nextRole === 'agent')) {
+      nextCustomRoleKey = null;
+      nextPermissions = [...ROLE_PERMISSIONS[nextRole]];
+    } else if (hasCustomRole) {
+      nextCustomRoleKey = null;
+    }
+    const permissionError = validateGrantablePermissions(req.access, nextPermissions);
     if (permissionError) return { error: permissionError, status: 400 };
 
     if (hasEmail) {
@@ -253,14 +283,15 @@ router.patch('/:userId', requirePermission('team.manage'), asyncHandler(async (r
         hasEmail, hasEmail ? body.email.trim() : null, hasPassword,
         hasPassword ? await hashPassword(body.password) : null]);
     await client.query(
-      'UPDATE workspace_users SET role=$3, permissions=$4 WHERE workspace_id=$1 AND user_id=$2',
-      [wid(req), req.params.userId, nextRole, nextPermissions]);
+      'UPDATE workspace_users SET role=$3, permissions=$4, custom_role_key=$5 WHERE workspace_id=$1 AND user_id=$2',
+      [wid(req), req.params.userId, nextRole, nextPermissions, nextCustomRoleKey]);
     return {
-      before: { name: target.full_name, email: target.email, role: target.role, permissions: target.permissions },
+      before: { name: target.full_name, email: target.email, role: target.role, customRoleKey: target.custom_role_key, permissions: target.permissions },
       after: {
         name: hasName ? body.fullName.trim() : target.full_name,
         email: hasEmail ? body.email.trim() : target.email,
         role: nextRole,
+        customRoleKey: nextCustomRoleKey,
         permissions: nextPermissions,
       },
       passwordSet: hasPassword,
@@ -322,9 +353,10 @@ router.patch('/:userId/status', requirePermission('team.manage'), asyncHandler(a
 
   const out = await withTransaction(async (c) => {
     const target = (await c.query(
-      'SELECT role, status FROM workspace_users WHERE workspace_id=$1 AND user_id=$2', [wid(req), req.params.userId])).rows[0];
+      'SELECT role, status, permissions FROM workspace_users WHERE workspace_id=$1 AND user_id=$2', [wid(req), req.params.userId])).rows[0];
     if (!target) return { err: 'not_found', code: 404 };
     if (target.role === 'workspace_owner') return { err: 'transfer_owner', code: 409 };
+    if (seatOutranksCaller(req.access, target)) return { err: 'seat_outranks_caller', code: 403 };
     await c.query('UPDATE workspace_users SET status=$3 WHERE workspace_id=$1 AND user_id=$2', [wid(req), req.params.userId, status]);
     return { target };
   });
@@ -345,9 +377,10 @@ router.delete('/:userId', requirePermission('team.manage'), asyncHandler(async (
   if (req.params.userId === uid(req)) return res.status(403).json({ error: 'cannot_remove_self' });
   const out = await withTransaction(async (c) => {
     const target = (await c.query(
-      'SELECT role, status FROM workspace_users WHERE workspace_id=$1 AND user_id=$2', [wid(req), req.params.userId])).rows[0];
+      'SELECT role, status, permissions FROM workspace_users WHERE workspace_id=$1 AND user_id=$2', [wid(req), req.params.userId])).rows[0];
     if (!target) return { err: 'not_found', code: 404 };
     if (target.role === 'workspace_owner') return { err: 'transfer_owner', code: 409 };
+    if (seatOutranksCaller(req.access, target)) return { err: 'seat_outranks_caller', code: 403 };
     const profile = (await c.query(
       `SELECT 1 FROM agents WHERE workspace_id=$1 AND user_id=$2
        UNION ALL SELECT 1 FROM accounts WHERE workspace_id=$1 AND user_id=$2 LIMIT 1`, [wid(req), req.params.userId])).rows[0];

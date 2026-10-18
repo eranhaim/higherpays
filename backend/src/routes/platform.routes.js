@@ -14,7 +14,7 @@ const { ensureWorkspaceRoles } = require('../services/workspaceRoles');
 const { ROLE_PERMISSIONS } = require('../auth/permissions');
 const { isStr, badRequest } = require('../util/validate');
 const { sendEmail } = require('../util/email');
-const { validatePasswordStrength } = require('../auth/passwords');
+const { validatePasswordStrength, PASSWORD_RULE } = require('../auth/passwords');
 const { grantWorkspaceRole } = require('../services/people');
 const { status: vocab } = require('../schema/entities');
 
@@ -464,7 +464,7 @@ router.post('/agencies', asyncHandler(async (req, res) => {
 
   const setsPasswordNow = b.adminPassword != null;
   const passwordError = setsPasswordNow ? validatePasswordStrength(b.adminPassword) : null;
-  if (passwordError) return badRequest(res, passwordError, ['adminPassword']);
+  if (passwordError) return badRequest(res, PASSWORD_RULE, ['adminPassword']);
 
   const token = crypto.randomBytes(32).toString('base64url');
   const out = await withTransaction(async (c) => {

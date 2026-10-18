@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const { ROLE_PERMISSIONS } = require('../auth/permissions');
 
 const SYSTEM_ROLE_NAMES = {
@@ -31,7 +32,12 @@ async function ensureWorkspaceRoles(client, workspaceId) {
   }
 }
 
+function newCustomRoleKey() {
+  return `custom_${crypto.randomBytes(5).toString('hex')}`;
+}
+
 module.exports = {
+  newCustomRoleKey,
   SYSTEM_ROLE_NAMES,
   PROFILE_ROLES,
   ensureWorkspaceRoles,

@@ -221,12 +221,16 @@ const WorkspaceUser = entity('workspace_users', {
     userId:      uuid().references('users').notNull(),
     role:        text().notNull(),
     permissions: textArray().notNull().default("'{}'"),
+    // The custom role this seat follows; NULL when its permissions are its own.
+    customRoleKey: text(),
     status:      enumOf(ACCESS_STATUS).notNull().default("'active'"),
     platformGranted: bool().notNull().default('false'),
   },
   primaryKey: ['workspaceId', 'userId'],
   foreignKeys: [
     { columns: ['workspaceId', 'role'], table: 'workspace_roles',
+      references: ['workspaceId', 'key'], onDelete: 'RESTRICT' },
+    { columns: ['workspaceId', 'customRoleKey'], table: 'workspace_roles',
       references: ['workspaceId', 'key'], onDelete: 'RESTRICT' },
   ],
   // Accounts and agents point at this membership so their business records
