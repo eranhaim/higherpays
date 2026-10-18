@@ -563,7 +563,7 @@ export default function AgencyPage() {
           canEditCommission={canEditPay}
           canEditAccess={canManageMembers}
           onClose={() => setEditing(null)}
-          onSubmit={async ({ values, accountIds, access }) => {
+          onSubmit={async ({ values, accountIds, access, role }) => {
             const target = editing;
             await data.updateAgent(target.agentId as string, {
               fullName: values.fullName,
@@ -575,6 +575,7 @@ export default function AgencyPage() {
               editingAgent.accounts.map((account) => account.id),
               accountIds,
             );
+            if (canManageMembers && role !== target.role) await data.updateMember(target.userId, { role });
             if (canManageMembers) await applyAccess(target, access);
             setEditing(null);
             toast('Saved.');

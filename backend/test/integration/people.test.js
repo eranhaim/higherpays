@@ -222,3 +222,35 @@ test('the owner seat cannot be suspended or removed, and a member cannot manage 
     .set(t.authHeaders).send({ status: 'suspended' }).expect(200);
   await request(app).get(`/workspaces/${t.workspaceId}/team`).set(admin2.headers).expect(401);
 });
+
+test('an agent can be raised to admin and lowered again without losing the agent profile', async () => {
+  const t = await createTenant(app);
+  const agent = await createAgent(app, t);
+  const team = `/workspaces/${t.workspaceId}/team/${agent.userId}`;
+
+  await request(app).patch(team).set(t.authHeaders).send({ role: 'workspace_admin' }).expect(200);
+  const raised = (await pool.query(
+    'SELECT role, permissions FROM workspace_users WHERE workspace_id=$1 AND user_id=$2', [t.workspaceId, agent.userId])).rows[0];
+  assert.equal(raised.role, 'workspace_admin');
+  assert.ok(raised.permissions.includes('team.manage'));
+  // Raised, they can manage the team; before, an agent could not.
+  await request(app).get(`/workspaces/${t.workspaceId}/team`).set(agent.headers).expect(200);
+
+  await request(app).patch(team).set(t.authHeaders).send({ role: 'agent' }).expect(200);
+  const lowered = (await pool.query(
+    'SELECT role, permissions FROM workspace_users WHERE workspace_id=$1 AND user_id=$2', [t.workspaceId, agent.userId])).rows[0];
+  assert.equal(lowered.role, 'agent');
+  assert.ok(!lowered.permissions.includes('team.manage'));
+  const profile = (await pool.query('SELECT id FROM agents WHERE id=$1', [agent.id])).rowCount;
+  assert.equal(profile, 1);
+});
+
+test('an agent cannot be turned into a plain member, and a creator keeps a fixed role', async () => {
+  const t = await createTenant(app);
+  const agent = await createAgent(app, t);
+  const account = await createAccount(app, t);
+  await request(app).patch(`/workspaces/${t.workspaceId}/team/${agent.userId}`).set(t.authHeaders)
+    .send({ role: 'member' }).expect(400);
+  await request(app).patch(`/workspaces/${t.workspaceId}/team/${account.ownerUserId}`).set(t.authHeaders)
+    .send({ role: 'workspace_admin' }).expect(409);
+});

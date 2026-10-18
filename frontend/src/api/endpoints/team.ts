@@ -53,7 +53,7 @@ export const teamApi = {
     api.patch<{ userId: string; status: MemberStatus }>(workspacePath(`/team/${userId}/status`), { status }),
 
   update: (userId: string, input: {
-    fullName?: string; email?: string; role?: 'workspace_admin' | 'member';
+    fullName?: string; email?: string; role?: 'agent' | 'workspace_admin' | 'member';
     permissions?: Permission[]; password?: string; passwordConfirm?: string;
   }) => api.patch<Member>(workspacePath(`/team/${userId}`), input),
 

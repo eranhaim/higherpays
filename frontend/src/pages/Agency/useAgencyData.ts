@@ -11,7 +11,7 @@ import type { Permission } from '../../rbac/permissions';
 export interface MemberInput {
   fullName?: string;
   email?: string;
-  role?: 'workspace_admin' | 'member';
+  role?: 'agent' | 'workspace_admin' | 'member';
   permissions?: Permission[];
   password?: string;
   passwordConfirm?: string;

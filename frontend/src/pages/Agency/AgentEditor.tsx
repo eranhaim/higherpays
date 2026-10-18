@@ -20,6 +20,8 @@ export interface AgentFormSubmit {
   values: AgentFormValues;
   accountIds: string[];
   access: Exclude<MemberStatus, 'removed'>;
+  /** The sign-in role. Admin adds team and workspace management; the agent profile stays. */
+  role: 'agent' | 'workspace_admin';
 }
 
 /**
@@ -46,6 +48,7 @@ export function AgentEditorModal({ member, agent, accounts, canEditCommission, c
   );
   const [assigned, setAssigned] = useState<string[]>(agent?.accounts.map((account) => account.id) ?? []);
   const [access, setAccess] = useState<Exclude<MemberStatus, 'removed'>>(member?.status === 'suspended' ? 'suspended' : 'active');
+  const [role, setRole] = useState<'agent' | 'workspace_admin'>(member?.role === 'workspace_admin' ? 'workspace_admin' : 'agent');
   const [isSaving, setIsSaving] = useState(false);
   const commission = canEditCommission ? parsePct(commissionText) : 0;
   const creating = !agent;
@@ -66,6 +69,7 @@ export function AgentEditorModal({ member, agent, accounts, canEditCommission, c
         },
         accountIds: assigned,
         access,
+        role,
       });
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not save.');
@@ -135,6 +139,12 @@ export function AgentEditorModal({ member, agent, accounts, canEditCommission, c
               ))}
           </div>
         </div>
+        {!creating && canEditAccess && (
+          <Select id="agent-role" label="Sign-in role" value={role} onChange={(next) => setRole(next as 'agent' | 'workspace_admin')}>
+            <option value="agent">{labels.agent}</option>
+            <option value="workspace_admin">Admin</option>
+          </Select>
+        )}
         {!creating && canEditAccess && <AccessField value={access} onChange={setAccess} />}
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>

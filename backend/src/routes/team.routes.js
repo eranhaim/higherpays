@@ -17,6 +17,9 @@ const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
 
 const PLAIN_MEMBER_TYPES = new Set(['workspace_admin', 'member']);
+// An agent's sign-in role may be raised to admin and lowered again. The agent
+// profile stays either way, so sales attribution does not move (migration 029).
+const AGENT_SEAT_ROLES = new Set(['agent', 'workspace_admin']);
 
 function canGrantAllPermissions(req) {
   return req.access.role === 'workspace_owner' || req.access.role === 'workspace_admin';
@@ -222,14 +225,15 @@ router.patch('/:userId', requirePermission('team.manage'), asyncHandler(async (r
 
     let nextRole = target.role;
     if (hasRole) {
-      if (!PLAIN_MEMBER_TYPES.has(body.role)) return { error: 'role_not_available', status: 400 };
-      if (target.has_agent || target.has_account) return { error: 'profile_role_fixed', status: 409 };
+      if (target.has_account) return { error: 'profile_role_fixed', status: 409 };
+      const allowedRoles = target.has_agent ? AGENT_SEAT_ROLES : PLAIN_MEMBER_TYPES;
+      if (!allowedRoles.has(body.role)) return { error: 'role_not_available', status: 400 };
       nextRole = body.role;
     }
     const nextPermissions = hasPermissions
       ? body.permissions
-      : hasRole && nextRole === 'workspace_admin'
-        ? [...ROLE_PERMISSIONS.workspace_admin]
+      : hasRole && (nextRole === 'workspace_admin' || nextRole === 'agent')
+        ? [...ROLE_PERMISSIONS[nextRole]]
         : target.permissions;
     const permissionError = validateMemberPermissions(req, nextPermissions);
     if (permissionError) return { error: permissionError, status: 400 };
