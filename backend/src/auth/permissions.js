@@ -107,6 +107,13 @@ function validateGrantablePermissions(access, permissions) {
   return validatePermissions(permissions, grantable);
 }
 
+// An admin seat can grant every permission whatever list it was created with,
+// so only an owner or admin may make one. Otherwise a team manager could
+// create an "admin" with a short list and use it to reach the rest.
+function canGrantRole(access, role) {
+  return !FULL_ACCESS_ROLES.has(role) || FULL_ACCESS_ROLES.has(access.role);
+}
+
 // A seat outranks the caller when it is an owner or admin, or holds any
 // permission the caller lacks. Such a seat is not theirs to edit, suspend or
 // reset, or a team manager could take over the admin's login.
@@ -119,5 +126,5 @@ function seatOutranksCaller(access, seat) {
 module.exports = {
   PERMISSIONS, PERMISSION_DEPENDENCIES, ROLE_PERMISSIONS,
   WORKSPACE_ROLE: status.WORKSPACE_ROLE, can, hasPermission, validatePermissions,
-  validateGrantablePermissions, seatOutranksCaller,
-};
+    validateGrantablePermissions, seatOutranksCaller, canGrantRole,
+  };

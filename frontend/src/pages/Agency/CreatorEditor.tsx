@@ -2,14 +2,16 @@ import { useState } from 'react';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
-import { Select } from '../../components/ui';
+import { SearchPicker, Select } from '../../components/ui';
 import { COUNTRIES } from '../../lib/countries';
 import {
-  type Account, type CreateAccountInput, type Member, type MemberStatus,
-  type PayModel, type UpdateAccountInput,
+  type Account, type Agent, type CreateAccountInput, type Member, type MemberStatus,
+  type PayModel, type RoleDefinition, type UpdateAccountInput,
 } from '../../api/endpoints';
 import { useAccountDetail } from './useAgencyData';
 import { AccessField } from './fields';
+import { PermissionsField } from './PermissionsField';
+import { stateFromMember, type PermissionState } from './permissionState';
 import { parsePct } from './percent';
 
 /**
@@ -65,36 +67,29 @@ function PayFields({ idPrefix, label, model, setModel, splitText, setSplitText, 
 }
 
 function AgentPicker({ agents, assigned, setAssigned }: {
-  agents: Array<{ id: string; name: string }>;
+  agents: Agent[];
   assigned: string[];
   setAssigned: (next: string[]) => void;
 }) {
   const { labels } = useCurrentSession();
   return (
-    <div className="field" role="group" aria-labelledby="creator-agents-label">
-      <div className="field-label" id="creator-agents-label">Assigned {labels.agents.toLowerCase()}</div>
-      <p className="sub">An assigned {labels.agent.toLowerCase()} can create links for this {labels.account.toLowerCase()} and sees its payments.</p>
-      <div className="check-list">
-        {agents.length === 0 ? <span className="sub">No {labels.agents.toLowerCase()} in this workspace yet.</span>
-          : agents.map((agent) => (
-            <label key={agent.id} className="check-row">
-              <input
-                type="checkbox" checked={assigned.includes(agent.id)}
-                onChange={(event) => setAssigned(event.target.checked
-                  ? [...assigned, agent.id]
-                  : assigned.filter((id) => id !== agent.id))}
-              />
-              <span>{agent.name}</span>
-            </label>
-          ))}
-      </div>
-    </div>
+    <SearchPicker
+      label={`Assigned ${labels.agents.toLowerCase()}`}
+      hint={`An assigned ${labels.agent.toLowerCase()} can create links for this ${labels.account.toLowerCase()} and sees its payments.`}
+      items={agents.map((agent) => ({
+        id: agent.id,
+        name: agent.name,
+        hint: `${agent.status === 'suspended' ? 'Suspended, ' : ''}${agent.accountsAssigned} ${labels.accounts.toLowerCase()} assigned`,
+      }))}
+      selected={assigned} onChange={setAssigned} noun={labels.agents.toLowerCase()}
+      emptyText={`No ${labels.agents.toLowerCase()} in this workspace yet.`}
+    />
   );
 }
 
 /** A creator and the login of the person who owns it, in one form. */
 export function CreateCreatorModal({ agents, onClose, onSubmit }: {
-  agents: Array<{ id: string; name: string }>;
+  agents: Agent[];
   onClose: () => void;
   onSubmit: (input: CreateAccountInput, agentIds: string[]) => Promise<void>;
 }) {
@@ -176,6 +171,7 @@ export interface EditCreatorSubmit {
   account: UpdateAccountInput;
   agentIds: string[];
   access: Exclude<MemberStatus, 'removed'>;
+  permissions: PermissionState;
 }
 
 /**
@@ -183,10 +179,11 @@ export interface EditCreatorSubmit {
  * paid, who works it, and whether the owner can sign in — who is assigned is
  * what decides what an agent sees, so it belongs with the rest.
  */
-export function EditCreatorModal({ member, account, agents, canEditPay, canEditAccess, onClose, onSubmit }: {
+export function EditCreatorModal({ member, account, agents, roles, canEditPay, canEditAccess, onClose, onSubmit }: {
   member: Member;
   account: Account | undefined;
-  agents: Array<{ id: string; name: string }>;
+  agents: Agent[];
+  roles: RoleDefinition[];
   canEditPay: boolean;
   canEditAccess: boolean;
   onClose: () => void;
@@ -204,6 +201,7 @@ export function EditCreatorModal({ member, account, agents, canEditPay, canEditA
               member={member}
               account={detail.data}
               agents={agents}
+              roles={roles}
               assigned={detail.data.agents?.map((item) => item.agentId) ?? []}
               canEditPay={canEditPay}
               canEditAccess={canEditAccess}
@@ -217,10 +215,11 @@ export function EditCreatorModal({ member, account, agents, canEditPay, canEditA
 
 // Mounted only once the roster is known, so every field seeds from a prop
 // instead of syncing itself in an effect.
-function EditCreatorForm({ member, account, agents, assigned: initialAssigned, canEditPay, canEditAccess, onClose, onSubmit }: {
+function EditCreatorForm({ member, account, agents, roles, assigned: initialAssigned, canEditPay, canEditAccess, onClose, onSubmit }: {
   member: Member;
   account: Account;
-  agents: Array<{ id: string; name: string }>;
+  agents: Agent[];
+  roles: RoleDefinition[];
   assigned: string[];
   canEditPay: boolean;
   canEditAccess: boolean;
@@ -235,6 +234,7 @@ function EditCreatorForm({ member, account, agents, assigned: initialAssigned, c
   const [salaryText, setSalaryText] = useState(String(account.salaryAmount ?? 0));
   const [assigned, setAssigned] = useState(initialAssigned);
   const [access, setAccess] = useState<Exclude<MemberStatus, 'removed'>>(member.status === 'suspended' ? 'suspended' : 'active');
+  const [permissions, setPermissions] = useState<PermissionState>(stateFromMember(member) as PermissionState);
   const [isSaving, setIsSaving] = useState(false);
   const split = parsePct(splitText);
   const splitInvalid = canEditPay && payModel === 'share' && Number.isNaN(split);
@@ -258,6 +258,7 @@ function EditCreatorForm({ member, account, agents, assigned: initialAssigned, c
         },
         agentIds: assigned,
         access,
+        permissions,
       });
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not save.');
@@ -294,6 +295,7 @@ function EditCreatorForm({ member, account, agents, assigned: initialAssigned, c
         </>
       )}
       <AgentPicker agents={agents} assigned={assigned} setAssigned={setAssigned} />
+      {canEditAccess && <PermissionsField roles={roles} value={permissions} onChange={setPermissions} />}
       {canEditAccess && <AccessField value={access} onChange={setAccess} />}
       <div className="modal-actions">
         <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>

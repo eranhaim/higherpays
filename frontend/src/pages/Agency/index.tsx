@@ -18,6 +18,8 @@ import { useAgencyData } from './useAgencyData';
 import { CreateCreatorModal, EditCreatorModal } from './CreatorEditor';
 import { AgentEditorModal } from './AgentEditor';
 import { MemberEditorModal } from './MemberEditor';
+import { RolesModal } from './RolesModal';
+import { accessUpdate, permissionChange } from './permissionState';
 
 /** What someone is in the agency. The profile decides it, not the role name. */
 type MemberType = 'owner' | 'admin' | 'creator' | 'agent' | 'member';
@@ -85,6 +87,7 @@ export default function AgencyPage() {
   const canManageMembers = can('team.manage');
   const canManageCreators = can('accounts.manage');
   const canManageAgents = can('agents.manage');
+  const canManageRoles = can('roles.manage');
   const canEditPay = can('revenue.manage');
   // Handing the agency over is the owner's alone, and making someone a
   // HigherPays operator belongs to an existing operator. Both are refused by
@@ -105,10 +108,11 @@ export default function AgencyPage() {
   const salesRange = useMemo(() => rangeFor(period), [period]);
   const data = useAgencyData(salesRange, canManageCreators || canManageAgents);
   const {
-    members, pendingInvites, accounts, agents, isLoading, isError,
+    members, pendingInvites, accounts, agents, roles, isLoading, isError,
   } = data;
 
   const [creating, setCreating] = useState<'member' | 'creator' | 'agent' | null>(null);
+  const [isManagingRoles, setIsManagingRoles] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
   const [confirming, setConfirming] = useState<{ member: Member; status: 'paused' | 'archived' } | null>(null);
   const [removing, setRemoving] = useState<Member | null>(null);
@@ -409,6 +413,7 @@ export default function AgencyPage() {
     <>
       {canManageCreators && <button className="btn ghost" onClick={() => setCreating('creator')}>Add {labels.account.toLowerCase()}</button>}
       {canManageAgents && <button className="btn ghost" onClick={() => setCreating('agent')}>Add {labels.agent.toLowerCase()}</button>}
+      {canManageRoles && <button className="btn ghost" onClick={() => setIsManagingRoles(true)}>Roles</button>}
       {canManageMembers && <button className="btn" onClick={() => setCreating('member')}>Add member</button>}
     </>
   );
@@ -477,8 +482,19 @@ export default function AgencyPage() {
             : canManageMembers ? 'Add the first one from the header.' : undefined}
       />
 
+      {isManagingRoles && (
+        <RolesModal
+          roles={roles}
+          onClose={() => setIsManagingRoles(false)}
+          onCreate={data.createRole}
+          onUpdate={data.updateRole}
+          onDelete={data.deleteRole}
+        />
+      )}
+
       {creating === 'member' && (
         <MemberEditorModal
+          roles={roles}
           canTransferOwner={false}
           canSetPlatformAdmin={false}
           onClose={() => setCreating(null)}
@@ -488,7 +504,9 @@ export default function AgencyPage() {
               password: input.password as string,
               fullName: input.fullName,
               role: input.role ?? 'member',
-              permissions: input.permissions,
+              ...(input.permissions.roleKey
+                ? { customRoleKey: input.permissions.roleKey }
+                : { permissions: input.permissions.permissions }),
             });
             setCreating(null);
             toast('Member added.');
@@ -515,6 +533,7 @@ export default function AgencyPage() {
       {creating === 'agent' && (
         <AgentEditorModal
           accounts={accounts}
+          roles={roles}
           canEditCommission={canEditPay}
           canEditAccess={false}
           onClose={() => setCreating(null)}
@@ -531,14 +550,19 @@ export default function AgencyPage() {
           member={editing}
           account={editingAccount}
           agents={agents}
+          roles={roles}
           canEditPay={canEditPay}
           canEditAccess={canManageMembers}
           onClose={() => setEditing(null)}
-          onSubmit={async ({ account, agentIds, access }) => {
+          onSubmit={async ({ account, agentIds, access, permissions }) => {
             const target = editing;
             await data.updateAccount(target.accountId as string, account);
             await data.setAssignedAgents(target.accountId as string, agentIds);
-            if (canManageMembers) await applyAccess(target, access);
+            if (canManageMembers) {
+              const change = accessUpdate(target, target.role, permissions);
+              if (Object.keys(change).length > 0) await data.updateMember(target.userId, change);
+              await applyAccess(target, access);
+            }
             setEditing(null);
             toast(`${labels.account} updated.`);
           }}
@@ -560,10 +584,11 @@ export default function AgencyPage() {
           member={editing}
           agent={editingAgent}
           accounts={accounts}
+          roles={roles}
           canEditCommission={canEditPay}
           canEditAccess={canManageMembers}
           onClose={() => setEditing(null)}
-          onSubmit={async ({ values, accountIds, access, role }) => {
+          onSubmit={async ({ values, accountIds, access, role, permissions }) => {
             const target = editing;
             await data.updateAgent(target.agentId as string, {
               fullName: values.fullName,
@@ -575,8 +600,11 @@ export default function AgencyPage() {
               editingAgent.accounts.map((account) => account.id),
               accountIds,
             );
-            if (canManageMembers && role !== target.role) await data.updateMember(target.userId, { role });
-            if (canManageMembers) await applyAccess(target, access);
+            if (canManageMembers) {
+              const change = accessUpdate(target, role, permissions);
+              if (Object.keys(change).length > 0) await data.updateMember(target.userId, change);
+              await applyAccess(target, access);
+            }
             setEditing(null);
             toast('Saved.');
           }}
@@ -586,6 +614,7 @@ export default function AgencyPage() {
       {editing && (editingType === 'admin' || editingType === 'member') && (
         <MemberEditorModal
           member={editing}
+          roles={roles}
           canTransferOwner={canTransferOwner && editing.status === 'active'}
           canSetPlatformAdmin={isPlatformAdmin}
           onClose={() => setEditing(null)}
@@ -595,7 +624,10 @@ export default function AgencyPage() {
               fullName: input.fullName,
               email: input.email,
               ...(input.role ? { role: input.role } : {}),
-              permissions: input.permissions,
+              ...permissionChange(
+                { roleKey: target.customRoleKey, permissions: target.permissions },
+                input.permissions,
+              ),
               ...(input.password ? { password: input.password, passwordConfirm: input.passwordConfirm } : {}),
             });
             await applyAccess(target, input.access);

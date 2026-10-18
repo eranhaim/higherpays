@@ -2,10 +2,13 @@ import { useState } from 'react';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
-import { Select } from '../../components/ui';
+import { SearchPicker, Select } from '../../components/ui';
 import { COUNTRIES } from '../../lib/countries';
-import type { Account, Agent, Member, MemberStatus } from '../../api/endpoints';
+import type { Account, Agent, Member, MemberStatus, RoleDefinition } from '../../api/endpoints';
+import { ROLE_PERMISSIONS } from '../../rbac/permissions';
 import { AccessField } from './fields';
+import { PermissionsField } from './PermissionsField';
+import { stateFromMember, type PermissionState } from './permissionState';
 import { parsePct } from './percent';
 
 export interface AgentFormValues {
@@ -22,17 +25,19 @@ export interface AgentFormSubmit {
   access: Exclude<MemberStatus, 'removed'>;
   /** The sign-in role. Admin adds team and workspace management; the agent profile stays. */
   role: 'agent' | 'workspace_admin';
+  permissions: PermissionState;
 }
 
 /**
  * One agent: who they are, what they earn on a sale, which creators they may
  * sell for, and whether they can sign in.
  */
-export function AgentEditorModal({ member, agent, accounts, canEditCommission, canEditAccess, onClose, onSubmit }: {
+export function AgentEditorModal({ member, agent, accounts, roles, canEditCommission, canEditAccess, onClose, onSubmit }: {
   /** Absent while creating: there is no seat yet. */
   member?: Member;
   agent?: Agent;
   accounts: Account[];
+  roles: RoleDefinition[];
   canEditCommission: boolean;
   canEditAccess: boolean;
   onClose: () => void;
@@ -49,6 +54,9 @@ export function AgentEditorModal({ member, agent, accounts, canEditCommission, c
   const [assigned, setAssigned] = useState<string[]>(agent?.accounts.map((account) => account.id) ?? []);
   const [access, setAccess] = useState<Exclude<MemberStatus, 'removed'>>(member?.status === 'suspended' ? 'suspended' : 'active');
   const [role, setRole] = useState<'agent' | 'workspace_admin'>(member?.role === 'workspace_admin' ? 'workspace_admin' : 'agent');
+  const [permissions, setPermissions] = useState<PermissionState>(
+    stateFromMember(member) ?? { roleKey: null, permissions: [...ROLE_PERMISSIONS.agent] },
+  );
   const [isSaving, setIsSaving] = useState(false);
   const commission = canEditCommission ? parsePct(commissionText) : 0;
   const creating = !agent;
@@ -70,6 +78,7 @@ export function AgentEditorModal({ member, agent, accounts, canEditCommission, c
         accountIds: assigned,
         access,
         role,
+        permissions,
       });
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not save.');
@@ -121,30 +130,32 @@ export function AgentEditorModal({ member, agent, accounts, canEditCommission, c
             </div>
           )}
         </div>
-        <div className="field" role="group" aria-labelledby="agent-accounts-label">
-          <div className="field-label" id="agent-accounts-label">Assigned {labels.accounts.toLowerCase()}</div>
-          <p className="sub">An assigned {labels.agent.toLowerCase()} can create links for these {labels.accounts.toLowerCase()}.</p>
-          <div className="check-list">
-            {accounts.length === 0 ? <span className="sub">No {labels.accounts.toLowerCase()} in this workspace yet.</span>
-              : accounts.map((account) => (
-                <label key={account.id} className="check-row">
-                  <input
-                    type="checkbox" checked={assigned.includes(account.id)}
-                    onChange={(event) => setAssigned((prev) => event.target.checked
-                      ? [...prev, account.id]
-                      : prev.filter((id) => id !== account.id))}
-                  />
-                  <span>{account.name}</span>
-                </label>
-              ))}
-          </div>
-        </div>
+        <SearchPicker
+          label={`Assigned ${labels.accounts.toLowerCase()}`}
+          hint={`An assigned ${labels.agent.toLowerCase()} can create links for these ${labels.accounts.toLowerCase()}.`}
+          items={accounts.map((account) => ({
+            id: account.id,
+            name: account.name,
+            hint: `${account.status === 'active' ? 'Active' : account.status === 'paused' ? 'Paused' : 'Archived'}, ${account.agentsAssigned ?? 0} ${labels.agents.toLowerCase()} assigned`,
+          }))}
+          selected={assigned} onChange={setAssigned} noun={labels.accounts.toLowerCase()}
+          emptyText={`No ${labels.accounts.toLowerCase()} in this workspace yet.`}
+        />
         {!creating && canEditAccess && (
-          <Select id="agent-role" label="Sign-in role" value={role} onChange={(next) => setRole(next as 'agent' | 'workspace_admin')}>
+          <Select
+            id="agent-role" label="Sign-in role" value={role}
+            onChange={(next) => {
+              const nextRole = next as 'agent' | 'workspace_admin';
+              setRole(nextRole);
+              // The server resets permissions to the new role's defaults.
+              setPermissions({ roleKey: null, permissions: [...ROLE_PERMISSIONS[nextRole === 'agent' ? 'agent' : 'workspace_admin']] });
+            }}
+          >
             <option value="agent">{labels.agent}</option>
             <option value="workspace_admin">Admin</option>
           </Select>
         )}
+        {!creating && canEditAccess && <PermissionsField roles={roles} value={permissions} onChange={setPermissions} />}
         {!creating && canEditAccess && <AccessField value={access} onChange={setAccess} />}
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>

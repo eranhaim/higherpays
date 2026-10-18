@@ -113,6 +113,7 @@ export default function PaymentsPage() {
   const can = useCan();
   const { labels, user, activeWorkspaceId } = useCurrentSession();
   const { rateCard } = useRateCard();
+  const declineFee = rateCard.declineFee ?? 0;
   const canScope = can('data.view_all');
   const canComplete = can('payments.complete');
   const canReverse = can('revenue.manage');
@@ -195,6 +196,12 @@ export default function PaymentsPage() {
         value={<Money amount={summary?.netProfit ?? 0} currency={summary?.currency} direction="in" emphasis />}
         sub={summary?.feesEstimated ? 'Gross after estimated platform fees' : 'Gross after platform fees'} />,
     }] : []),
+    ...(canScope && declineFee ? [{
+      key: 'declineFees', label: 'Decline fees',
+      card: <StatCard isUnknown={statsUnknown} label="Decline fees"
+        value={<Money amount={(summary?.declinedCount ?? 0) * declineFee} currency={summary?.currency} direction="out" />}
+        sub={`${summary?.declinedCount ?? 0} declined · ${declineFee.toFixed(2)} each`} />,
+    }] : []),
     ...(canViewFlow ? [{
       key: 'checkoutFees', label: 'Checkout-fee revenue',
       card: <StatCard isUnknown={statsUnknown} label="Checkout-fee revenue"
@@ -266,7 +273,12 @@ export default function PaymentsPage() {
     },
     ...(canScope ? [{
       key: 'fee', header: 'Fee',
-      render: (p: Payment) => p.platformFee == null ? '—' : (
+      render: (p: Payment) => p.status === 'failed' && declineFee ? (
+        <>
+          <Money amount={declineFee} currency={p.currency} direction="out" />
+          <span className="sub inline"> · decline fee</span>
+        </>
+      ) : p.platformFee == null ? '—' : (
         <>
           <Money amount={p.platformFee} currency={p.currency} direction="out" />
           {p.feeIsEstimate && <span className="sub inline" title={ESTIMATED_FEE_NOTE}> · estimated</span>}

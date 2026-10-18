@@ -1128,3 +1128,39 @@ label.setrow { cursor: pointer; }
   .side-foot .user-name { font-size: 0; }
   .side-foot .rolebadge { font-size: var(--text-xs); }
 }
+
+/* Search picker: pick many from a long list. Chips on top, filtered rows below. */
+.picker { gap: var(--space-2); }
+.picker-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); list-style: none; margin: 0; padding: 0; }
+.picker-chip {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border: 1px solid var(--brand-edge); border-radius: var(--radius);
+  background: var(--brand-fill); font-size: var(--text-sm);
+}
+.picker-chip button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border: 0; border-radius: var(--radius);
+  background: transparent; color: var(--muted); font: inherit; font-size: var(--text-lg); cursor: pointer;
+}
+.picker-chip button:hover { color: var(--text); background: var(--brand-ring); }
+.picker-chip button:focus-visible, .picker-list:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
+.picker-count, .picker-empty { margin: 0; }
+.picker-list {
+  list-style: none; margin: 0; padding: 0; max-height: 264px; overflow-y: auto;
+  border: 1px solid var(--rule); border-radius: var(--radius); background: var(--surface-2);
+}
+.picker-row {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  min-height: 44px; padding: var(--space-2) var(--space-3); cursor: pointer;
+  border-bottom: 1px solid var(--rule-soft);
+}
+.picker-row:last-child { border-bottom: 0; }
+.picker-row:hover { background: var(--brand-wash); }
+.picker-row[aria-selected="true"] { background: var(--brand-fill); }
+.picker-row.active { outline: 2px solid var(--brand); outline-offset: -2px; }
+.picker-text { display: flex; flex-direction: column; min-width: 0; }
+.picker-name { font-size: var(--text-base); overflow-wrap: anywhere; }
+.picker-hint { font-size: var(--text-sm); }
+.picker-action { flex: none; font-size: var(--text-sm); font-weight: 600; color: var(--brand); }
+.picker-row[aria-selected="true"] .picker-action { color: var(--muted); }

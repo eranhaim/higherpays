@@ -210,6 +210,7 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
               COALESCE(SUM(COALESCE(distributable, 0)) FILTER (WHERE status = 'paid' AND review_reason IS NULL), 0) AS after_fees,
               COUNT(*) FILTER (WHERE provider_status = 'approved')::int AS approved_payments,
               COUNT(*) FILTER (WHERE provider_status IN ('pending', 'approved', 'declined'))::int AS attempts,
+              COUNT(*) FILTER (WHERE provider_status = 'declined')::int AS declined_count,
               COUNT(*) FILTER (WHERE status = 'paid' AND review_reason IS NULL AND category_id IS NULL)::int AS details_needed,
               COUNT(*) FILTER (
                 WHERE status = 'paid' AND review_reason IS NULL AND fee_is_estimate IS DISTINCT FROM false
@@ -241,6 +242,7 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
       platformFees,
       netProfit: grossContent - platformFees,
       feesEstimated: out.row.estimated_fee_sales > 0,
+      declinedCount: out.row.declined_count,
     } : { afterFees }),
     approvedPayments: out.row.approved_payments,
     attempts: out.row.attempts,

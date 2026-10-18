@@ -14,6 +14,9 @@ export interface Member {
   role: WorkspaceRole;
   roleName: string;
   permissions: Permission[];
+  /** The custom role this seat follows; null when its permissions are its own. */
+  customRoleKey: string | null;
+  customRoleName: string | null;
   status: MemberStatus;
   agentId: string | null;
   accountId: string | null;
@@ -35,7 +38,10 @@ export interface Member {
 }
 
 export const teamApi = {
-  create: (input: { email: string; password: string; fullName?: string; role: 'workspace_admin' | 'member'; permissions: Permission[] }) =>
+  create: (input: {
+    email: string; password: string; fullName?: string; role: 'workspace_admin' | 'member';
+    permissions?: Permission[]; customRoleKey?: string;
+  }) =>
     api.post<{ userId: string; role: string }>(workspacePath('/team'), input),
 
   /** currency is the one currency each member's sales total is in. */
@@ -54,7 +60,7 @@ export const teamApi = {
 
   update: (userId: string, input: {
     fullName?: string; email?: string; role?: 'agent' | 'workspace_admin' | 'member';
-    permissions?: Permission[]; password?: string; passwordConfirm?: string;
+    permissions?: Permission[]; customRoleKey?: string | null; password?: string; passwordConfirm?: string;
   }) => api.patch<Member>(workspacePath(`/team/${userId}`), input),
 
   transferOwner: (userId: string) =>

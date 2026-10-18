@@ -10,7 +10,7 @@ const { audit } = require('../util/audit');
 const { revokeUserSessions } = require('../auth/sessions');
 const { hashPassword, validatePasswordStrength, PASSWORD_RULE } = require('../auth/passwords');
 const {
-  ROLE_PERMISSIONS, hasPermission, validateGrantablePermissions, seatOutranksCaller,
+  ROLE_PERMISSIONS, hasPermission, validateGrantablePermissions, seatOutranksCaller, canGrantRole,
 } = require('../auth/permissions');
 const { isStr, badRequest } = require('../util/validate');
 const currencies = require('../services/currencies.service');
@@ -58,6 +58,7 @@ router.post('/', requirePermission('team.manage'), asyncHandler(async (req, res)
   if (customRoleKey != null && permissions != null) {
     return badRequest(res, 'send a custom role or a permission list, not both', ['customRoleKey', 'permissions']);
   }
+  if (!canGrantRole(req.access, role)) return res.status(403).json({ error: 'role_not_grantable' });
 
   const out = await withTransaction(async (client) => {
     let seatPermissions = permissions ?? [...(ROLE_PERMISSIONS[role] || [])];
@@ -245,6 +246,9 @@ router.patch('/:userId', requirePermission('team.manage'), asyncHandler(async (r
       if (target.has_account) return { error: 'profile_role_fixed', status: 409 };
       const allowedRoles = target.has_agent ? AGENT_SEAT_ROLES : PLAIN_MEMBER_TYPES;
       if (!allowedRoles.has(body.role)) return { error: 'role_not_available', status: 400 };
+      if (body.role !== target.role && !canGrantRole(req.access, body.role)) {
+        return { error: 'role_not_grantable', status: 403 };
+      }
       nextRole = body.role;
     }
     let nextCustomRoleKey = target.custom_role_key;

@@ -250,7 +250,10 @@ async function recordPaymentOutcome(client, workspaceId, params) {
         event: status === 'approved' ? 'payment.paid' : 'payment.failed',
         title: payment.review_reason ? 'Duplicate charge needs review'
           : status === 'approved' ? 'Payment received' : 'Payment declined',
-        body: account ? `${account.account_label}: ${account.name}` : null,
+        body: [
+          account ? `${account.account_label}: ${account.name}` : null,
+          payment.review_reason ? 'Paid twice on a single-use link. The second charge is not counted in sales. Refund it in MantaPay.' : null,
+        ].filter(Boolean).join('. ') || null,
         accountId: link.account_id,
         agentId: link.created_by_agent_id,
         amount: grossValue,

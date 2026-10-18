@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
-import { ROLE_PERMISSION_GROUPS, toggleRolePermission, type Member, type MemberStatus } from '../../api/endpoints';
-import { ROLE_PERMISSIONS, type Permission } from '../../rbac/permissions';
+import { type Member, type MemberStatus, type RoleDefinition } from '../../api/endpoints';
+import { ROLE_PERMISSIONS } from '../../rbac/permissions';
 import { AccessField } from './fields';
+import { PermissionsField } from './PermissionsField';
+import { passwordProblem, type PermissionState } from './permissionState';
 
 export type PlainType = 'workspace_admin' | 'member';
 
@@ -12,7 +14,7 @@ export interface MemberEditorSubmit {
   email: string;
   /** Omitted for a profile-backed seat: the database type is not editable. */
   role?: PlainType;
-  permissions: Permission[];
+  permissions: PermissionState;
   password?: string;
   passwordConfirm?: string;
   access: Exclude<MemberStatus, 'removed'>;
@@ -25,10 +27,11 @@ export interface MemberEditorSubmit {
  * what the rest of the dialog describes.
  */
 export function MemberEditorModal({
-  member, canTransferOwner, canSetPlatformAdmin, onClose, onSubmit, onTransferOwner, onSetPlatformAdmin,
+  member, roles, canTransferOwner, canSetPlatformAdmin, onClose, onSubmit, onTransferOwner, onSetPlatformAdmin,
 }: {
   /** Absent while creating. */
   member?: Member;
+  roles: RoleDefinition[];
   canTransferOwner: boolean;
   canSetPlatformAdmin: boolean;
   onClose: () => void;
@@ -45,23 +48,19 @@ export function MemberEditorModal({
   const [name, setName] = useState(member?.name ?? '');
   const [email, setEmail] = useState(member?.email ?? '');
   const [role, setRole] = useState<PlainType>(member?.role === 'workspace_admin' ? 'workspace_admin' : 'member');
-  const [permissions, setPermissions] = useState<Permission[]>(member?.permissions ?? [...ROLE_PERMISSIONS.member]);
+  const [permissions, setPermissions] = useState<PermissionState>(
+    { roleKey: member?.customRoleKey ?? null, permissions: member?.permissions ?? [...ROLE_PERMISSIONS.member] },
+  );
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
   const [access, setAccess] = useState<Exclude<MemberStatus, 'removed'>>(member?.status === 'suspended' ? 'suspended' : 'active');
-  const [permissionSearch, setPermissionSearch] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isElevating, setIsElevating] = useState(false);
-
-  const term = permissionSearch.trim().toLowerCase();
-  const groups = ROLE_PERMISSION_GROUPS.map((group) => ({
-    ...group,
-    permissions: group.permissions.filter((permission) => !term || permission.label.toLowerCase().includes(term)),
-  })).filter((group) => group.permissions.length);
 
   const submit = async () => {
     if (!email.trim() || !name.trim()) { toast('Name and email are required.'); return; }
     if (creating && !password) { toast('Set a password for the new member.'); return; }
+    if (password && passwordProblem(password)) { toast(passwordProblem(password) as string); return; }
     if (password && password !== passwordConfirm) { toast('The password confirmation does not match.'); return; }
     setIsSaving(true);
     try {
@@ -109,7 +108,7 @@ export function MemberEditorModal({
           onChange={(event) => {
             const next = event.target.value as PlainType;
             setRole(next);
-            setPermissions([...ROLE_PERMISSIONS[next]]);
+            setPermissions({ roleKey: null, permissions: [...ROLE_PERMISSIONS[next]] });
           }}
         >
           {fixedRole ? <option value={fixedRole.value}>{fixedRole.label}</option> : null}
@@ -118,30 +117,7 @@ export function MemberEditorModal({
         </select>
         {fixedRole && <p className="sub">This type comes from the person's profile. Changing it would strand their record, so it is fixed.</p>}
       </div>
-      <div className="field">
-        <label htmlFor="permission-search">Permissions</label>
-        <input
-          id="permission-search" type="search" placeholder="Search permissions"
-          value={permissionSearch} onChange={(event) => setPermissionSearch(event.target.value)}
-        />
-        <div className="check-list" aria-label="Direct permissions">
-          {groups.map((group) => (
-            <div key={group.label}>
-              <div className="field-label">{group.label}</div>
-              {group.permissions.map((permission) => (
-                <label className="check-row" key={permission.key}>
-                  <input
-                    type="checkbox"
-                    checked={permissions.includes(permission.key)}
-                    onChange={() => setPermissions((current) => toggleRolePermission(current, permission.key))}
-                  />
-                  <span>{permission.label}</span>
-                </label>
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
+      <PermissionsField roles={roles} value={permissions} onChange={setPermissions} />
       {!creating && <AccessField value={access} onChange={setAccess} />}
       <div className="field">
         <label htmlFor="member-password">{creating ? 'Password' : 'Set a new password'}</label>

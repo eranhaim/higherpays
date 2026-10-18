@@ -101,7 +101,12 @@ test('a team manager cannot lift a seat above their own level', async () => {
   await request(app).patch(`${team(t)}/${peer.userId}`).set(manager.headers)
     .send({ permissions: ['payments.view', 'settings.view'] }).expect(400);
   await request(app).post(team(t)).set(manager.headers)
-    .send({ email: `adm+${tag()}@test.local`, password: STRONG, role: 'workspace_admin' }).expect(400);
+    .send({ email: `adm+${tag()}@test.local`, password: STRONG, role: 'workspace_admin' }).expect(403);
+  // An admin seat with a short list is still an admin seat, so it is refused too.
+  await request(app).post(team(t)).set(manager.headers)
+    .send({ email: `adm+${tag()}@test.local`, password: STRONG, role: 'workspace_admin', permissions: ['payments.view'] }).expect(403);
+  await request(app).patch(`${team(t)}/${peer.userId}`).set(manager.headers)
+    .send({ role: 'workspace_admin', permissions: ['payments.view'] }).expect(403);
 
   // Cannot touch a seat that holds more, or an admin, or themselves.
   for (const target of [stronger, admin]) {

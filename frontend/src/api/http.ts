@@ -70,12 +70,23 @@ async function send(path: string, opts: HttpOptions): Promise<Response> {
   return res;
 }
 
+// Errors a person can act on. Everything else shows the server's own detail,
+// then its code, so a refusal never reaches the screen as a bare "validation_failed".
+const FRIENDLY_ERRORS: Record<string, string> = {
+  seat_outranks_caller: 'This person has more access than you, so you cannot change them.',
+  permission_not_grantable: 'You can only give permissions that you have yourself.',
+  role_not_grantable: 'Only an owner or admin can make someone an admin.',
+  cannot_edit_self: 'You cannot change your own access.',
+  custom_role_unknown: 'That role no longer exists. Pick another one.',
+  role_name_in_use: 'A role with this name already exists.',
+};
+
 async function errorFrom(res: Response): Promise<HttpError> {
   const raw = await res.text();
   const parsed: unknown = raw ? safeJson(raw) : {};
-  const message =
-    (isObject(parsed) && typeof parsed.error === 'string' && parsed.error) ||
-    `HTTP ${res.status}`;
+  const code = isObject(parsed) && typeof parsed.error === 'string' ? parsed.error : null;
+  const detail = isObject(parsed) && typeof parsed.detail === 'string' ? parsed.detail : null;
+  const message = (code && FRIENDLY_ERRORS[code]) || detail || code || `HTTP ${res.status}`;
   return new HttpError(res.status, message, parsed);
 }
 

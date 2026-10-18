@@ -2,9 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import {
-  accountsApi, agentsApi, invitesApi, platformApi, teamApi,
+  accountsApi, agentsApi, invitesApi, platformApi, rolesApi, teamApi,
   type Account, type Agent, type CreateAccountInput, type CreateAgentInput,
-  type Invite, type Member, type MemberStatus, type UpdateAccountInput, type UpdateAgentInput,
+  type Invite, type Member, type MemberStatus, type RoleDefinition, type UpdateAccountInput, type UpdateAgentInput,
 } from '../../api/endpoints';
 import type { Permission } from '../../rbac/permissions';
 
@@ -13,6 +13,7 @@ export interface MemberInput {
   email?: string;
   role?: 'agent' | 'workspace_admin' | 'member';
   permissions?: Permission[];
+  customRoleKey?: string | null;
   password?: string;
   passwordConfirm?: string;
 }
@@ -23,10 +24,12 @@ export interface UseAgencyDataResult {
   /** The pickers inside the editors; empty until the caller may manage them. */
   accounts: Account[];
   agents: Agent[];
+  /** Custom roles of this workspace, for the member editors. */
+  roles: RoleDefinition[];
   isLoading: boolean;
   isError: boolean;
 
-  createMember: (input: { email: string; password: string; fullName?: string; role: 'workspace_admin' | 'member'; permissions: Permission[] }) => Promise<void>;
+  createMember: (input: Parameters<typeof teamApi.create>[0]) => Promise<void>;
   updateMember: (userId: string, input: MemberInput) => Promise<void>;
   setMemberStatus: (userId: string, status: Exclude<MemberStatus, 'removed'>) => Promise<void>;
   removeMember: (userId: string) => Promise<void>;
@@ -41,6 +44,10 @@ export interface UseAgencyDataResult {
   createAgent: (input: CreateAgentInput, accountIds: string[]) => Promise<void>;
   updateAgent: (id: string, input: UpdateAgentInput) => Promise<void>;
   setAssignedAccounts: (agentId: string, currentIds: string[], nextIds: string[]) => Promise<void>;
+
+  createRole: (input: { name: string; permissions: Permission[] }) => Promise<void>;
+  updateRole: (key: string, input: { name?: string; permissions?: Permission[] }) => Promise<void>;
+  deleteRole: (key: string) => Promise<void>;
 }
 
 /**
@@ -71,6 +78,11 @@ export function useAgencyData(
     queryFn: () => agentsApi.list({ showArchived: true }),
     enabled: enabled && canManageRoster,
   });
+  const roles = useQuery({
+    queryKey: ['roles', activeWorkspaceId],
+    queryFn: () => rolesApi.list(),
+    enabled: enabled && canManageRoster,
+  });
   const accounts = useQuery({
     queryKey: ['accounts', activeWorkspaceId],
     queryFn: () => accountsApi.list(),
@@ -83,6 +95,7 @@ export function useAgencyData(
     queryClient.invalidateQueries({ queryKey: ['team', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['accounts', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['agents', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['roles', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['permissions', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['auth-me'] });
   };
@@ -140,6 +153,13 @@ export function useAgencyData(
     mutationFn: ({ id, input }: { id: string; input: UpdateAgentInput }) => agentsApi.update(id, input),
     onSuccess: invalidate,
   });
+  const createRole = useMutation({ mutationFn: rolesApi.create, onSuccess: invalidate });
+  const updateRole = useMutation({
+    mutationFn: ({ key, input }: { key: string; input: { name?: string; permissions?: Permission[] } }) => rolesApi.update(key, input),
+    onSuccess: invalidate,
+  });
+  const deleteRole = useMutation({ mutationFn: rolesApi.remove, onSuccess: invalidate });
+
   const assignAccounts = useMutation({
     mutationFn: async ({ agentId, currentIds, nextIds }: { agentId: string; currentIds: string[]; nextIds: string[] }) => {
       const current = new Set(currentIds);
@@ -156,6 +176,7 @@ export function useAgencyData(
     pendingInvites: (invites.data ?? []).filter((invite) => !invite.acceptedAt),
     accounts: accounts.data ?? [],
     agents: agents.data ?? [],
+    roles: roles.data?.roles ?? [],
     isLoading: members.isLoading,
     isError: members.isError,
 
@@ -173,6 +194,9 @@ export function useAgencyData(
 
     createAgent: async (input, accountIds) => { await createAgent.mutateAsync({ input, accountIds }); },
     updateAgent: async (id, input) => { await updateAgent.mutateAsync({ id, input }); },
+    createRole: async (input) => { await createRole.mutateAsync(input); },
+    updateRole: async (key, input) => { await updateRole.mutateAsync({ key, input }); },
+    deleteRole: async (key) => { await deleteRole.mutateAsync(key); },
     setAssignedAccounts: async (agentId, currentIds, nextIds) => {
       await assignAccounts.mutateAsync({ agentId, currentIds, nextIds });
     },

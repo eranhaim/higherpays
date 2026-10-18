@@ -157,6 +157,8 @@ export interface PaymentsSummary {
    * estimates too.
    */
   feesEstimated?: boolean;
+  /** Workspace-wide access only. Declined attempts; each one costs the decline fee. */
+  declinedCount?: number;
   approvedPayments: number;
   attempts: number;
   approvalRate: number;
