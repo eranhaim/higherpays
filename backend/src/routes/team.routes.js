@@ -152,8 +152,8 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
               ELSE NULL
             END AS assigned_count,
             CASE
-              WHEN ag.id IS NOT NULL THEN COALESCE(agent_sales.total, 0)
-              WHEN ac.id IS NOT NULL THEN COALESCE(account_sales.total, 0)
+              WHEN ag.id IS NOT NULL THEN COALESCE((SELECT SUM(cp.total) FROM customer_paid cp WHERE cp.agent_id = ag.id), 0)
+              WHEN ac.id IS NOT NULL THEN COALESCE((SELECT SUM(cp.total) FROM customer_paid cp WHERE cp.account_id = ac.id), 0)
               ELSE NULL
             END AS total_customer_paid
        FROM workspace_users wu
@@ -162,8 +162,6 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
        LEFT JOIN workspace_roles cr ON cr.workspace_id = wu.workspace_id AND cr.key = wu.custom_role_key
        LEFT JOIN agents ag ON ag.workspace_id = wu.workspace_id AND ag.user_id = wu.user_id
        LEFT JOIN accounts ac ON ac.workspace_id = wu.workspace_id AND ac.user_id = wu.user_id
-       LEFT JOIN customer_paid agent_sales ON agent_sales.agent_id = ag.id
-       LEFT JOIN customer_paid account_sales ON account_sales.account_id = ac.id
       WHERE wu.workspace_id = $1
       ORDER BY wu.role, u.full_name`, [wid(req), range.from, range.to, currency])).rows;
   res.json({

@@ -123,6 +123,25 @@ test('customer-paid sales include checkout surcharge and reversals', async () =>
   assert.equal(team.find((member) => member.userId === agent.userId).totalCustomerPaid, 0);
 });
 
+test('the member list shows each person once, however many accounts they sell for', async () => {
+  const tenant = await createTenant(app);
+  const first = await createAccount(app, tenant);
+  const second = await createAccount(app, tenant);
+  const agent = await createAgent(app, tenant);
+  await assignAgent(app, tenant, first.id, agent.id);
+  await assignAgent(app, tenant, second.id, agent.id);
+  await paySale(app, tenant, first, 100, { headers: agent.headers });
+  await paySale(app, tenant, second, 50, { headers: agent.headers });
+
+  const team = (await request(app).get(`/workspaces/${tenant.workspaceId}/team`)
+    .set(tenant.authHeaders).expect(200)).body.members;
+  const agentRows = team.filter((member) => member.userId === agent.userId);
+  assert.equal(agentRows.length, 1);
+  assert.equal(agentRows[0].totalCustomerPaid, 150);
+  assert.equal(team.filter((member) => member.userId === first.ownerUserId).length, 1);
+  assert.equal(new Set(team.map((member) => member.userId)).size, team.length);
+});
+
 test('the member list withholds sales and pay terms from a scoped seat', async () => {
   const tenant = await createTenant(app);
   const account = await createAccount(app, tenant);

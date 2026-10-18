@@ -10,13 +10,13 @@ const {
 const { verifyAccessToken } = require('../../src/auth/tokens');
 const { ROLE_PERMISSIONS } = require('../../src/auth/permissions');
 
-test('member permissions are direct, custom roles are disabled, and ownership transfers safely', async () => {
+test('member permissions can be set directly, only role managers make roles, and ownership transfers safely', async () => {
   const owner = await createTenant(app);
   const member = await addMember(app, owner, 'member', { email: `role-member+${tag()}@test.local` });
 
   await request(app)
-    .post(`/workspaces/${owner.workspaceId}/roles`).set(owner.authHeaders)
-    .send({ name: 'Retired', permissions: ['payments.view'] }).expect(410);
+    .post(`/workspaces/${owner.workspaceId}/roles`).set(member.headers)
+    .send({ name: 'Not allowed', permissions: ['payments.view'] }).expect(403);
   await request(app)
     .patch(`/workspaces/${owner.workspaceId}/team/${member.userId}`).set(owner.authHeaders)
     .send({ permissions: ['payments.view'] }).expect(200);
@@ -151,8 +151,6 @@ test('an agent with explicit full workspace access stays workspace-scoped', asyn
 
   await request(app).get(`/workspaces/${tenant.workspaceId}/accounts`).set(agent.headers).expect(200);
   await request(app).get(`/workspaces/${tenant.workspaceId}/archive`).set(agent.headers).expect(200);
-  await request(app).post(`/workspaces/${tenant.workspaceId}/roles`).set(agent.headers)
-    .send({ name: 'Administrator copy' }).expect(410);
   await request(app).patch(`/workspaces/${tenant.workspaceId}`)
     .set(agent.headers).send({ accountLabel: 'Creator' }).expect(200);
   await request(app).patch(`/workspaces/${tenant.workspaceId}`)
