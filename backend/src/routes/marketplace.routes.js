@@ -9,6 +9,7 @@ const { query, withTransaction } = require('../db');
 const { asyncHandler } = require('../lib/http');
 const config = require('../config');
 const { generateOrderReference } = require('../lib/orderReference');
+const { payUrl } = require('../lib/payUrl');
 
 const router = express.Router();
 
@@ -27,10 +28,6 @@ function configured() {
     && config.marketplaceAgentId
     && config.marketplaceWebhookUrl
     && config.marketplaceWebhookSigningSecret;
-}
-
-function marketplaceCheckoutUrl(referenceId) {
-  return `${config.appPublicBase}/api/pay/${encodeURIComponent(referenceId)}`;
 }
 
 function safeReturnUrl(value) {
@@ -196,7 +193,7 @@ router.post('/orders', asyncHandler(async (req, res) => {
     const fee = (await c.query('SELECT checkout_fee FROM effective_platform_fee($1, now())', [config.marketplaceWorkspaceId])).rows[0];
     const referenceId = generateOrderReference();
     const expiresAt = new Date(Date.now() + config.linkTtlMinutes * 60_000);
-    const checkoutUrl = marketplaceCheckoutUrl(referenceId);
+    const checkoutUrl = payUrl(referenceId);
     const link = (await c.query(
       `INSERT INTO payment_links
          (workspace_id, account_id, created_by_agent_id, type, pricing_mode, amount, checkout_fee, currency,

@@ -16,6 +16,7 @@ const currencies = require('../services/currencies.service');
 const { recordLinkEvent } = require('../services/linkEvents');
 const { resolveAttribution, repostSales } = require('../services/attribution');
 const { generateOrderReference } = require('../lib/orderReference');
+const { payUrl } = require('../lib/payUrl');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -127,12 +128,6 @@ const LINK_FILTERS = `${LINK_FILTERS_UNDATED} AND ${LINK_CREATED_IN_RANGE}`;
 const PAYMENT_OCCURRED_IN_RANGE = `
   ($8::timestamptz IS NULL OR t.occurred_at >= $8::timestamptz)
   AND ($9::timestamptz IS NULL OR t.occurred_at <= $9::timestamptz)`;
-
-// The public endpoint starts MantaPay's APM page and redirects the payer to
-// the returned CentroBill URL. No card data touches this server.
-function generateProviderLink(referenceId) {
-  return `${config.appPublicBase}/api/pay/${encodeURIComponent(referenceId)}`;
-}
 
 // What a caller may sort by. Not free text: the key picks the expression and
 // the cast the cursor comparison. A link's amount is optional, so it sorts as
@@ -399,7 +394,7 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
       };
     }
 
-    const checkoutUrl = generateProviderLink(referenceId);
+    const checkoutUrl = payUrl(referenceId);
     const ttlMinutes = ws.link_ttl_minutes == null ? config.linkTtlMinutes : Number(ws.link_ttl_minutes);
     // A reusable link never has a deadline; a single_use one gets the TTL unless
     // it was explicitly created with no expiry.

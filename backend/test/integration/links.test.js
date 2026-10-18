@@ -13,7 +13,7 @@ test('a single-use link carries its HigherPays order in the public URL and has a
     .send({ accountId: account.id, type: 'single_use', amount: 25, currency: 'EUR' }).expect(201);
   assert.equal(res.body.status, 'active');
   assert.match(res.body.referenceId, /^HP-[2-9A-HJKMNP-TV-Z]{4}-[2-9A-HJKMNP-TV-Z]{4}-[2-9A-HJKMNP-TV-Z]{4}$/);
-  assert.equal(new URL(res.body.checkoutUrl).pathname.endsWith(`/api/pay/${res.body.referenceId}`), true);
+  assert.equal(new URL(res.body.checkoutUrl).pathname, `/pay/${res.body.referenceId}`);
   const config = require('../../src/config');
   const minutes = (new Date(res.body.expiresAt) - Date.now()) / 60000;
   assert.ok(minutes > config.linkTtlMinutes - 1 && minutes <= config.linkTtlMinutes,
