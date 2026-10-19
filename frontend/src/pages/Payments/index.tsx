@@ -240,7 +240,8 @@ export default function PaymentsPage() {
   const range: DateRange = { from: filters.from, to: filters.to };
   const setRange = (r: DateRange) => setFilters((f) => ({ ...f, ...r }));
   const availableStatuses = PAYMENT_STATUSES.filter((status) =>
-    status === filters.status || filterOptions?.statuses.includes(status),
+    (canViewFlow || status !== 'superseded')
+    && (status === filters.status || filterOptions?.statuses.includes(status)),
   );
   const activeMoreFilters = [
     filters.customerId, filters.accountId, filters.agentId, filters.categoryId,
@@ -433,7 +434,7 @@ export default function PaymentsPage() {
 
       <DataTable
         columns={shownColumns}
-        rows={payments}
+        rows={canViewFlow ? payments : payments.filter((p) => p.status !== 'superseded')}
         rowKey={(p) => p.id}
         onRowClick={setDetail}
         mobileSummary={(p) => (
