@@ -185,18 +185,18 @@ export default function PaymentsPage() {
         ? <StatCard isUnknown={statsUnknown} label="Gross revenue" value={<Money amount={summary?.grossContent ?? 0} currency={summary?.currency} direction="in" />} sub="Before fees" />
         : <StatCard isUnknown={statsUnknown} label="Net revenue" value={<Money amount={summary?.afterFees ?? 0} currency={summary?.currency} direction="in" />} sub="Revenue after all fees — your pay is based on this" />,
     },
-    ...(canScope ? [{
+    ...(canViewFlow ? [{
       key: 'fees', label: 'Platform fees',
       card: <StatCard isUnknown={statsUnknown} label="Platform fees" value={<Money amount={summary?.platformFees ?? 0} currency={summary?.currency} direction="out" />}
         sub={`${rateCard.blended.toFixed(1)}%${summary?.feesEstimated ? ' · estimated' : ''}`} />,
     }] : []),
-    ...(canScope ? [{
+    ...(canViewFlow ? [{
       key: 'netProfit', label: 'Net profit',
       card: <StatCard isUnknown={statsUnknown} label="Net profit"
         value={<Money amount={summary?.netProfit ?? 0} currency={summary?.currency} direction="in" emphasis />}
         sub={summary?.feesEstimated ? 'Gross after estimated platform fees' : 'Gross after platform fees'} />,
     }] : []),
-    ...(canScope && declineFee ? [{
+    ...(canViewFlow && declineFee ? [{
       key: 'declineFees', label: 'Decline fees',
       card: <StatCard isUnknown={statsUnknown} label="Decline fees"
         value={<Money amount={(summary?.declinedCount ?? 0) * declineFee} currency={summary?.currency} direction="out" />}

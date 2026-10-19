@@ -37,8 +37,10 @@ export function WorkspacePane() {
           detail={platformFees.detail.data ?? null} currencies={platformFees.currencies}
           onSave={(input) => platformFees.save.mutateAsync(input)} />
       )}
-      <LinkLimitsCard key={`lim-${activeWorkspaceId}`} editable={editable} limits={linkLimits.data} rateCard={rateCard}
-        onSave={(input) => saveLinkLimits.mutateAsync(input)} />
+      {isPlatformAdmin && (
+        <LinkLimitsCard key={`lim-${activeWorkspaceId}`} editable={editable} limits={linkLimits.data} rateCard={rateCard}
+          onSave={(input) => saveLinkLimits.mutateAsync(input)} />
+      )}
       {isPlatformAdmin && (
         <MantaPayCard key={`mp-${activeWorkspaceId}`} editable={editable} workspace={workspace.data}
           onSave={(merchantId) => update.mutateAsync({ merchantId })} />
