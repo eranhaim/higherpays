@@ -46,13 +46,13 @@ const SELECT = `
 //
 // No fee figure of any kind reaches a scoped caller — not the platform fee,
 // not its margin or PSP parts, and not a combined total.
-function publicPayment(p, { seesFees }) {
+function publicPayment(p, { seesFees, seesAgents }) {
   return {
     id: p.id, currency: p.currency, status: p.status,
     paymentMethod: p.payment_method, providerPaymentId: p.provider_payment_id,
     providerTransactionId: p.provider_transaction_id, occurredAt: p.occurred_at,
     accountId: p.account_id, account: p.account,
-    agentId: p.agent_id, agent: p.agent,
+    ...(seesAgents ? { agentId: p.agent_id, agent: p.agent } : {}),
     customerId: p.customer_id, customer: p.customer, customerTelegram: p.customer_telegram,
     categoryId: p.category_id, category: p.category,
     linkId: p.payment_link_id, linkReference: p.link_reference, linkType: p.link_type,
@@ -186,7 +186,7 @@ router.get('/', requirePermission('payments.view'), asyncHandler(async (req, res
     cursor, limit: limit + 1, canFilterFees: seesFees,
   }));
   const result = page(rows, limit, sortFor(req).keyOf, (r) => r.id);
-  res.json({ items: result.items.map((r) => publicPayment(r, { seesFees })), nextCursor: result.nextCursor });
+  res.json({ items: result.items.map((r) => publicPayment(r, { seesFees, seesAgents: hasPermission(req.access, 'agents.view') })), nextCursor: result.nextCursor });
 }));
 
 // GET /summary — the filtered totals across all matching rows, before pagination.
@@ -372,7 +372,7 @@ async function loadScoped(c, req, id, { includeArchived = false } = {}) {
 router.get('/:id', requirePermission('payments.view'), asyncHandler(async (req, res) => {
   const row = await withTransaction((c) => loadScoped(c, req, req.params.id, { includeArchived: true }));
   if (!row) return res.status(404).json({ error: 'not_found' });
-  res.json(publicPayment(row, { seesFees: hasPermission(req.access, 'data.view_all') }));
+  res.json(publicPayment(row, { seesFees: hasPermission(req.access, 'data.view_all'), seesAgents: hasPermission(req.access, 'agents.view') }));
 }));
 
 router.post('/:id/archive', requirePermission('archive.manage'), requireArchiveManager, asyncHandler(async (req, res) => {
@@ -640,7 +640,7 @@ router.patch('/:id/details', requirePermission('payments.complete'), asyncHandle
   });
   if (out.err) return res.status(out.code).json({ error: out.err });
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'payment.complete', entityType: 'payment', entityId: out.row.id, metadata: { categoryId } });
-  res.json(publicPayment(out.row, { seesFees: hasPermission(req.access, 'data.view_all') }));
+  res.json(publicPayment(out.row, { seesFees: hasPermission(req.access, 'data.view_all'), seesAgents: hasPermission(req.access, 'agents.view') }));
 }));
 
 // GET /:id/impact — how much money reassigning this payment's order would
@@ -737,7 +737,7 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
     },
   });
   res.json({
-    ...publicPayment(out.row, { seesFees: hasPermission(req.access, 'data.view_all') }),
+    ...publicPayment(out.row, { seesFees: hasPermission(req.access, 'data.view_all'), seesAgents: hasPermission(req.access, 'agents.view') }),
     moved: out.moved,
     reposted: out.reposted,
   });

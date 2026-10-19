@@ -629,4 +629,44 @@ router.get('/fees', asyncHandler(async (req, res) => {
   });
 }));
 
+// POST /platform/workspaces/:id/reserve-release  { amount, currency, note? }
+// Record that the payment provider released held reserve funds.
+router.post('/workspaces/:id/reserve-release', asyncHandler(async (req, res) => {
+  const { amount, currency, note } = req.body || {};
+  const amt = Number(amount);
+  if (!Number.isFinite(amt) || amt <= 0) return badRequest(res, 'amount must be a positive number', ['amount']);
+  if (!currency || typeof currency !== 'string') return badRequest(res, 'currency is required', ['currency']);
+
+  const ws = (await query('SELECT 1 FROM workspaces WHERE id=$1', [req.params.id])).rows[0];
+  if (!ws) return res.status(404).json({ error: 'not_found' });
+
+  const row = (await query(
+    `INSERT INTO reserve_releases (workspace_id, amount, currency, note, released_by_user_id)
+     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [req.params.id, amt, currency.toUpperCase(), note || null, uid(req)])).rows[0];
+
+  await audit({
+    workspaceId: req.params.id, actorUserId: uid(req),
+    action: 'platform.reserve.release', entityType: 'workspace', entityId: req.params.id,
+    metadata: { amount: amt, currency: currency.toUpperCase(), note },
+  });
+  res.status(201).json({
+    id: row.id, amount: Number(row.amount), currency: row.currency,
+    note: row.note, releasedAt: row.released_at,
+  });
+}));
+
+// GET /platform/workspaces/:id/reserve-releases
+router.get('/workspaces/:id/reserve-releases', asyncHandler(async (req, res) => {
+  const rows = (await query(
+    `SELECT rr.*, u.full_name AS released_by
+       FROM reserve_releases rr JOIN users u ON u.id = rr.released_by_user_id
+      WHERE rr.workspace_id = $1 ORDER BY rr.released_at DESC`,
+    [req.params.id])).rows;
+  res.json(rows.map((r) => ({
+    id: r.id, amount: Number(r.amount), currency: r.currency,
+    note: r.note, releasedBy: r.released_by, releasedAt: r.released_at,
+  })));
+}));
+
 module.exports = router;

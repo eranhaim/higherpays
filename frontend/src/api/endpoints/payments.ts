@@ -63,8 +63,8 @@ export interface Payment {
   occurredAt: string;
   accountId: string;
   account: string;
-  agentId: string | null;
-  agent: string | null;
+  agentId?: string | null;
+  agent?: string | null;
   customerId: string | null;
   customer: string | null;
   customerTelegram: string | null;

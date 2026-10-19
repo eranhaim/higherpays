@@ -173,4 +173,12 @@ export const platformApi = {
 
   stopImpersonation: () =>
     api.post<void>('/platform/impersonation/stop', undefined, opts),
+
+  releaseReserve: (workspaceId: string, amount: number, currency: string, note?: string) =>
+    api.post<{ id: string; amount: number; currency: string; note: string | null; releasedAt: string }>(
+      `/platform/workspaces/${workspaceId}/reserve-release`, { amount, currency, note }, opts),
+
+  listReserveReleases: (workspaceId: string) =>
+    api.get<Array<{ id: string; amount: number; currency: string; note: string | null; releasedBy: string; releasedAt: string }>>(
+      `/platform/workspaces/${workspaceId}/reserve-releases`, opts),
 };

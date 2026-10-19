@@ -119,6 +119,13 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
     reserve = { pct, releaseDays: days, held: round2(num(gross) * pct / 100), source: 'estimated' };
   }
 
+  // Subtract any manual reserve releases recorded by the platform admin.
+  const released = num((await query(
+    'SELECT COALESCE(SUM(amount), 0) AS total FROM reserve_releases WHERE workspace_id = $1 AND currency = $2',
+    [wid(req), currency])).rows[0].total);
+  reserve.released = round2(released);
+  reserve.held = round2(Math.max(0, reserve.held - released));
+
   const received = num((await query(
     `SELECT COALESCE(SUM(re.distributable - re.chargeback_fee),0) AS received
        FROM revenue_entries re

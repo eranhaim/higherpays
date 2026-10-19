@@ -495,7 +495,7 @@ export default function PaymentsPage() {
                 kind="payment"
                 id={detail.id}
                 accountId={detail.accountId}
-                agentId={detail.agentId}
+                agentId={detail.agentId ?? null}
                 accounts={accounts.filter((a) => a.status !== 'archived')}
                 onSave={async (input) => {
                   await reassign(detail.id, input);
