@@ -60,7 +60,8 @@ const EVENT_LABELS: Record<LinkEventType, string> = {
 
 export default function LinksPage() {
   const can = useCan();
-  const { labels } = useCurrentSession();
+  const { user, labels, isImpersonating } = useCurrentSession();
+  const isPlatformAdmin = Boolean(user?.isPlatformAdmin) && !isImpersonating;
   const { rateCard } = useRateCard();
   const { currency: reportingCurrency, currencies: knownCurrencies } = useReportingCurrency();
   const allowedCurrencies = knownCurrencies.filter((c) => c.enabled);
@@ -583,36 +584,59 @@ export default function LinksPage() {
         </div>
 
         <div className={`pl-fees${fees && fees.effectivePct >= 18 ? ' hot' : fees && fees.effectivePct >= 15 ? ' warm' : ''}`}>
-          <div className="fee-line">
-            <span>Customer pays</span>
-            <b className="fee-val">{fees ? formatLinkMoney(fees.customerTotal) : '—'}</b>
-          </div>
-          <div className="fee-line">
-            <span>MDR ({rateCard.pspRate}% of {fees ? formatLinkMoney(fees.customerTotal) : '—'})</span>
-            <b className="fee-val">{fees ? formatLinkMoney(fees.mdrFee) : '—'}</b>
-          </div>
-          <div className="fee-line">
-            <span>Transaction fee</span>
-            <b className="fee-val">{fees ? formatLinkMoney(fees.fixed) : '—'}</b>
-          </div>
-          <div className="fee-line">
-            <span>Settlement fee ({rateCard.settlementRate}% of {fees ? formatLinkMoney(fees.settlementBase) : '—'})</span>
-            <b className="fee-val">{fees ? formatLinkMoney(fees.settlementFee) : '—'}</b>
-          </div>
-          {rateCard.marginRate > 0 && (
-            <div className="fee-line">
-              <span>HigherPays margin ({rateCard.marginRate}% of {fees ? formatLinkMoney(fees.amount) : '—'})</span>
-              <b className="fee-val">{fees ? formatLinkMoney(fees.marginFee) : '—'}</b>
-            </div>
+          {isPlatformAdmin ? (
+            <>
+              <div className="fee-line">
+                <span>Customer pays</span>
+                <b className="fee-val">{fees ? formatLinkMoney(fees.customerTotal) : '—'}</b>
+              </div>
+              <div className="fee-line">
+                <span>MDR ({rateCard.pspRate}% of {fees ? formatLinkMoney(fees.customerTotal) : '—'})</span>
+                <b className="fee-val">{fees ? formatLinkMoney(fees.mdrFee) : '—'}</b>
+              </div>
+              <div className="fee-line">
+                <span>Transaction fee</span>
+                <b className="fee-val">{fees ? formatLinkMoney(fees.fixed) : '—'}</b>
+              </div>
+              <div className="fee-line">
+                <span>Settlement fee ({rateCard.settlementRate}% of {fees ? formatLinkMoney(fees.settlementBase) : '—'})</span>
+                <b className="fee-val">{fees ? formatLinkMoney(fees.settlementFee) : '—'}</b>
+              </div>
+              {rateCard.marginRate > 0 && (
+                <div className="fee-line">
+                  <span>HigherPays margin ({rateCard.marginRate}% of {fees ? formatLinkMoney(fees.amount) : '—'})</span>
+                  <b className="fee-val">{fees ? formatLinkMoney(fees.marginFee) : '—'}</b>
+                </div>
+              )}
+              <div className="fee-tot">
+                <span>Total fees</span>
+                <span className="fee-val">{fees ? formatLinkMoney(fees.total) : '—'}</span>
+              </div>
+              <div className="fee-net">
+                <span>Net profit</span>
+                <span className="fee-val">{fees ? formatLinkMoney(fees.net) : '—'}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="fee-line">
+                <span>Customer pays</span>
+                <b className="fee-val">{fees ? formatLinkMoney(fees.amount) : '—'}</b>
+              </div>
+              <div className="fee-line">
+                <span>Fees ({rateCard.blended}%)</span>
+                <b className="fee-val">{fees ? formatLinkMoney(fees.amount * fees.blendedPct / 100) : '—'}</b>
+              </div>
+              <div className="fee-line">
+                <span>Transaction fee</span>
+                <b className="fee-val">{fees ? formatLinkMoney(fees.fixed) : '—'}</b>
+              </div>
+              <div className="fee-net">
+                <span>Net profit</span>
+                <span className="fee-val">{fees ? formatLinkMoney(fees.amount - fees.amount * fees.blendedPct / 100 - fees.fixed) : '—'}</span>
+              </div>
+            </>
           )}
-          <div className="fee-tot">
-            <span>Total fees</span>
-            <span className="fee-val">{fees ? formatLinkMoney(fees.total) : '—'}</span>
-          </div>
-          <div className="fee-net">
-            <span>Net profit</span>
-            <span className="fee-val">{fees ? formatLinkMoney(fees.net) : '—'}</span>
-          </div>
         </div>
 
         <div className="modal-actions">
