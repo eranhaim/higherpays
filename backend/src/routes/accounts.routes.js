@@ -113,12 +113,11 @@ async function nameIsTaken(client, workspaceId, name, exceptAccountId) {
     [workspaceId, name.trim(), exceptAccountId])).rowCount > 0;
 }
 
-// POST /  { email, fullName, name, handle?, country?, revenueSplitPct? }
-// Creates the owner's login, their access, and the account in one go. A login
-// that did not exist is created without a password and invited: the owner sets
-// their own, rather than the agency choosing one for them.
+// POST /  { email, fullName, name, handle?, country?, revenueSplitPct?, password? }
+// Creates the owner's login, their access, and the account in one go.
+// If password is provided it is set on the new login; otherwise the invite flow applies.
 router.post('/', requirePermission('accounts.manage'), asyncHandler(async (req, res) => {
-  const { email, fullName, name, handle, country, revenueSplitPct, payModel, salaryAmount } = req.body || {};
+  const { email, fullName, name, handle, country, revenueSplitPct, payModel, salaryAmount, password } = req.body || {};
   if (!isStr(email, 100)) return badRequest(res, 'a valid username is required', ['email']);
   if (!isStr(fullName, 120)) return badRequest(res, 'fullName is required', ['fullName']);
   if (!isStr(name, 100)) return badRequest(res, 'name is required', ['name']);
@@ -132,11 +131,15 @@ router.post('/', requirePermission('accounts.manage'), asyncHandler(async (req, 
   const salary = salaryAmount == null ? 0 : Number(salaryAmount);
   if (!(salary >= 0)) return badRequest(res, 'salaryAmount must be 0 or more', ['salaryAmount']);
 
+  if (password !== undefined && (typeof password !== 'string' || password.length < 8)) {
+    return badRequest(res, 'Password must be at least 8 characters.', ['password']);
+  }
+
   const out = await withTransaction(async (c) => {
     // A salaried creator takes no share, so there is nothing to check.
     const problem = pay === 'salary' ? null : await splitTooHigh(c, wid(req), split);
     if (problem) return { err: problem, fields: ['revenueSplitPct'] };
-    const grant = await grantWorkspaceRole(c, wid(req), { email, fullName }, 'account_owner');
+    const grant = await grantWorkspaceRole(c, wid(req), { email, fullName, password }, 'account_owner');
     if (grant.err) return { err: `this person is already a ${grant.role} here`, fields: ['email'] };
     const existing = (await c.query('SELECT 1 FROM accounts WHERE workspace_id=$1 AND user_id=$2', [wid(req), grant.userId])).rows[0];
     if (existing) return { err: 'this person already owns an account here', fields: ['email'] };
@@ -148,13 +151,14 @@ router.post('/', requirePermission('accounts.manage'), asyncHandler(async (req, 
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
       [wid(req), grant.userId, name.trim(), handle || null, country ? country.toUpperCase() : null,
         split, pay, salary])).rows[0];
-    if (grant.isNewLogin) {
+    const invited = grant.isNewLogin && !password;
+    if (invited) {
       await createInvite(c, {
         workspaceId: wid(req), email, role: 'account_owner', invitedByUserId: uid(req),
         subject: 'Your HigherPays login', intro: `${name.trim()} has been set up on HigherPays.`,
       });
     }
-    return { row: { ...row, owner_name: fullName, owner_email: email }, invited: grant.isNewLogin };
+    return { row: { ...row, owner_name: fullName, owner_email: email }, invited };
   });
   if (out.err) return badRequest(res, out.err, out.fields);
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'account.create', entityType: 'account', entityId: out.row.id });

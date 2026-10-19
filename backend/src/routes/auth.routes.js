@@ -2,7 +2,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const { query, withTransaction } = require('../db');
-const { verifyPassword } = require('../auth/passwords');
+const { verifyPassword, hashPassword } = require('../auth/passwords');
 const { signAccessToken, generateRefreshToken, hashRefreshToken } = require('../auth/tokens');
 const { requireAuth } = require('../middleware');
 const {
@@ -12,6 +12,7 @@ const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { createLimiter } = require('../lib/rateLimit');
 const { TooManyRequestsError, ForbiddenError } = require('../lib/errors');
+const { badRequest } = require('../util/validate');
 const config = require('../config');
 
 const router = express.Router();
@@ -254,6 +255,43 @@ router.post('/2fa/recovery-codes', limitByIp, requireAuth, rejectImpersonation, 
     [req.user.id, recoveryCodes.map(hashRecoveryCode)]);
   await audit({ actorUserId: req.user.id, action: 'auth.2fa.recovery_regenerated', ip: ipOf(req) });
   res.json({ recoveryCodes });
+}));
+
+// PATCH /auth/profile — update the signed-in user's own profile.
+router.patch('/profile', requireAuth, rejectImpersonation, asyncHandler(async (req, res) => {
+  const { fullName, email, currentPassword, newPassword } = req.body || {};
+  const userId = req.user.id;
+
+  if (!fullName && !email && !newPassword) return badRequest(res, 'Nothing to update.');
+
+  if (newPassword) {
+    if (!currentPassword) return badRequest(res, 'Current password is required to set a new one.', ['currentPassword']);
+    const user = (await query('SELECT password_hash FROM users WHERE id = $1', [userId])).rows[0];
+    if (!user || !user.password_hash) return badRequest(res, 'No password set on this account.', ['currentPassword']);
+    const valid = await verifyPassword(currentPassword, user.password_hash);
+    if (!valid) return badRequest(res, 'Current password is incorrect.', ['currentPassword']);
+    if (String(newPassword).length < 8) return badRequest(res, 'New password must be at least 8 characters.', ['newPassword']);
+  }
+
+  if (email) {
+    const existing = (await query('SELECT id FROM users WHERE email = $1 AND id <> $2', [email.trim().toLowerCase(), userId])).rows[0];
+    if (existing) return badRequest(res, 'This username is already taken.', ['email']);
+  }
+
+  const sets = [], vals = [];
+  if (fullName) { vals.push(fullName.trim()); sets.push(`full_name = $${vals.length}`); }
+  if (email) { vals.push(email.trim().toLowerCase()); sets.push(`email = $${vals.length}`); }
+  if (newPassword) {
+    const hash = await hashPassword(newPassword);
+    vals.push(hash); sets.push(`password_hash = $${vals.length}`);
+  }
+  vals.push(userId);
+  const updated = (await query(`UPDATE users SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING *`, vals)).rows[0];
+
+  await audit({ actorUserId: userId, action: 'user.profile_update', entityType: 'user', entityId: userId,
+    metadata: { ...(fullName ? { fullName: true } : {}), ...(email ? { email: true } : {}), ...(newPassword ? { password: true } : {}) } });
+
+  res.json(publicUser(updated));
 }));
 
 // POST /auth/refresh — rotate the refresh token, issue a new access token

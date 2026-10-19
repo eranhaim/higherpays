@@ -222,7 +222,7 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
 
   const submit = async () => {
     if (!name.trim()) { toast('Agency name is required.'); return; }
-    if (!adminEmail.includes('@')) { toast('A valid admin email is required.'); return; }
+    if (!adminEmail.trim()) { toast('A username is required.'); return; }
     if (Object.values(pct).some(Number.isNaN)) { toast('Percentages must be 0–100.'); return; }
     if (Object.values(fees).some(Number.isNaN)) { toast('Fees must be amounts of 0 or more.'); return; }
     setIsSaving(true);

@@ -1,5 +1,6 @@
 import type { AuditEntry } from '../../api/endpoints';
 import { DataTable, DateCell, type Column } from '../../components/ui';
+import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useAudit } from './useSettingsData';
 
 /** "link.create" → "Link create". The action names are stable server-side keys. */
@@ -10,7 +11,10 @@ function describe(action: string): string {
 
 /** Who did what in the workspace, newest first. */
 export function ActivityPane() {
-  const { entries, isLoading, isError, hasMore, isLoadingMore, loadMore } = useAudit();
+  const { user, isImpersonating } = useCurrentSession();
+  const isPlatformAdmin = Boolean(user?.isPlatformAdmin) && !isImpersonating;
+  const { entries: rawEntries, isLoading, isError, hasMore, isLoadingMore, loadMore } = useAudit();
+  const entries = isPlatformAdmin ? rawEntries : rawEntries.filter((e) => !e.action.startsWith('platform.'));
 
   const columns: Column<AuditEntry>[] = [
     { key: 'when', header: 'When', render: (e) => <DateCell ts={e.createdAt} /> },

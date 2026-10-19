@@ -49,6 +49,7 @@ export interface CreateAccountInput {
   revenueSplitPct?: number;
   payModel?: PayModel;
   salaryAmount?: number;
+  password?: string;
 }
 
 export interface UpdateAccountInput {

@@ -82,7 +82,7 @@ const SORT_VALUES: SortValues<Member> = {
 
 export default function AgencyPage() {
   const can = useCan();
-  const { labels, role: currentRole, user } = useCurrentSession();
+  const { labels, role: currentRole, user, isImpersonating } = useCurrentSession();
   const { currency } = useReportingCurrency();
   const canManageMembers = can('team.manage');
   const canManageCreators = can('accounts.manage');
@@ -93,7 +93,7 @@ export default function AgencyPage() {
   // HigherPays operator belongs to an existing operator. Both are refused by
   // the server; hiding them only keeps the controls out of everyone's way.
   const canTransferOwner = currentRole === 'workspace_owner';
-  const isPlatformAdmin = Boolean(user?.isPlatformAdmin);
+  const isPlatformAdmin = Boolean(user?.isPlatformAdmin) && !isImpersonating;
 
   const [period, setPeriod] = useState<RangeKey>('all');
   const [search, setSearch] = useState('');

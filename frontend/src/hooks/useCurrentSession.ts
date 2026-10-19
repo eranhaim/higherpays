@@ -23,11 +23,14 @@ export interface CurrentSession {
   currency: string;
   /** What this agency calls its creators and agents. */
   labels: WorkspaceLabels;
+  /** True when a platform admin is viewing the console as another user. */
+  isImpersonating: boolean;
 }
 
 export function useCurrentSession(): CurrentSession {
   const user = useAuthStore((s) => s.user);
   const workspaces = useAuthStore((s) => s.workspaces);
+  const originalSession = useAuthStore((s) => s.originalSession);
   const activeWorkspaceId = useSessionStore((s) => s.activeWorkspaceId);
 
   const activeWorkspace =
@@ -45,5 +48,6 @@ export function useCurrentSession(): CurrentSession {
     workspaces,
     currency: activeWorkspace?.currency ?? 'EUR',
     labels: activeWorkspace?.labels ?? DEFAULT_LABELS,
+    isImpersonating: originalSession !== null,
   };
 }

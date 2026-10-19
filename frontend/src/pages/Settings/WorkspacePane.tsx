@@ -13,8 +13,8 @@ import { useGeneralSettings, usePlatformFees, useWorkspaceCurrencies, type RateC
 export function WorkspacePane() {
   const can = useCan();
   const editable = can('settings.edit');
-  const { activeWorkspaceId, user } = useCurrentSession();
-  const isPlatformAdmin = Boolean(user?.isPlatformAdmin);
+  const { activeWorkspaceId, user, isImpersonating } = useCurrentSession();
+  const isPlatformAdmin = Boolean(user?.isPlatformAdmin) && !isImpersonating;
   const { rateCard, isLoading: rateCardLoading, isError: rateCardError } = useRateCard();
   const { workspace, linkLimits, update, saveLinkLimits } = useGeneralSettings();
   const currencies = useWorkspaceCurrencies();

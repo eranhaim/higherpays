@@ -82,9 +82,9 @@ export interface RateCardInput {
  * caller.
  */
 export function usePlatformFees() {
-  const { user, activeWorkspaceId } = useCurrentSession();
+  const { user, activeWorkspaceId, isImpersonating } = useCurrentSession();
   const qc = useQueryClient();
-  const canEdit = Boolean(user?.isPlatformAdmin && activeWorkspaceId);
+  const canEdit = Boolean(user?.isPlatformAdmin && activeWorkspaceId) && !isImpersonating;
 
   const detail = useQuery({
     queryKey: ['platform-workspace', activeWorkspaceId],

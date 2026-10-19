@@ -98,6 +98,7 @@ export function CreateCreatorModal({ agents, onClose, onSubmit }: {
   const [country, setCountry] = useState('');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [splitText, setSplitText] = useState('');
   const [payModel, setPayModel] = useState<PayModel>('share');
   const [salaryText, setSalaryText] = useState('0');
@@ -108,6 +109,7 @@ export function CreateCreatorModal({ agents, onClose, onSubmit }: {
   const submit = async () => {
     if (!name.trim()) { toast('Name is required.'); return; }
     if (!fullName.trim() || !email.trim()) { toast("The owner's name and username are required."); return; }
+    if (!password || password.length < 8) { toast('Password must be at least 8 characters.'); return; }
     if (payModel === 'share' && Number.isNaN(split)) { toast('Share must be 0–100.'); return; }
     if (payModel === 'salary' && !(parseFloat(salaryText) >= 0)) { toast('Salary must be an amount of 0 or more.'); return; }
     setIsSaving(true);
@@ -118,6 +120,7 @@ export function CreateCreatorModal({ agents, onClose, onSubmit }: {
         payModel,
         revenueSplitPct: payModel === 'share' ? split : 0,
         salaryAmount: payModel === 'salary' ? parseFloat(salaryText) : 0,
+        password,
       }, assigned);
     } catch (err) {
       toast(err instanceof Error ? err.message : `Could not add the ${labels.account.toLowerCase()}.`);
@@ -140,7 +143,7 @@ export function CreateCreatorModal({ agents, onClose, onSubmit }: {
           </Select>
         </div>
         <div className="sechead">Who signs in</div>
-        <p className="sub">They sign in with this username and choose their own password. Nothing is sent if this username already has a login.</p>
+        <p className="sub">They sign in with this username and the password you set below.</p>
         <div className="form-row">
           <div className="field">
             <label htmlFor="creator-owner-name">Full name</label>
@@ -150,6 +153,11 @@ export function CreateCreatorModal({ agents, onClose, onSubmit }: {
             <label htmlFor="creator-owner-email">Username</label>
             <input id="creator-owner-email" type="text" value={email} onChange={(event) => setEmail(event.target.value)} />
           </div>
+        </div>
+        <div className="field">
+          <label htmlFor="creator-password">Password</label>
+          <input id="creator-password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" />
+          <p className="sub">At least 8 characters. The creator uses this to sign in.</p>
         </div>
         <PayFields
           idPrefix="creator" label={labels.account} model={payModel} setModel={setPayModel}

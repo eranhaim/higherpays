@@ -83,8 +83,8 @@ function ArchiveTable({ type }: { type: ArchiveType }) {
 }
 
 export default function ArchivePage() {
-  const { user } = useCurrentSession();
-  const tabs = ARCHIVE_TABS.filter((tab) => tab.type !== 'workspaces' || user?.isPlatformAdmin);
+  const { user, isImpersonating } = useCurrentSession();
+  const tabs = ARCHIVE_TABS.filter((tab) => tab.type !== 'workspaces' || (user?.isPlatformAdmin && !isImpersonating));
   const [type, setType] = useState<ArchiveType>(tabs[0].type);
   const activeType = tabs.some((tab) => tab.type === type) ? type : tabs[0].type;
 

@@ -111,7 +111,7 @@ type ReversalKind = 'refund' | 'chargeback';
 
 export default function PaymentsPage() {
   const can = useCan();
-  const { labels, user, activeWorkspaceId } = useCurrentSession();
+  const { labels, user, activeWorkspaceId, isImpersonating } = useCurrentSession();
   const { rateCard } = useRateCard();
   const declineFee = rateCard.declineFee ?? 0;
   const canScope = can('data.view_all');
@@ -167,7 +167,7 @@ export default function PaymentsPage() {
   const [archiving, setArchiving] = useState<Payment | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [enableTwoFactorOpen, setEnableTwoFactorOpen] = useState(false);
-  const canViewFlow = Boolean(user?.isPlatformAdmin);
+  const canViewFlow = Boolean(user?.isPlatformAdmin) && !isImpersonating;
   const flowNeedsTwoFactor = canViewFlow && !user?.twoFactorEnabled;
   const flow = useQuery<PaymentFlow>({
     queryKey: ['payment-flow', activeWorkspaceId, flowPayment?.id],

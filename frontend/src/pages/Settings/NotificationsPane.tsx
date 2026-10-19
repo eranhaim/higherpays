@@ -27,8 +27,8 @@ function toggleEvent(events: NotificationEvent[], event: NotificationEvent, on: 
 export function NotificationsPane() {
   const can = useCan();
   const editable = can('settings.edit');
-  const { user } = useCurrentSession();
-  const isPlatformAdmin = Boolean(user?.isPlatformAdmin);
+  const { user, isImpersonating } = useCurrentSession();
+  const isPlatformAdmin = Boolean(user?.isPlatformAdmin) && !isImpersonating;
   const [removing, setRemoving] = useState<NotificationChannel | null>(null);
   const {
     preferences, channels,

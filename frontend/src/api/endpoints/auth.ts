@@ -67,6 +67,10 @@ export const authApi = {
     return api.post<RecoveryCodes>('/auth/2fa/recovery-codes', { code }, { skipWorkspace: true });
   },
 
+  updateProfile(input: { fullName?: string; email?: string; currentPassword?: string; newPassword?: string }) {
+    return api.patch<AuthUser>('/auth/profile', input, { skipWorkspace: true });
+  },
+
   async listSessions(): Promise<Session[]> {
     const raw = await api.get<{ sessions: Session[] }>('/auth/sessions', { skipWorkspace: true });
     return raw.sessions;
