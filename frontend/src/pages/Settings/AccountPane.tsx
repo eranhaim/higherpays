@@ -8,6 +8,8 @@ import EnableTwoFactorModal, { ReEnrollTwoFactorModal } from '../../components/E
 import { CopyButton } from '../../components/ui';
 import { toast } from '../../lib/toast';
 import { useTwoFactor } from '../../hooks/useTwoFactor';
+import { useAuthStore } from '../../store/auth';
+import { authApi } from '../../api/endpoints/auth';
 import { SessionsCard } from './SessionsCard';
 
 /**
@@ -17,9 +19,118 @@ import { SessionsCard } from './SessionsCard';
 export function AccountPane() {
   return (
     <div className="stack">
+      <ProfileCard />
       <SecurityCard />
       <SessionsCard />
       <TimeZoneCard />
+    </div>
+  );
+}
+
+function ProfileCard() {
+  const { user } = useCurrentSession();
+  const [fullName, setFullName] = useState(user?.fullName ?? '');
+  const [email, setEmail] = useState(user?.email ?? '');
+  const [saving, setSaving] = useState(false);
+
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
+
+  const saveProfile = async () => {
+    const trimmedName = fullName.trim();
+    const trimmedEmail = email.trim();
+    if (!trimmedName && !trimmedEmail) { toast('Nothing to save.'); return; }
+    if (trimmedName === user?.fullName && trimmedEmail === user?.email) { toast('No changes to save.'); return; }
+    setSaving(true);
+    try {
+      const updated = await authApi.updateProfile({
+        ...(trimmedName !== user?.fullName ? { fullName: trimmedName } : {}),
+        ...(trimmedEmail !== user?.email ? { email: trimmedEmail } : {}),
+      });
+      useAuthStore.getState().setUser(updated);
+      toast('Profile updated.');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed to update profile.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const changePassword = async () => {
+    if (!currentPassword) { toast('Enter your current password.'); return; }
+    if (!newPassword) { toast('Enter a new password.'); return; }
+    if (newPassword.length < 8) { toast('New password must be at least 8 characters.'); return; }
+    if (newPassword !== confirmPassword) { toast('Passwords do not match.'); return; }
+    setChangingPassword(true);
+    try {
+      const updated = await authApi.updateProfile({ currentPassword, newPassword });
+      useAuthStore.getState().setUser(updated);
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      toast('Password changed.');
+    } catch (err) {
+      toast(err instanceof Error ? err.message : 'Failed to change password.');
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="sechead">Profile</div>
+      <div className="setrow">
+        <div>
+          <div className="k">Full name</div>
+          <div className="d">Your display name across the platform.</div>
+        </div>
+        <div className="controls">
+          <input type="text" aria-label="Full name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
+        </div>
+      </div>
+      <div className="setrow">
+        <div>
+          <div className="k">Username</div>
+          <div className="d">The email address you sign in with.</div>
+        </div>
+        <div className="controls">
+          <input type="text" aria-label="Username" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </div>
+      </div>
+      <div className="setrow">
+        <div />
+        <div className="controls">
+          <button className="btn" disabled={saving} onClick={saveProfile}>Save</button>
+        </div>
+      </div>
+
+      <div className="sechead">Change password</div>
+      <div className="setrow">
+        <div><div className="k">Current password</div></div>
+        <div className="controls">
+          <input type="password" aria-label="Current password" autoComplete="current-password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
+        </div>
+      </div>
+      <div className="setrow">
+        <div><div className="k">New password</div></div>
+        <div className="controls">
+          <input type="password" aria-label="New password" autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+        </div>
+      </div>
+      <div className="setrow">
+        <div><div className="k">Confirm new password</div></div>
+        <div className="controls">
+          <input type="password" aria-label="Confirm new password" autoComplete="new-password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
+        </div>
+      </div>
+      <div className="setrow">
+        <div />
+        <div className="controls">
+          <button className="btn" disabled={changingPassword} onClick={changePassword}>Change password</button>
+        </div>
+      </div>
     </div>
   );
 }

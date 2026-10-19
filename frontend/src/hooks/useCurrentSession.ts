@@ -31,6 +31,7 @@ export function useCurrentSession(): CurrentSession {
   const user = useAuthStore((s) => s.user);
   const workspaces = useAuthStore((s) => s.workspaces);
   const originalSession = useAuthStore((s) => s.originalSession);
+  const impersonationExpiresAt = useAuthStore((s) => s.impersonationExpiresAt);
   const activeWorkspaceId = useSessionStore((s) => s.activeWorkspaceId);
 
   const activeWorkspace =
@@ -48,6 +49,6 @@ export function useCurrentSession(): CurrentSession {
     workspaces,
     currency: activeWorkspace?.currency ?? 'EUR',
     labels: activeWorkspace?.labels ?? DEFAULT_LABELS,
-    isImpersonating: originalSession !== null,
+    isImpersonating: originalSession !== null || impersonationExpiresAt !== null,
   };
 }

@@ -209,7 +209,7 @@ export default function Layout() {
         }}>
           <button type="button" className="mobile-nav-close" onClick={() => setMobileNavOpen(false)}>Close menu</button>
           {NAV.map((g) => <NavSection key={g.label} group={g} onNavigate={guardNavigation} />)}
-          {user?.isPlatformAdmin && (
+          {user?.isPlatformAdmin && !originalSession && (
             <div>
               <div className="nav-lbl">HigherPays</div>
               <NavLink to="/platform" className={({ isActive }) => `navitem${isActive ? ' active' : ''}`}>
@@ -227,7 +227,7 @@ export default function Layout() {
               <div className="user-name">
                 {user.fullName}
                 {roleName && <span className="rolebadge">{roleName}</span>}
-                {user.isPlatformAdmin && (
+                {user.isPlatformAdmin && !originalSession && (
                   <span className="rolebadge owner platform-rolebadge">
                     <span className="platform-role-long">Platform admin</span>
                     <span className="platform-role-short">Platform</span>
