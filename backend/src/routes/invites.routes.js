@@ -20,7 +20,7 @@ const wsRouter = express.Router({ mergeParams: true });
 // POST /workspaces/:wid/invites  { email, role }
 wsRouter.post('/', requireAuth, requireWorkspace, requirePermission('team.manage'), asyncHandler(async (req, res) => {
   const { email, role } = req.body || {};
-  if (!isStr(email, 100) || !email.includes('@')) return badRequest(res, 'a valid email is required', ['email']);
+  if (!isStr(email, 100)) return badRequest(res, 'a valid username is required', ['email']);
   if (!INVITABLE_ROLES.includes(role)) {
     return badRequest(res, 'role is not invitable', ['role']);
   }

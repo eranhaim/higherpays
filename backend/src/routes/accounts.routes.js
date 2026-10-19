@@ -119,7 +119,7 @@ async function nameIsTaken(client, workspaceId, name, exceptAccountId) {
 // their own, rather than the agency choosing one for them.
 router.post('/', requirePermission('accounts.manage'), asyncHandler(async (req, res) => {
   const { email, fullName, name, handle, country, revenueSplitPct, payModel, salaryAmount } = req.body || {};
-  if (!isStr(email, 100) || !email.includes('@')) return badRequest(res, 'a valid email is required', ['email']);
+  if (!isStr(email, 100)) return badRequest(res, 'a valid username is required', ['email']);
   if (!isStr(fullName, 120)) return badRequest(res, 'fullName is required', ['fullName']);
   if (!isStr(name, 100)) return badRequest(res, 'name is required', ['name']);
   if (!isOptStr(handle, 100)) return badRequest(res, 'invalid handle', ['handle']);

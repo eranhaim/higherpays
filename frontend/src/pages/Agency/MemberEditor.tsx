@@ -60,7 +60,7 @@ export function MemberEditorModal({
   const [isElevating, setIsElevating] = useState(false);
 
   const submit = async () => {
-    if (!email.trim() || !name.trim()) { toast('Name and email are required.'); return; }
+    if (!email.trim() || !name.trim()) { toast('Name and username are required.'); return; }
     if (creating && !password) { toast('Set a password for the new member.'); return; }
     if (password && passwordProblem(password)) { toast(passwordProblem(password) as string); return; }
     if (password && password !== passwordConfirm) { toast('The password confirmation does not match.'); return; }
@@ -99,9 +99,9 @@ export function MemberEditorModal({
         <input id="member-name" autoComplete="name" value={name} onChange={(event) => setName(event.target.value)} />
       </div>
       <div className="field">
-        <label htmlFor="member-email">Email</label>
-        <input id="member-email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} />
-        {!creating && <p className="sub">The name and email belong to the login, so they change in every workspace this person belongs to.</p>}
+        <label htmlFor="member-email">Username</label>
+        <input id="member-email" type="text" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} />
+        {!creating && <p className="sub">The name and username belong to the login, so they change in every workspace this person belongs to.</p>}
       </div>
       <div className="field">
         <label htmlFor="member-type">Membership type</label>

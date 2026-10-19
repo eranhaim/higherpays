@@ -107,7 +107,7 @@ export function CreateCreatorModal({ agents, onClose, onSubmit }: {
 
   const submit = async () => {
     if (!name.trim()) { toast('Name is required.'); return; }
-    if (!fullName.trim() || !email.trim()) { toast("The owner's name and email are required."); return; }
+    if (!fullName.trim() || !email.trim()) { toast("The owner's name and username are required."); return; }
     if (payModel === 'share' && Number.isNaN(split)) { toast('Share must be 0–100.'); return; }
     if (payModel === 'salary' && !(parseFloat(salaryText) >= 0)) { toast('Salary must be an amount of 0 or more.'); return; }
     setIsSaving(true);
@@ -140,15 +140,15 @@ export function CreateCreatorModal({ agents, onClose, onSubmit }: {
           </Select>
         </div>
         <div className="sechead">Who signs in</div>
-        <p className="sub">They get an email and choose their own password. Nothing is sent if this address already has a login.</p>
+        <p className="sub">They sign in with this username and choose their own password. Nothing is sent if this username already has a login.</p>
         <div className="form-row">
           <div className="field">
             <label htmlFor="creator-owner-name">Full name</label>
             <input id="creator-owner-name" type="text" value={fullName} onChange={(event) => setFullName(event.target.value)} />
           </div>
           <div className="field">
-            <label htmlFor="creator-owner-email">Email</label>
-            <input id="creator-owner-email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
+            <label htmlFor="creator-owner-email">Username</label>
+            <input id="creator-owner-email" type="text" value={email} onChange={(event) => setEmail(event.target.value)} />
           </div>
         </div>
         <PayFields

@@ -55,7 +55,7 @@ router.get('/', requirePermission('agents.view'), asyncHandler(async (req, res) 
 // Creates the login, the access, and the agent in one go.
 router.post('/', requirePermission('agents.manage'), asyncHandler(async (req, res) => {
   const { email, fullName, password, country, commissionPct } = req.body || {};
-  if (!isStr(email, 100) || !email.includes('@')) return badRequest(res, 'a valid email is required', ['email']);
+  if (!isStr(email, 100)) return badRequest(res, 'a valid username is required', ['email']);
   if (!isStr(fullName, 120)) return badRequest(res, 'fullName is required', ['fullName']);
   if (country != null && !/^[A-Za-z]{2}$/.test(country)) return badRequest(res, 'country must be 2 letters', ['country']);
   if (commissionPct == null) return badRequest(res, 'commissionPct is required', ['commissionPct']);

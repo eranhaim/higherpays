@@ -50,7 +50,7 @@ function dateRange(query) {
 // POST / — create a login and active workspace seat without email delivery.
 router.post('/', requirePermission('team.manage'), asyncHandler(async (req, res) => {
   const { email, password, fullName, role = 'member', permissions, customRoleKey } = req.body || {};
-  if (!isStr(email, 100) || !email.includes('@')) return badRequest(res, 'a valid email is required', ['email']);
+  if (!isStr(email, 100)) return badRequest(res, 'a valid username is required', ['email']);
   if (!isStr(password, 200) || validatePasswordStrength(password)) return badRequest(res, PASSWORD_RULE, ['password']);
   if (!PLAIN_MEMBER_TYPES.has(role)) {
     return badRequest(res, 'role is not available for direct member creation', ['role']);
@@ -71,7 +71,7 @@ router.post('/', requirePermission('team.manage'), asyncHandler(async (req, res)
     if (permissionError) return { error: permissionError, status: 400 };
 
     const existing = (await client.query('SELECT id FROM users WHERE email=$1', [email])).rows[0];
-    if (existing) return { error: 'user_exists', status: 409, detail: 'this email already has a HigherPays login, so it cannot be added with a new password' };
+    if (existing) return { error: 'user_exists', status: 409, detail: 'this username already has a HigherPays login, so it cannot be added with a new password' };
 
     const user = (await client.query(
       `INSERT INTO users (email, full_name, password_hash)
@@ -219,7 +219,7 @@ router.patch('/:userId', requirePermission('team.manage'), asyncHandler(async (r
     return res.status(400).json({ error: 'no_changes' });
   }
   if (hasName && !isStr(body.fullName, 120)) return badRequest(res, 'fullName is required', ['fullName']);
-  if (hasEmail && (!isStr(body.email, 100) || !body.email.includes('@'))) return badRequest(res, 'a valid email is required', ['email']);
+  if (hasEmail && !isStr(body.email, 100)) return badRequest(res, 'a valid username is required', ['email']);
   if (hasPassword) {
     if (req.user.actorId) return res.status(403).json({ error: 'impersonation_password_forbidden' });
     if (body.password !== body.passwordConfirm) return badRequest(res, 'password confirmation does not match', ['passwordConfirm']);

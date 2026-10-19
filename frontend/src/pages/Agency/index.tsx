@@ -426,7 +426,7 @@ export default function AgencyPage() {
         <CurrencyPicker />
         <input
           className="search-input" type="search" aria-label="Search members"
-          placeholder="Search name, email or creator"
+          placeholder="Search name, username or creator"
           value={search} onChange={(event) => setSearch(event.target.value)}
         />
         <Select label="Sales period" hideLabel value={period} onChange={(value) => setPeriod(value as RangeKey)}>

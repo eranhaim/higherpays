@@ -9,7 +9,7 @@ import { useSessionStore } from '../../store/session';
 import EnableTwoFactorModal, { ReEnrollTwoFactorModal } from '../../components/EnableTwoFactorModal';
 
 /**
- * Sign-in screen. Two stages: email + password, then a 6-digit code when the
+ * Sign-in screen. Two stages: username + password, then a 6-digit code when the
  * account has two-factor authentication enabled.
  */
 
@@ -75,7 +75,7 @@ export default function LoginPage() {
         ? null
         : 'Enter a 6-digit authentication code or a recovery code.';
     }
-    if (!email.trim()) return 'Enter your email address.';
+    if (!email.trim()) return 'Enter your username.';
     if (!password) return 'Enter your password.';
     return null;
   }
@@ -110,11 +110,11 @@ export default function LoginPage() {
             {stage === 'credentials' ? (
               <>
                 <div className="field">
-                  <label htmlFor="email">Email</label>
+                  <label htmlFor="email">Username</label>
                   <input
                     id="email"
-                    type="email"
-                    autoComplete="email"
+                    type="text"
+                    autoComplete="username"
                     required
                     ref={firstFieldRef}
                     value={email}
@@ -196,7 +196,7 @@ export default function LoginPage() {
 
 function loginErrorMessage(err: unknown): string {
   if (err instanceof HttpError) {
-    if (err.status === 401) return 'Invalid email or password.';
+    if (err.status === 401) return 'Invalid username or password.';
     if (err.status === 400) return 'Please check the fields and try again.';
     if (err.status >= 500) return 'The server is unavailable. Try again in a moment.';
     return err.message;

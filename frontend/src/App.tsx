@@ -36,7 +36,7 @@ export default function App() {
       <BrowserRouter useTransitions={false}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          {/* Public: the emailed invite link lands here before there is a login. */}
+          {/* Public: the invite link lands here before there is a login. */}
           <Route path="/accept-invite" element={<AcceptInvitePage />} />
           <Route path="/payment-complete" element={<PaymentCompletePage />} />
           <Route element={<AuthGuard />}>

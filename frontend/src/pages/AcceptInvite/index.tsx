@@ -71,7 +71,7 @@ export default function AcceptInvitePage() {
           <div className="field">
             <label htmlFor="invite-password">Password</label>
             <input id="invite-password" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
-            <p className="sub">At least 8 characters. If this email already has a HigherPays login, leave it blank and keep your current password.</p>
+            <p className="sub">At least 8 characters. If this username already has a HigherPays login, leave it blank and keep your current password.</p>
           </div>
           {(formError || accept.error) && (
             <div className="warnbar" role="alert">{formError ?? acceptErrorMessage(accept.error)}</div>

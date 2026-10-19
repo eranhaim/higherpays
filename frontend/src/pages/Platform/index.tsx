@@ -270,8 +270,8 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
         </div>
         <div className="form-row">
           <div className="field">
-            <label htmlFor="agency-admin">First admin's email</label>
-            <input id="agency-admin" type="email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} />
+            <label htmlFor="agency-admin">First admin's username</label>
+            <input id="agency-admin" type="text" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} />
           </div>
           <div className="field">
             <label htmlFor="agency-mid">Payment provider merchant ID</label>
@@ -281,7 +281,7 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
         <div className="field">
           <label htmlFor="agency-admin-password">First admin's password</label>
           <input id="agency-admin-password" type="password" autoComplete="new-password" placeholder="Optional" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
-          <p className="sub">Leave empty to email an invite. Set one when email is not available: 12+ characters with upper case, lower case and a number.</p>
+          <p className="sub">Leave empty to set a username invite. Set one when no invite mechanism is available: 12+ characters with upper case, lower case and a number.</p>
         </div>
 
         <div className="sechead">Rate card</div>

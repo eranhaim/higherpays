@@ -455,7 +455,7 @@ router.post('/agencies', asyncHandler(async (req, res) => {
   const settlementPct = b.settlementPct == null ? 0 : Number(b.settlementPct);
   const checkoutFee = b.checkoutFee == null ? 0 : b.checkoutFee;
   if (!isStr(b.name, 120)) return badRequest(res, 'name is required', ['name']);
-  if (!isStr(b.adminEmail, 120) || !b.adminEmail.includes('@')) return badRequest(res, 'a valid adminEmail is required', ['adminEmail']);
+  if (!isStr(b.adminEmail, 120)) return badRequest(res, 'a valid adminEmail is required', ['adminEmail']);
   if (!config.supportedCurrencies.includes(currency)) return badRequest(res, `currency ${currency} is not enabled`, ['currency']);
   if (!pct(b.pspRatePct) || !pct(b.marginRatePct)) return badRequest(res, 'pspRatePct/marginRatePct must be 0..100', ['pspRatePct', 'marginRatePct']);
   if (!pct(settlementPct)) return badRequest(res, 'settlementPct must be 0..100', ['settlementPct']);

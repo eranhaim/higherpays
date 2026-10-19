@@ -63,7 +63,7 @@ export function AgentEditorModal({ member, agent, accounts, roles, canEditCommis
 
   const submit = async () => {
     if (!fullName.trim()) { toast('Name is required.'); return; }
-    if (creating && !email.trim()) { toast('Email is required.'); return; }
+    if (creating && !email.trim()) { toast('Username is required.'); return; }
     if (creating && password.length < 8) { toast('Password must be at least 8 characters.'); return; }
     if (Number.isNaN(commission)) { toast('Commission must be 0–100.'); return; }
     setIsSaving(true);
@@ -96,16 +96,16 @@ export function AgentEditorModal({ member, agent, accounts, roles, canEditCommis
             <input id="agent-name" type="text" value={fullName} onChange={(event) => setFullName(event.target.value)} />
           </div>
           <div className="field">
-            {/* The email is how they sign in, so it is fixed after creation. */}
-            <label htmlFor="agent-email">Email</label>
-            <input id="agent-email" type="email" value={email} disabled={!creating} onChange={(event) => setEmail(event.target.value)} />
+            {/* The username is how they sign in, so it is fixed after creation. */}
+            <label htmlFor="agent-email">Username</label>
+            <input id="agent-email" type="text" value={email} disabled={!creating} onChange={(event) => setEmail(event.target.value)} />
           </div>
         </div>
         {creating && (
           <div className="field">
             <label htmlFor="agent-password">Password</label>
             <input id="agent-password" type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} />
-            <p className="sub">At least 8 characters. Ignored if this email already has a login.</p>
+            <p className="sub">At least 8 characters. Ignored if this username already has a login.</p>
           </div>
         )}
         <div className="form-row">

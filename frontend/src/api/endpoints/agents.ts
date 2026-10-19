@@ -20,7 +20,7 @@ export interface Agent {
 export interface CreateAgentInput {
   email: string;
   fullName: string;
-  /** Required for a new login; ignored when the email already has one. */
+  /** Required for a new login; ignored when the username already has one. */
   password?: string;
   country?: string;
   commissionPct?: number;
