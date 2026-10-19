@@ -165,10 +165,13 @@ router.get('/', requirePermission('team.view'), asyncHandler(async (req, res) =>
        LEFT JOIN accounts ac ON ac.workspace_id = wu.workspace_id AND ac.user_id = wu.user_id
       WHERE wu.workspace_id = $1
       ORDER BY wu.role, u.full_name`, [wid(req), range.from, range.to, currency])).rows;
+  // Platform admins are invisible to regular workspace users. Only someone who
+  // manages the team (and thus gets the isPlatformAdmin flag) sees them at all.
+  const visibleRows = managesTeam ? rows : rows.filter((r) => !r.is_platform_admin);
   res.json({
     // totalCustomerPaid is in this one currency; a total across currencies would be meaningless.
     currency,
-    members: rows.map((r) => ({
+    members: visibleRows.map((r) => ({
       userId: r.user_id, name: r.name, email: r.email, role: r.role,
       roleName: roleName(r.role, r), permissions: r.permissions || [], status: r.status,
       customRoleKey: r.custom_role_key, customRoleName: r.custom_role_name,

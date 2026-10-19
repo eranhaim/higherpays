@@ -274,7 +274,7 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
             <input id="agency-admin" type="email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} />
           </div>
           <div className="field">
-            <label htmlFor="agency-mid">MantaPay merchant ID</label>
+            <label htmlFor="agency-mid">Payment provider merchant ID</label>
             <input id="agency-mid" type="text" maxLength={64} placeholder="Optional" value={merchantId} onChange={(e) => setMerchantId(e.target.value)} />
           </div>
         </div>

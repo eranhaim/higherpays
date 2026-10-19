@@ -13,7 +13,8 @@ import { useGeneralSettings, usePlatformFees, useWorkspaceCurrencies, type RateC
 export function WorkspacePane() {
   const can = useCan();
   const editable = can('settings.edit');
-  const { activeWorkspaceId } = useCurrentSession();
+  const { activeWorkspaceId, user } = useCurrentSession();
+  const isPlatformAdmin = Boolean(user?.isPlatformAdmin);
   const { rateCard, isLoading: rateCardLoading, isError: rateCardError } = useRateCard();
   const { workspace, linkLimits, update, saveLinkLimits } = useGeneralSettings();
   const currencies = useWorkspaceCurrencies();
@@ -30,17 +31,18 @@ export function WorkspacePane() {
         editable={editable} workspace={workspace.data}
         currencies={currencies.query.data} onSaveCurrencies={(list) => currencies.save.mutateAsync(list)}
         onSave={(input) => update.mutateAsync(input)} />
-      {/* Also keyed by the rate version: the operator's rate card arrives after
-          this pane renders, and a save writes a new version, so the form has to
-          be re-seeded both times. */}
-      <FeesCard key={`fees-${activeWorkspaceId}-${platformFees.detail.data?.feeHistory[0]?.effectiveFrom ?? 'none'}`}
-        rateCard={rateCard} editable={platformFees.canEdit && platformFees.detail.isSuccess}
-        detail={platformFees.detail.data ?? null} currencies={platformFees.currencies}
-        onSave={(input) => platformFees.save.mutateAsync(input)} />
+      {isPlatformAdmin && (
+        <FeesCard key={`fees-${activeWorkspaceId}-${platformFees.detail.data?.feeHistory[0]?.effectiveFrom ?? 'none'}`}
+          rateCard={rateCard} editable={platformFees.canEdit && platformFees.detail.isSuccess}
+          detail={platformFees.detail.data ?? null} currencies={platformFees.currencies}
+          onSave={(input) => platformFees.save.mutateAsync(input)} />
+      )}
       <LinkLimitsCard key={`lim-${activeWorkspaceId}`} editable={editable} limits={linkLimits.data} rateCard={rateCard}
         onSave={(input) => saveLinkLimits.mutateAsync(input)} />
-      <MantaPayCard key={`mp-${activeWorkspaceId}`} editable={editable} workspace={workspace.data}
-        onSave={(merchantId) => update.mutateAsync({ merchantId })} />
+      {isPlatformAdmin && (
+        <MantaPayCard key={`mp-${activeWorkspaceId}`} editable={editable} workspace={workspace.data}
+          onSave={(merchantId) => update.mutateAsync({ merchantId })} />
+      )}
     </div>
   );
 }
@@ -65,15 +67,15 @@ function MantaPayCard({ editable, workspace, onSave }: {
 
   return (
     <div className="card">
-      <div className="sechead">MantaPay</div>
+      <div className="sechead">Payment provider</div>
       <p className="sub">
-        Your agency's own merchant account at MantaPay. The merchant ID goes on every payment link and
+        Your agency's own merchant account. The merchant ID goes on every payment link and
         is checked on every incoming notification, so a wrong value breaks both.
       </p>
       <div className="setrow">
         <div>
           <div className="k">{editable ? <label htmlFor="merchant-id">Merchant ID</label> : 'Merchant ID'}</div>
-          <div className="d">The MID MantaPay gave you. Leave it empty to use the platform default.</div>
+          <div className="d">The MID assigned to you. Leave it empty to use the platform default.</div>
         </div>
         {editable
           ? <div className="controls"><input id="merchant-id" type="text" maxLength={64} value={merchantId} onChange={(e) => setMerchantId(e.target.value)} /></div>
@@ -82,7 +84,7 @@ function MantaPayCard({ editable, workspace, onSave }: {
       <div className="setrow">
         <div>
           <div className="k">Notification URL</div>
-          <div className="d">Give this to MantaPay as the URL to notify when a payment happens.</div>
+          <div className="d">Give this to your payment provider as the URL to notify when a payment happens.</div>
         </div>
         <div className="controls">
           <span className="mono-val">{webhookUrl}</span>

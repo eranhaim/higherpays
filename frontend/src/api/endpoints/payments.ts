@@ -221,7 +221,7 @@ export function getPaymentExportColumns(labels: WorkspaceLabels): ExportColumn[]
   return [
   { key: 'date', label: 'Date' },
   { key: 'reference', label: 'HigherPays Order' },
-  { key: 'providerTransaction', label: 'MantaPay Transaction ID' },
+  { key: 'providerTransaction', label: 'Provider Transaction ID' },
   { key: 'status', label: 'Status' },
   { key: 'gross', label: 'Gross Revenue', feesOnly: true },
   { key: 'fee', label: 'Platform Fee', feesOnly: true },

@@ -25,10 +25,10 @@ import {
 } from '../../api/endpoints';
 import { usePaymentsData, type ExportInput } from './usePaymentsData';
 
-// MantaPay reports actual per-transaction fees only through its Search API.
+// The provider reports actual per-transaction fees only through its Search API.
 // Until a sale has one, the fee and the net shown for it are the rate card's
 // expectation, so every surface that shows them says so.
-const ESTIMATED_FEE_NOTE = 'Calculated from the configured MantaPay rates. Actual provider fees have not been reported.';
+const ESTIMATED_FEE_NOTE = 'Calculated from the configured provider rates. Actual provider fees have not been reported.';
 
 /** The payment's money figure as the list and the mobile card show it. */
 function PaymentAmount({ payment }: { payment: Payment }) {
@@ -50,7 +50,7 @@ const STATUS_TONE: Record<Exclude<PaymentStatus, 'pending'>, 'ok' | 'no' | 'warn
   superseded: 'warn',
 };
 
-// A superseded attempt is not lost money: MantaPay approved the same order
+// A superseded attempt is not lost money: the provider approved the same order
 // under a new transaction id, and the Completed payment beside it is that
 // approval. Saying so on the row is what stops the agency reading its own
 // history as a failure.
@@ -253,7 +253,7 @@ export default function PaymentsPage() {
       render: (p) => <span className="ref" title={p.linkReference ?? undefined}>{p.linkReference ?? '—'}</span>,
     },
     {
-      key: 'providerTransaction', header: 'MantaPay transaction',
+      key: 'providerTransaction', header: 'Provider transaction',
       render: (p) => <span className="ref" title={p.providerTransactionId ?? undefined}>{p.providerTransactionId ?? '—'}</span>,
     },
     {
@@ -474,17 +474,17 @@ export default function PaymentsPage() {
                 ? <Link className="ref" to={`/links?q=${encodeURIComponent(detail.linkReference)}`}>{detail.linkReference}</Link>
                 : '—'}
             </DetailRow>
-            <DetailRow label="MantaPay transaction ID">{detail.providerTransactionId ?? '—'}</DetailRow>
+            <DetailRow label="Provider transaction ID">{detail.providerTransactionId ?? '—'}</DetailRow>
             {detail.status === 'superseded' && (
               <div className="callout"><p className="sub">{SUPERSEDED_NOTE}</p></div>
             )}
             {detail.status === 'failed' && (
               <>
-                <DetailRow label="MantaPay decline reason">{declineReasonLabel(detail.declineReason)}</DetailRow>
-                <DetailRow label="MantaPay decline code">{detail.declineCode ?? 'Unknown'}</DetailRow>
-                <DetailRow label="MantaPay code source">{declineSourceLabel(detail.declineCodeSource)}</DetailRow>
-                <DetailRow label="MantaPay reason source">{declineSourceLabel(detail.declineReasonSource)}</DetailRow>
-                <p className="sub">The reason is MantaPay display text, or our own wording where MantaPay sent none; the signed reply code is the payment outcome.</p>
+                <DetailRow label="Decline reason">{declineReasonLabel(detail.declineReason)}</DetailRow>
+                <DetailRow label="Decline code">{detail.declineCode ?? 'Unknown'}</DetailRow>
+                <DetailRow label="Decline code source">{declineSourceLabel(detail.declineCodeSource)}</DetailRow>
+                <DetailRow label="Decline reason source">{declineSourceLabel(detail.declineReasonSource)}</DetailRow>
+                <p className="sub">The reason is the provider's display text, or our own wording where none was sent; the signed reply code is the payment outcome.</p>
               </>
             )}
             <DetailRow label="Customer">{detail.customer ?? '—'}{detail.customerTelegram ? <span className="sub inline"> · {detail.customerTelegram}</span> : null}</DetailRow>
@@ -697,11 +697,11 @@ function paymentFlowError(error: unknown): string {
 
 function declineSourceLabel(source: MantaPayDeclineSource | null | undefined): string {
   switch (source) {
-    case 'mantapay_webhook_signed': return 'Signed MantaPay webhook';
-    case 'mantapay_webhook': return 'MantaPay webhook';
-    case 'mantapay_status': return 'MantaPay status lookup';
-    case 'stored_raw_payload': return 'Stored MantaPay payload';
-    case 'derived_no_provider_text': return 'No reason from MantaPay';
+    case 'mantapay_webhook_signed': return 'Signed provider webhook';
+    case 'mantapay_webhook': return 'Provider webhook';
+    case 'mantapay_status': return 'Provider status lookup';
+    case 'stored_raw_payload': return 'Stored provider payload';
+    case 'derived_no_provider_text': return 'No reason from provider';
     default: return 'Unknown';
   }
 }
@@ -720,7 +720,7 @@ function PaymentFlowContent({ flow, labels }: {
     <div className="payment-flow">
       <div className="flow-card">
         <DetailRow label="HigherPays Order"><span className="ref">{flow.linkReference ?? '—'}</span></DetailRow>
-        <DetailRow label="MantaPay transaction ID">{flow.providerTransactionId ?? '—'}</DetailRow>
+        <DetailRow label="Provider transaction ID">{flow.providerTransactionId ?? '—'}</DetailRow>
       </div>
 
       <div className="flow-node flow-total">
@@ -752,7 +752,7 @@ function PaymentFlowContent({ flow, labels }: {
               <span className="field-label">Platform deductions</span>
               <Money amount={flow.fees.platform} currency={flow.currency} direction="out" emphasis />
             </div>
-            <DetailRow label={`MantaPay costs · ${PROVIDER_FEE_SOURCE_LABELS[flow.fees.providerSource]}`}>
+            <DetailRow label={`Provider costs · ${PROVIDER_FEE_SOURCE_LABELS[flow.fees.providerSource]}`}>
               <Money amount={flow.fees.provider} currency={flow.currency} direction="out" />
             </DetailRow>
             {flow.fees.providerSource === 'estimated' && (
@@ -760,7 +760,7 @@ function PaymentFlowContent({ flow, labels }: {
             )}
             <div className="flow-breakdown">
               {providerItems.map(([label, amount, rate]) => (
-                <DetailRow key={label} label={`MantaPay · ${rate ? rateLabel(label, rate, flow.currency) : label}`}>
+                <DetailRow key={label} label={`Provider · ${rate ? rateLabel(label, rate, flow.currency) : label}`}>
                   <Money amount={amount} currency={flow.currency} direction="out" />
                 </DetailRow>
               ))}
@@ -870,14 +870,14 @@ function ExportModal({ range, loadedCount, canSeeFees, labels, onClose, onSubmit
 const REVERSAL_COPY: Record<ReversalKind, { title: string; subtitle: string; confirm: string; feeLabel: string }> = {
   refund: {
     title: 'Record a refund',
-    subtitle: 'Issue the refund in MantaPay first. Recording it here reverses the sale so payouts stay correct.',
-    confirm: 'I have issued this refund in MantaPay.',
+    subtitle: 'Issue the refund with your payment provider first. Recording it here reverses the sale so payouts stay correct.',
+    confirm: 'I have issued this refund with the payment provider.',
     feeLabel: 'Refund fee',
   },
   chargeback: {
     title: 'Record a chargeback',
-    subtitle: "MantaPay has taken the money back from you. Recording it here reverses the sale and charges the chargeback fee to whoever bears it.",
-    confirm: 'MantaPay has reported this chargeback.',
+    subtitle: "The payment provider has taken the money back from you. Recording it here reverses the sale and charges the chargeback fee to whoever bears it.",
+    confirm: 'The payment provider has reported this chargeback.',
     feeLabel: 'Chargeback fee',
   },
 };

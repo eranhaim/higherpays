@@ -346,7 +346,7 @@ export default function LinksPage() {
       </StatGrid>
       <FilterBar>
         <CurrencyPicker />
-        <input type="search" className="search-input" aria-label="Search links" placeholder="Search HigherPays Order, MantaPay ID, agent"
+        <input type="search" className="search-input" aria-label="Search links" placeholder="Search HigherPays Order, provider ID, agent"
           value={filters.search} onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))} />
         <Select label="Type" hideLabel value={filters.type} onChange={(v) => setFilters((f) => ({ ...f, type: v as LinksFilters['type'] }))}>
           <option value="">All types</option>
@@ -453,16 +453,16 @@ export default function LinksPage() {
             )}
             {detailData.providerOutcome && (
               <>
-                <DetailRow label="MantaPay outcome">
+                <DetailRow label="Provider outcome">
                   <Pill tone={PROVIDER_STATUS_TONE[detailData.providerOutcome.status]}>
                     {PROVIDER_ATTEMPT_STATUS_LABELS[detailData.providerOutcome.status]}
                   </Pill>
                 </DetailRow>
-                <DetailRow label="MantaPay transaction ID">{detailData.providerOutcome.transactionId ?? '—'}</DetailRow>
-                <DetailRow label="MantaPay reply">
+                <DetailRow label="Provider transaction ID">{detailData.providerOutcome.transactionId ?? '—'}</DetailRow>
+                <DetailRow label="Provider reply">
                   {[detailData.providerOutcome.replyCode, detailData.providerOutcome.replyDescription].filter(Boolean).join(' · ') || '—'}
                 </DetailRow>
-                <DetailRow label="MantaPay outcome time"><DateCell ts={detailData.providerOutcome.occurredAt} /></DetailRow>
+                <DetailRow label="Provider outcome time"><DateCell ts={detailData.providerOutcome.occurredAt} /></DetailRow>
               </>
             )}
             <div className="field">

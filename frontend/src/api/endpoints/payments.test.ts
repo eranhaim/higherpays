@@ -20,7 +20,7 @@ describe('payment outcome labels', () => {
       account: 'Model', accounts: 'Models', agent: 'Closer', agents: 'Closers',
     });
     expect(columns.find((column) => column.key === 'reference')?.label).toBe('HigherPays Order');
-    expect(columns.find((column) => column.key === 'providerTransaction')?.label).toBe('MantaPay Transaction ID');
+    expect(columns.find((column) => column.key === 'providerTransaction')?.label).toBe('Provider Transaction ID');
     expect(columns.find((column) => column.key === 'creator')?.label).toBe('Model');
     expect(columns.find((column) => column.key === 'agent')?.label).toBe('Closer');
   });

@@ -41,7 +41,8 @@ export const NAV: NavGroup[] = [
       // opening, which is what an analyst has instead of links.create.
       { path: '/links', label: 'Payment links', perm: ['links.create', 'data.view_all'], icon: 'links' },
       { path: '/analytics', label: 'Analytics', perm: 'analytics.view', icon: 'analytics' },
-      { path: '/payouts', label: 'Payouts', scopedLabel: 'Earnings', perm: 'analytics.view', icon: 'payouts' },
+      // Payouts tab hidden per Marco's request (2026-10-19). The route and
+      // code stay so the page is reachable by URL for platform admins.
     ],
   },
   {
@@ -74,6 +75,8 @@ export const ROUTE_PERMISSION: Record<string, Permission | Permission[]> =
     '/accounts': 'team.view',
     '/agents': 'team.view',
     '/team': 'team.view',
+    // Hidden from the nav but still reachable by URL.
+    '/payouts': 'analytics.view',
   };
 
 export function navLabel(item: NavItem, labels: WorkspaceLabels, seesWholeWorkspace: boolean): string {

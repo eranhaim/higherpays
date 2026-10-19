@@ -177,7 +177,7 @@ function AgencyPayouts() {
       {(owedTotal > 0 || cash.heldInReserve > 0) && (
         <div className="card section">
           <h2 className="sechead">Cash position</h2>
-          <p className="sub">What reached you this period after fees, less the reserve MantaPay holds back, is what is available to settle today.</p>
+          <p className="sub">What reached you this period after fees, less the reserve held back by the payment provider, is what is available to settle today.</p>
           <div className="metric-row">
             <span className="ml wide">Received after fees</span>
             <span className="mt"><span className="tone-pos" style={{ width: `${(cash.received / cashScale) * 100}%` }} /></span>
@@ -186,7 +186,7 @@ function AgencyPayouts() {
           <div className="metric-row">
             {/* Named for its holder: the agency's own rolling reserve is a
                 separate, still-unbuilt line, and the two must not read alike. */}
-            <span className="ml wide">Held in reserve by MantaPay</span>
+            <span className="ml wide">Held in reserve by the payment provider</span>
             <span className="mt"><span className="tone-accent" style={{ width: `${(cash.heldInReserve / cashScale) * 100}%` }} /></span>
             <span className="mv">{formatMoney(cash.heldInReserve, currency)}</span>
           </div>
