@@ -199,13 +199,14 @@ export default function AgencyPage() {
     .map((invite) => ({ kind: 'invite', key: `invite:${invite.id}`, invite }));
 
   const matchingMembers = members
+    .filter((member) => isPlatformAdmin || !member.isPlatformAdmin)
     .filter((member) => typeFilter === '' ? true : typeFilter !== 'invited' && memberType(member) === typeFilter)
     .filter((member) => {
       const state = memberState(member);
       if (stateFilter === 'all') return true;
       if (stateFilter !== '') return state === stateFilter;
       // The plain roster hides anyone who has stopped working here, but a
-      // search is a hunt for someone in particular Γאפ finding nothing there
+      // search is a hunt for someone in particular — finding nothing there
       // reads as data loss.
       return query !== '' || state === 'active' || state === 'paused';
     })
@@ -227,7 +228,7 @@ export default function AgencyPage() {
     isRowHeader: true,
     render: (row) => row.kind === 'invite' ? (
       <div className="person">
-        <div className="avatar" aria-hidden="true">Γאפ</div>
+        <div className="avatar" aria-hidden="true">—</div>
         <div>
           <div className="cname">{row.invite.email}</div>
           <div className="cemail">Has not accepted yet</div>
@@ -257,7 +258,7 @@ export default function AgencyPage() {
           return (
             <>
               <span className="rolebadge plain">Invited</span>
-              <span className="sub inline"> ┬╖ {row.invite.role === 'workspace_admin' ? 'Admin' : 'Member'}</span>
+              <span className="sub inline"> · {row.invite.role === 'workspace_admin' ? 'Admin' : 'Member'}</span>
             </>
           );
         }
@@ -266,7 +267,7 @@ export default function AgencyPage() {
         return (
           <>
             <span className={tone ? `rolebadge ${tone}` : 'rolebadge'}>{typeLabel(type)}</span>
-            {row.member.accountName ? <span className="sub inline"> ┬╖ {row.member.accountName}</span> : null}
+            {row.member.accountName ? <span className="sub inline"> · {row.member.accountName}</span> : null}
           </>
         );
       },
@@ -290,7 +291,7 @@ export default function AgencyPage() {
       key: 'terms',
       header: 'Terms',
       render: (row: Row) => {
-        if (row.kind === 'invite') return <span className="sub">Γאפ</span>;
+        if (row.kind === 'invite') return <span className="sub">—</span>;
         const { member } = row;
         if (member.accountId && member.revenueSplitPct !== undefined) {
           return member.payModel === 'salary'
@@ -300,16 +301,16 @@ export default function AgencyPage() {
         if (member.agentId && member.commissionPct !== undefined) {
           return <span className="mono">{member.commissionPct}% commission</span>;
         }
-        return <span className="sub">Γאפ</span>;
+        return <span className="sub">—</span>;
       },
     }] : []),
     ...(can('data.view_all') ? [{
       key: 'assignments',
       header: 'Assignments',
       render: (row: Row) => {
-        if (row.kind === 'invite') return <span className="sub">Γאפ</span>;
+        if (row.kind === 'invite') return <span className="sub">—</span>;
         const { member } = row;
-        if (member.assignedCount == null) return <span className="sub">Γאפ</span>;
+        if (member.assignedCount == null) return <span className="sub">—</span>;
         const unit = member.accountId ? labels.agents.toLowerCase() : labels.accounts.toLowerCase();
         return <span className="mono">{member.assignedCount} {unit}</span>;
       },
@@ -350,7 +351,7 @@ export default function AgencyPage() {
       header: 'Sales',
       sortKey: 'sales',
       render: (row: Row) => {
-        if (row.kind === 'invite' || row.member.totalCustomerPaid == null) return <span className="sub">Γאפ</span>;
+        if (row.kind === 'invite' || row.member.totalCustomerPaid == null) return <span className="sub">—</span>;
         const amount = row.member.totalCustomerPaid;
         return <Money amount={amount} currency={currency} direction={amount < 0 ? 'out' : 'in'} />;
       },
@@ -574,7 +575,7 @@ export default function AgencyPage() {
       {editing && editingType === 'agent' && !editingAgent && (
         <Modal open onClose={() => setEditing(null)} title={`Edit ${editing.name}`}>
           <p className="sub">
-            {isLoading ? 'LoadingΓאª' : `Couldn't load this ${labels.agent.toLowerCase()}.`}
+            {isLoading ? 'Loading…' : `Couldn't load this ${labels.agent.toLowerCase()}.`}
           </p>
         </Modal>
       )}
@@ -666,7 +667,7 @@ export default function AgencyPage() {
               className={confirming.status === 'archived' ? 'btn danger' : 'btn'} disabled={isBusy}
               onClick={() => void applyCreatorStatus(confirming.member, confirming.status)}
             >
-              {isBusy ? 'SavingΓאª' : confirming.status === 'paused' ? 'Pause' : 'Archive'}
+              {isBusy ? 'Saving…' : confirming.status === 'paused' ? 'Pause' : 'Archive'}
             </button>
           </div>
         )}
@@ -700,7 +701,7 @@ export default function AgencyPage() {
           <div className="modal-actions">
             <button className="btn ghost" onClick={() => setCancelling(null)}>Keep it</button>
             <button className="btn danger" disabled={isBusy} onClick={() => void confirmCancelInvite(cancelling)}>
-              {isBusy ? 'CancellingΓאª' : isExpired(cancelling) ? 'Clear invite' : 'Cancel invite'}
+              {isBusy ? 'Cancelling…' : isExpired(cancelling) ? 'Clear invite' : 'Cancel invite'}
             </button>
           </div>
         )}

@@ -26,7 +26,7 @@ function parseAmount(text: string): number {
 
 /**
  * The operator console: every agency, not one of them. Access comes from
- * `users.is_platform_admin`, a tier above workspace roles Γאפ so this page sits
+ * `users.is_platform_admin`, a tier above workspace roles — so this page sits
  * outside the workspace layout and is gated on its own check.
  */
 export default function PlatformPage() {
@@ -100,7 +100,7 @@ export default function PlatformPage() {
   const userColumns: Column<PlatformUser>[] = [
     { key: 'person', header: 'User', render: (u) => <div><span className="cname">{u.fullName}</span><span className="cemail">{u.email}</span></div> },
     { key: 'access', header: 'Access', render: (u) => <>{u.isPlatformAdmin && <Pill tone="info">Platform admin</Pill>} {!u.isPlatformAdmin && <Pill>Agency user</Pill>}</> },
-    { key: 'workspaces', header: 'Agencies', render: (u) => <span className="sub">{u.memberships.map((m) => `${m.workspaceName} ┬╖ ${m.role}`).join(' ┬╖ ') || 'No agency access'}</span> },
+    { key: 'workspaces', header: 'Agencies', render: (u) => <span className="sub">{u.memberships.map((m) => `${m.workspaceName} · ${m.role}`).join(' · ') || 'No agency access'}</span> },
     { key: 'login', header: 'Last sign-in', render: (u) => u.lastLoginAt ? <DateCell ts={u.lastLoginAt} /> : <span className="sub">Never</span> },
     {
       key: 'actions', header: 'Actions', hideHeader: true, align: 'right',
@@ -150,20 +150,20 @@ export default function PlatformPage() {
         <StatCard isUnknown={!overview} label="Agencies" value={overview?.counts.workspaces_active ?? 0} sub={`${overview?.counts.workspaces ?? 0} in total`} />
         {overview?.moneyByCurrency.map((m) => (
           <Fragment key={m.currency}>
-            <StatCard label={`Gross processed ┬╖ ${m.currency}`} value={<Money amount={m.gross} currency={m.currency} direction="in" />} sub={`${m.sales} sales`} />
-            <StatCard label={`Platform fees ┬╖ ${m.currency}`} value={<Money amount={m.platform_fees} currency={m.currency} />} sub="Charged to agencies" />
-            <StatCard label={`HigherPays margin ┬╖ ${m.currency}`} value={<Money amount={m.higherpays_margin} currency={m.currency} direction="in" emphasis />} sub="After PSP costs" />
+            <StatCard label={`Gross processed · ${m.currency}`} value={<Money amount={m.gross} currency={m.currency} direction="in" />} sub={`${m.sales} sales`} />
+            <StatCard label={`Platform fees · ${m.currency}`} value={<Money amount={m.platform_fees} currency={m.currency} />} sub="Charged to agencies" />
+            <StatCard label={`HigherPays margin · ${m.currency}`} value={<Money amount={m.higherpays_margin} currency={m.currency} direction="in" emphasis />} sub="After PSP costs" />
           </Fragment>
         ))}
       </StatGrid>
 
-      {isLoading ? <LoadingCard label="Loading agenciesΓאª" />
+      {isLoading ? <LoadingCard label="Loading agencies…" />
         : isError ? <ErrorCard message="Couldn't load the agency list." />
           : <DataTable columns={columns} rows={workspaces} rowKey={(w) => w.id} emptyTitle="No agencies yet." emptyHint="Add the first one from the header." />}
 
       <div className="section">
         <div className="sechead">All users</div>
-        <p className="sub">Platform-wide access. For agency-specific roles and invitations, open that agencyΓאשs People & access page.</p>
+        <p className="sub">Platform-wide access. For agency-specific roles and invitations, open that agency’s People & access page.</p>
         <DataTable columns={userColumns} rows={users.data ?? []} rowKey={(u) => u.id}
           isLoading={users.isLoading} emptyTitle="No users yet." />
       </div>
@@ -188,7 +188,7 @@ export default function PlatformPage() {
         {suspending && (
           <div className="modal-actions">
             <button className="btn ghost" onClick={() => setSuspending(null)}>Keep active</button>
-            <button className="btn danger" disabled={isBusy} onClick={() => changeStatus(suspending, 'suspended')}>{isBusy ? 'SuspendingΓאª' : 'Suspend'}</button>
+            <button className="btn danger" disabled={isBusy} onClick={() => changeStatus(suspending, 'suspended')}>{isBusy ? 'Suspending…' : 'Suspend'}</button>
           </div>
         )}
       </Modal>
@@ -223,7 +223,7 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
   const submit = async () => {
     if (!name.trim()) { toast('Agency name is required.'); return; }
     if (!adminEmail.includes('@')) { toast('A valid admin email is required.'); return; }
-    if (Object.values(pct).some(Number.isNaN)) { toast('Percentages must be 0Γאף100.'); return; }
+    if (Object.values(pct).some(Number.isNaN)) { toast('Percentages must be 0–100.'); return; }
     if (Object.values(fees).some(Number.isNaN)) { toast('Fees must be amounts of 0 or more.'); return; }
     setIsSaving(true);
     try {
@@ -292,11 +292,11 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
           {amountField('agency-fixed', 'Transaction fee', fixedFee, setFixedFee)}
           {amountField('agency-checkout', 'Checkout fee (paid by the customer)', checkoutFee, setCheckoutFee)}
         </div>
-        <p className="sub">Blended rate the agency sees: {blended === null ? 'Γאפ' : `${blended}%`}.</p>
+        <p className="sub">Blended rate the agency sees: {blended === null ? '—' : `${blended}%`}.</p>
 
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn" disabled={isSaving}>{isSaving ? 'CreatingΓאª' : 'Create agency'}</button>
+          <button type="submit" className="btn" disabled={isSaving}>{isSaving ? 'Creating…' : 'Create agency'}</button>
         </div>
       </form>
     </Modal>
