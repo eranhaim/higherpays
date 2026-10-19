@@ -526,6 +526,9 @@ const RevenueRule = entity('revenue_rules', {
 
 // The split of one transaction, written once and never edited. A reversal is
 // a new entry, which is why amounts carry four decimals: no rounding drift.
+// For marketplace orders with per-creator allocations, one sale entry is
+// written per line (marketplace_order_line_id set); the parts-sum CHECK still
+// holds per row.
 const RevenueEntry = entity('revenue_entries', {
   fields: {
     id:                uuid().primaryKey(),

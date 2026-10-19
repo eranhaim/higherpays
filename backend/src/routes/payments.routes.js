@@ -114,9 +114,15 @@ function paymentFilterParams(req, scope, { canFilterFees }) {
 
 const PAYMENT_FILTERS = `
   ($2::uuid IS NULL OR p.agent_id = $2::uuid)
-  AND ($3::uuid IS NULL OR p.account_id = $3::uuid)
+  AND ($3::uuid IS NULL OR (p.account_id = $3::uuid
+       OR EXISTS (SELECT 1 FROM marketplace_order_lines mol
+                    JOIN marketplace_orders mo ON mo.marketplace_order_id = mol.marketplace_order_id
+                   WHERE mo.payment_link_id = p.payment_link_id AND mol.account_id = $3::uuid)))
   AND ($4::text IS NULL OR p.status = $4::text)
-  AND ($5::uuid IS NULL OR p.account_id = $5::uuid)
+  AND ($5::uuid IS NULL OR (p.account_id = $5::uuid
+       OR EXISTS (SELECT 1 FROM marketplace_order_lines mol
+                    JOIN marketplace_orders mo ON mo.marketplace_order_id = mol.marketplace_order_id
+                   WHERE mo.payment_link_id = p.payment_link_id AND mol.account_id = $5::uuid)))
   AND ($6::uuid IS NULL OR p.agent_id = $6::uuid)
   AND ($7::uuid IS NULL OR p.customer_id = $7::uuid)
   AND ($8::uuid IS NULL OR p.category_id = $8::uuid)
@@ -430,91 +436,126 @@ router.post('/:id/reactivate', requirePermission('archive.manage'), requireArchi
 router.get('/:id/flow', requirePermission('payments.view'), requirePlatformAdmin, asyncHandler(async (req, res) => {
   const row = (await query(
     `SELECT p.id, p.status, p.amount, p.currency, pl.reference_id AS link_reference,
-            t.provider_transaction_id, t.gross AS transaction_gross, t.surcharge, t.fee_is_estimate,
-            re.id AS sale_entry_id, re.gross AS sale_gross,
-            re.fee_mdr, re.fee_fixed, re.fee_settlement, re.psp_fee,
-            re.platform_fee, re.platform_margin, re.distributable,
-            re.account_amount, re.agent_amount, re.agency_amount,
-            a.name AS account, a.revenue_split_pct, a.pay_model,
-            u.full_name AS agent, ag.commission_pct,
-            pf.fee_model, pf.mdr_pct, pf.psp_rate_pct, pf.settlement_pct,
-            pf.margin_rate_pct
+            t.id AS tx_id, t.provider_transaction_id, t.gross AS transaction_gross, t.surcharge, t.fee_is_estimate,
+            pf.fee_model, pf.mdr_pct, pf.psp_rate_pct, pf.settlement_pct, pf.margin_rate_pct
        FROM payments p
        LEFT JOIN payment_links pl ON pl.id = p.payment_link_id
        LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
-       LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
-       LEFT JOIN accounts a ON a.id = re.account_id
-       LEFT JOIN agents ag ON ag.id = re.agent_id
-       LEFT JOIN users u ON u.id = ag.user_id
        LEFT JOIN LATERAL effective_platform_fee(p.workspace_id, COALESCE(t.occurred_at, p.occurred_at)) pf ON true
       WHERE p.workspace_id = $1 AND p.id = $2`,
     [wid(req), req.params.id])).rows[0];
   if (!row) return res.status(404).json({ error: 'not_found' });
 
-  const saleAmount = Number(row.sale_gross ?? row.transaction_gross ?? row.amount);
+  // Fetch all sale entries (1 for normal, N for multi-creator marketplace).
+  const saleEntries = row.tx_id ? (await query(
+    `SELECT re.*, a.name AS account, a.revenue_split_pct, a.pay_model,
+            u.full_name AS agent, ag.commission_pct
+       FROM revenue_entries re
+       LEFT JOIN accounts a ON a.id = re.account_id
+       LEFT JOIN agents ag ON ag.id = re.agent_id
+       LEFT JOIN users u ON u.id = ag.user_id
+      WHERE re.transaction_id = $1 AND re.entry_type = 'sale'
+      ORDER BY re.id`,
+    [row.tx_id])).rows : [];
+
+  const first = saleEntries[0] || {};
+  const saleAmount = Number(first.gross ?? row.transaction_gross ?? row.amount);
   const checkoutFee = Number(row.surcharge || 0);
   const customerTotal = saleAmount + checkoutFee;
-  const mdrAmount = Number(row.fee_mdr || 0);
-  const fixedAmount = Number(row.fee_fixed || 0);
+  const mdrAmount = Number(first.fee_mdr || 0);
+  const fixedAmount = Number(first.fee_fixed || 0);
   const settlementBase = row.fee_model === 'cascade'
     ? customerTotal - mdrAmount - fixedAmount
     : customerTotal;
   const mdrRate = row.mdr_pct == null ? Number(row.psp_rate_pct || 0) : Number(row.mdr_pct);
   const settlementRate = row.mdr_pct == null ? 0 : Number(row.settlement_pct || 0);
   const marginRate = Number(row.margin_rate_pct || 0);
-  const providerItemised = Number(row.fee_mdr || 0) + Number(row.fee_fixed || 0) + Number(row.fee_settlement || 0);
-  res.json({
+
+  // Aggregate across all sale entries.
+  const totals = {
+    gross: 0, platformFee: 0, platformMargin: 0, pspFee: 0, distributable: 0,
+    accountAmount: 0, agentAmount: 0, agencyAmount: 0,
+    feeMdr: 0, feeFixed: 0, feeSettlement: 0,
+  };
+  for (const e of saleEntries) {
+    totals.gross += Number(e.gross || 0);
+    totals.platformFee += Number(e.platform_fee || 0);
+    totals.platformMargin += Number(e.platform_margin || 0);
+    totals.pspFee += Number(e.psp_fee || 0);
+    totals.distributable += Number(e.distributable || 0);
+    totals.accountAmount += Number(e.account_amount || 0);
+    totals.agentAmount += Number(e.agent_amount || 0);
+    totals.agencyAmount += Number(e.agency_amount || 0);
+    totals.feeMdr += Number(e.fee_mdr || 0);
+    totals.feeFixed += Number(e.fee_fixed || 0);
+    totals.feeSettlement += Number(e.fee_settlement || 0);
+  }
+
+  const providerItemised = totals.feeMdr + totals.feeFixed + totals.feeSettlement;
+  const flowRes = {
     paymentId: row.id,
     status: row.status,
     currency: row.currency,
     linkReference: row.link_reference,
     providerTransactionId: row.provider_transaction_id,
     customerTotal,
-    saleAmount,
+    saleAmount: totals.gross || saleAmount,
     checkoutFee,
-    settled: Boolean(row.sale_entry_id),
+    settled: saleEntries.length > 0,
     fees: {
-      mdr: Number(row.fee_mdr || 0),
-      fixed: Number(row.fee_fixed || 0),
-      settlement: Number(row.fee_settlement || 0),
-      provider: Number(row.psp_fee || providerItemised),
+      mdr: totals.feeMdr,
+      fixed: totals.feeFixed,
+      settlement: totals.feeSettlement,
+      provider: totals.pspFee || providerItemised,
       providerSource: row.fee_is_estimate === false ? 'actual' : 'estimated',
-      platform: Number(row.platform_fee || 0),
-      higherPaysMargin: Number(row.platform_margin || 0),
+      platform: totals.platformFee,
+      higherPaysMargin: totals.platformMargin,
     },
-    distributable: Number(row.distributable || 0),
-    distribution: {
+    distributable: totals.distributable,
+    distribution: saleEntries.length <= 1 ? {
       account: {
-        name: row.account,
-        amount: Number(row.account_amount || 0),
-        percentage: row.pay_model === 'salary' ? 0 : Number(row.revenue_split_pct || 0),
-        base: Number(row.distributable || 0),
+        name: first.account,
+        amount: Number(first.account_amount || 0),
+        percentage: first.pay_model === 'salary' ? 0 : Number(first.revenue_split_pct || 0),
+        base: Number(first.distributable || 0),
       },
       agent: {
-        name: row.agent,
-        amount: Number(row.agent_amount || 0),
-        percentage: Number(row.commission_pct || 0),
-        base: Number(row.distributable || 0),
+        name: first.agent,
+        amount: Number(first.agent_amount || 0),
+        percentage: Number(first.commission_pct || 0),
+        base: Number(first.distributable || 0),
       },
       agency: {
-        amount: Number(row.agency_amount || 0),
-        percentage: Math.max(
-          0,
-          100
-            - (row.pay_model === 'salary' ? 0 : Number(row.revenue_split_pct || 0))
-            - Number(row.commission_pct || 0)
-        ),
-        base: Number(row.distributable || 0),
+        amount: Number(first.agency_amount || 0),
+        percentage: Math.max(0, 100
+          - (first.pay_model === 'salary' ? 0 : Number(first.revenue_split_pct || 0))
+          - Number(first.commission_pct || 0)),
+        base: Number(first.distributable || 0),
       },
-    },
+    } : undefined,
     rates: {
       mdr: { percentage: mdrRate, base: customerTotal },
       settlement: row.settlement_pct == null || row.mdr_pct == null
         ? null
         : { percentage: settlementRate, base: settlementBase },
-      higherPaysMargin: { percentage: marginRate, base: saleAmount },
+      higherPaysMargin: { percentage: marginRate, base: totals.gross || saleAmount },
     },
-  });
+  };
+
+  // Multi-creator allocations.
+  if (saleEntries.length > 1) {
+    flowRes.allocations = saleEntries.map((e) => ({
+      accountId: e.account_id,
+      account: e.account,
+      gross: Number(e.gross),
+      distributable: Number(e.distributable),
+      accountAmount: Number(e.account_amount),
+      agencyAmount: Number(e.agency_amount),
+      splitPct: e.pay_model === 'salary' ? 0 : Number(e.revenue_split_pct || 0),
+    }));
+  }
+
+  res.json(flowRes);
 }));
 
 // PATCH /:id/details  { categoryId, customerId? | customer?: { name, telegramName?, email? } }

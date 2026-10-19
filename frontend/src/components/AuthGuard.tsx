@@ -4,12 +4,14 @@ import { useQuery } from '@tanstack/react-query';
 import { authApi } from '../api/endpoints';
 import { useAuthStore, useIsAuthenticated } from '../store/auth';
 import { useSessionStore } from '../store/session';
+import { useWorkspaceUpdates } from '../hooks/useWorkspaceUpdates';
 
 /**
  * Route guard. Sends unauthenticated visitors to `/login`. The original
  * location is preserved in router state so login can bounce them back.
  */
 export function AuthGuard() {
+  useWorkspaceUpdates();
   const isAuthenticated = useIsAuthenticated();
   const location = useLocation();
   const setUser = useAuthStore((s) => s.setUser);

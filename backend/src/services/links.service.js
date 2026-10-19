@@ -19,6 +19,7 @@ const provider = require('../providers/mantapay');
 const { DECLINE_SOURCE } = require('../providers/mantapay-reply');
 const paymentsService = require('./payments.service');
 const { recordLinkEvent } = require('./linkEvents');
+const { publishWorkspaceUpdate } = require('../events/workspaceEvents');
 
 const DEFAULT_GRACE_MINUTES = 10;
 const LOOP_INTERVAL_MS = 10 * 60_000;
@@ -39,7 +40,7 @@ const LATE_APPROVAL_BATCH = 25;
 const SETTLED_STATUSES = ['approved', 'declined'];
 
 async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
-  const summary = { checked: 0, updated: [], skipped: [] };
+  const summary = { checked: 0, updated: [], skipped: [], changed: false };
 
   const stuck = (await c.query(
     `SELECT id, reference_id, type, amount, checkout_fee, currency, expires_at < now() AS is_expired
@@ -77,6 +78,7 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
           declineReasonSource: DECLINE_SOURCE.status,
           rawPayload: transaction,
         });
+        summary.changed = true;
         summary.updated.push({
           linkId: link.id,
           paymentId: outcome.paymentId,
@@ -106,6 +108,7 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
         declineReasonSource: DECLINE_SOURCE.status,
         rawPayload: statusResp,
       });
+      summary.changed = true;
       if (st === 'approved') {
         summary.updated.push({
           linkId: link.id,
@@ -129,6 +132,7 @@ async function reconcileWorkspace(c, ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
         workspaceId: ws.id, linkId: link.id, eventType: 'expired',
         source: 'higherpays', idempotencyKey: 'expired',
       });
+      summary.changed = true;
       summary.updated.push({ linkId: link.id, to: 'expired', via: st });
       continue;
     }
@@ -217,6 +221,7 @@ async function reconcileAllWorkspaces() {
   for (const ws of workspaces) {
     try {
       const summary = await withTransaction((c) => reconcileWorkspace(c, ws));
+      if (summary.changed) publishWorkspaceUpdate(ws.id);
       if (summary.checked > 0) {
         log.info({ workspaceId: ws.id, checked: summary.checked, updated: summary.updated.length, skipped: summary.skipped.length }, 'reconcile');
       }

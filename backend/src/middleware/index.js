@@ -45,6 +45,7 @@ const requireAuth = asyncHandler(async (req, _res, next) => {
     id: payload.sub,
     email: payload.email,
     name: payload.name,
+    accessTokenExpiresAt: payload.exp ? payload.exp * 1000 : null,
     sessionId: payload.sid || null,
     twoFactorAuthenticated: payload.mfa === true,
     actorId: payload.impersonation === true ? payload.actor : null,

@@ -118,10 +118,9 @@ config.integrations = [
     config.marketplaceIntegrationApiKeyHash
     && config.marketplaceWorkspaceId
     && config.marketplaceAccountId
-    && config.marketplaceAgentId
     && config.marketplaceWebhookUrl
     && config.marketplaceWebhookSigningSecret,
-  ), needs: 'MARKETPLACE_INTEGRATION_API_KEY_HASH, MARKETPLACE_WORKSPACE_ID, MARKETPLACE_ACCOUNT_ID, MARKETPLACE_AGENT_ID, MARKETPLACE_WEBHOOK_URL, MARKETPLACE_WEBHOOK_SIGNING_SECRET' },
+  ), needs: 'MARKETPLACE_INTEGRATION_API_KEY_HASH, MARKETPLACE_WORKSPACE_ID, MARKETPLACE_ACCOUNT_ID, MARKETPLACE_WEBHOOK_URL, MARKETPLACE_WEBHOOK_SIGNING_SECRET' },
 ];
 
 module.exports = config;

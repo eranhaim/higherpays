@@ -12,8 +12,7 @@
 import { useAuthStore } from '../store/auth';
 import { useSessionStore } from '../store/session';
 
-const API_URL = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '');
-export { API_URL as apiBaseUrl };
+export const apiBaseUrl = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '');
 
 export class HttpError extends Error {
   readonly status: number;
@@ -49,7 +48,7 @@ function sessionHeaders(opts: HttpOptions): Record<string, string> {
 }
 
 async function send(path: string, opts: HttpOptions): Promise<Response> {
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${apiBaseUrl}${path}`, {
     method: opts.method ?? 'GET',
     headers: sessionHeaders(opts),
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),

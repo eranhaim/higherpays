@@ -352,7 +352,17 @@ async function recordPaymentReversal(client, workspaceId, {
 
   const fn = kind === 'refund' ? 'fn_post_refund' : 'fn_post_chargeback';
   const status = kind === 'refund' ? 'refunded' : 'charged_back';
-  const entry = (await client.query(`SELECT * FROM ${fn}($1)`, [p.sale_tx_id])).rows[0];
+  await client.query(`SELECT * FROM ${fn}($1)`, [p.sale_tx_id]);
+  // Aggregate all reversal entries (1 for normal links, N for multi-creator
+  // marketplace orders).
+  const entry = (await client.query(
+    `SELECT COALESCE(SUM(chargeback_fee), 0) AS chargeback_fee,
+            COALESCE(SUM(account_amount), 0) AS account_amount,
+            COALESCE(SUM(agent_amount), 0)   AS agent_amount,
+            COALESCE(SUM(agency_amount), 0)  AS agency_amount
+       FROM revenue_entries WHERE transaction_id = $1 AND entry_type = $2`,
+    [p.sale_tx_id, kind],
+  )).rows[0];
   await client.query(
     `INSERT INTO transactions
        (workspace_id, payment_id, type, status, gross, currency, provider_transaction_id, raw_payload, occurred_at)
