@@ -1,4 +1,4 @@
-CREATE TABLE legacy_import_exclusions (
+CREATE TABLE IF NOT EXISTS legacy_import_exclusions (
   source_database text NOT NULL,
   source_workspace_id uuid NOT NULL,
   source_table text NOT NULL,
@@ -9,7 +9,7 @@ CREATE TABLE legacy_import_exclusions (
   PRIMARY KEY (source_database, source_workspace_id, source_table, source_id)
 );
 
-CREATE TABLE legacy_recovery_entities (
+CREATE TABLE IF NOT EXISTS legacy_recovery_entities (
   workspace_id uuid NOT NULL REFERENCES workspaces(id),
   entity_type text NOT NULL,
   entity_id uuid NOT NULL,
