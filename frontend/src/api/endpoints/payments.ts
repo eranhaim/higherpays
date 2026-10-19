@@ -5,18 +5,30 @@ import type { WorkspaceLabels } from '../types';
 import type { LinkType, ReassignImpact, ReassignInput } from './links';
 
 /** Mirrors PAYMENT_STATUS in the schema. */
-export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded';
-export const PAYMENT_STATUSES: PaymentStatus[] = ['pending', 'paid', 'failed', 'refunded'];
+export type PaymentStatus = 'pending' | 'paid' | 'failed' | 'refunded' | 'superseded';
+export const PAYMENT_STATUSES: PaymentStatus[] = ['pending', 'paid', 'failed', 'refunded', 'superseded'];
 
 export const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
   pending: 'Waiting for payment',
   paid: 'Completed',
   failed: 'Failed',
   refunded: 'Refunded',
+  superseded: 'Retried and paid',
 };
 
 export function paymentStatusLabel(payment: { status: PaymentStatus; needsDetails?: boolean }): string {
   return payment.needsDetails ? 'Waiting to fill details' : PAYMENT_STATUS_LABELS[payment.status];
+}
+
+export type MantaPayDeclineSource =
+  | 'mantapay_webhook_signed'
+  | 'mantapay_webhook'
+  | 'mantapay_status'
+  | 'stored_raw_payload'
+  | 'derived_no_provider_text';
+
+export function declineReasonLabel(reason: string | null | undefined): string {
+  return reason || 'Unknown';
 }
 
 /** Money that was returned after a successful sale. */
@@ -24,10 +36,25 @@ export function isReversed(status: PaymentStatus): boolean {
   return status === 'refunded';
 }
 
+/**
+ * The one money figure the server sent for a payment: gross for a caller who
+ * sees the whole workspace, net for a scoped seat. The server never sends
+ * both — together they are the platform fee by subtraction — so there is
+ * nothing to choose between here. Null before a sale settles, when a scoped
+ * seat has no net yet.
+ */
+export function visibleAmount(payment: Payment): number | null {
+  return payment.amount ?? payment.amountAfterFees ?? null;
+}
+
 /** One checkout attempt. A reusable link has many. */
 export interface Payment {
   id: string;
-  amount: number;
+  /**
+   * The gross sale price. Only sent to callers who see the whole workspace:
+   * beside `amountAfterFees` it is the platform fee by subtraction.
+   */
+  amount?: number;
   currency: string;
   status: PaymentStatus;
   paymentMethod: string | null;
@@ -48,16 +75,27 @@ export interface Payment {
   linkType: LinkType | null;
   reviewRequired: boolean;
   reviewReason: 'duplicate_single_use_charge' | null;
+  /** Present only on failed MantaPay attempts. */
+  declineCode?: string | null;
+  declineReason?: string | null;
+  declineCodeSource?: MantaPayDeclineSource | null;
+  declineReasonSource?: MantaPayDeclineSource | null;
   archivedAt: string | null;
   /** Paid, but the agent has not yet said who paid and what for. */
   needsDetails: boolean;
   /**
    * The final ledger amount after all provider and platform fees. This is sent
-   * to limited-scope users instead of a fee breakdown.
+   * to limited-scope users instead of the gross and the fee breakdown, and is
+   * null until the sale settles.
    */
   amountAfterFees?: number | null;
   /** Only sent to callers who see the whole workspace. */
   platformFee?: number | null;
+  /**
+   * True while MantaPay has not reported the actual processing fee, so
+   * `platformFee` and any net derived from it are the rate card's expectation.
+   */
+  feeIsEstimate?: boolean;
 }
 
 export interface PaymentFlowParty {
@@ -105,13 +143,22 @@ export interface PaymentFlow {
 }
 
 export interface PaymentsSummary {
-  grossContent: number;
-  /** Sent to limited-scope users: the agency's actual receipt after all fees. */
+  /** Only sent to callers with workspace-wide data access. */
+  grossContent?: number;
+  /** Sent to limited-scope users instead of gross: the net revenue after all fees. */
   afterFees?: number;
   /** Only sent to callers with workspace-wide data access. */
   platformFees?: number;
   /** Only sent to callers with workspace-wide data access. */
   netProfit?: number;
+  /**
+   * Workspace-wide access only. True when any matching sale still carries an
+   * estimated provider fee, which makes `platformFees` and `netProfit`
+   * estimates too.
+   */
+  feesEstimated?: boolean;
+  /** Workspace-wide access only. Declined attempts; each one costs the decline fee. */
+  declinedCount?: number;
   approvedPayments: number;
   attempts: number;
   approvalRate: number;
@@ -135,14 +182,30 @@ export interface ListPaymentsQuery {
   status?: string;
   accountId?: string;
   agentId?: string;
-  /** YYYY-MM-DD, inclusive. */
+  customerId?: string;
+  categoryId?: string;
+  /** ISO instant, inclusive. A picker's day becomes one through `toInstantRange`. */
   from?: string;
   to?: string;
   /** Matches HigherPays Order, MantaPay transaction ID, customer, account, or agent. */
   q?: string;
   needsDetails?: boolean;
+  minAmount?: string;
+  maxAmount?: string;
+  /** Available only to workspace-wide viewers. */
+  minFee?: string;
+  /** Available only to workspace-wide viewers. */
+  maxFee?: string;
   sort?: PaymentSort;
   dir?: 'asc' | 'desc';
+}
+
+export interface PaymentFilterOptions {
+  statuses: PaymentStatus[];
+  accounts: { id: string; name: string }[];
+  agents: { id: string; name: string }[];
+  customers: { id: string; name: string }[];
+  categories: { id: string; name: string }[];
 }
 
 /** The agent's completion: pick an existing customer or type a new one. */
@@ -160,9 +223,9 @@ export function getPaymentExportColumns(labels: WorkspaceLabels): ExportColumn[]
   { key: 'reference', label: 'HigherPays Order' },
   { key: 'providerTransaction', label: 'MantaPay Transaction ID' },
   { key: 'status', label: 'Status' },
-  { key: 'gross', label: 'Gross Revenue' },
+  { key: 'gross', label: 'Gross Revenue', feesOnly: true },
   { key: 'fee', label: 'Platform Fee', feesOnly: true },
-  { key: 'net', label: 'Net Revenue', feesOnly: true },
+  { key: 'net', label: 'Net Revenue' },
   { key: 'customer', label: 'Customer' },
   { key: 'telegram', label: 'Telegram' },
   { key: 'creator', label: labels.account },
@@ -197,11 +260,7 @@ function filterParams(filters: ListPaymentsQuery): URLSearchParams {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(filters)) {
     if (v === undefined || v === '' || v === false) continue;
-    // The date inputs give a day; the server compares timestamps, so the
-    // upper bound has to cover the whole of that day.
-    if (k === 'from') qs.set('from', `${v}T00:00:00`);
-    else if (k === 'to') qs.set('to', `${v}T23:59:59.999`);
-    else qs.set(k, String(v));
+    qs.set(k, String(v));
   }
   return qs;
 }
@@ -214,8 +273,14 @@ export const paymentsApi = {
     return api.get<Page<Payment>>(workspacePath(`/payments?${qs.toString()}`));
   },
 
-  summary: (filters: ListPaymentsQuery = {}) =>
-    api.get<PaymentsSummary>(workspacePath(`/payments/summary?${filterParams(filters).toString()}`)),
+  /** Totals are in one currency; pass the one to report in. */
+  summary(filters: ListPaymentsQuery = {}, currency?: string) {
+    const qs = filterParams(filters);
+    if (currency) qs.set('currency', currency);
+    return api.get<PaymentsSummary>(workspacePath(`/payments/summary?${qs.toString()}`));
+  },
+
+  filters: () => api.get<PaymentFilterOptions>(workspacePath('/payments/filters')),
 
   /** The same filtered list, as a CSV download. */
   exportCsv(filters: ListPaymentsQuery = {}, options: ExportOptions = {}) {

@@ -5,6 +5,7 @@
 const crypto = require('crypto');
 const config = require('../config');
 const { sendEmail } = require('../util/email');
+const { ROLE_PERMISSIONS } = require('../auth/permissions');
 
 const EXPIRY_DAYS = 7;
 
@@ -15,13 +16,14 @@ const hashToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
  * a seat, so it is returned to the caller only to be emailed — never in an
  * API response.
  */
-async function createInvite(client, { workspaceId, email, role, invitedByUserId, subject, intro }) {
+async function createInvite(client, { workspaceId, email, role, permissions, invitedByUserId, subject, intro }) {
   const token = crypto.randomBytes(32).toString('base64url');
   const expiresAt = new Date(Date.now() + EXPIRY_DAYS * 86400 * 1000);
   const row = (await client.query(
-    `INSERT INTO invites (workspace_id, email, role, token_hash, invited_by_user_id, expires_at)
-     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, email, role, expires_at, accepted_at`,
-    [workspaceId, email, role, hashToken(token), invitedByUserId, expiresAt])).rows[0];
+    `INSERT INTO invites (workspace_id, email, role, permissions, token_hash, invited_by_user_id, expires_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, email, role, permissions, expires_at, accepted_at`,
+    [workspaceId, email, role, permissions ?? [...(ROLE_PERMISSIONS[role] || [])],
+      hashToken(token), invitedByUserId, expiresAt])).rows[0];
 
   const link = `${config.appPublicBase}/accept-invite?token=${token}`;
   await sendEmail({

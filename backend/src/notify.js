@@ -68,11 +68,14 @@ async function notify(c, workspaceId, n) {
   if (!EVENTS.includes(n.event)) throw new Error('unknown_event: ' + n.event);
 
   const row = (await c.query(
-    `INSERT INTO notifications (workspace_id, event, title, body, amount, currency, entity_type, entity_id, account_id, agent_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+    `INSERT INTO notifications (workspace_id, event, title, body, amount, currency, entity_type, entity_id, event_key, account_id, agent_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+     ON CONFLICT (workspace_id, event, event_key) WHERE event_key IS NOT NULL DO NOTHING
+     RETURNING *`,
     [workspaceId, n.event, n.title, n.body || null, n.amount ?? null, n.currency || null,
-      n.entityType || null, n.entityId || null, n.accountId || null, n.agentId || null],
+      n.entityType || null, n.entityId || null, n.eventKey || null, n.accountId || null, n.agentId || null],
   )).rows[0];
+  if (!row) return null;
 
   const channels = (await c.query(
     'SELECT id, type, target FROM notification_channels WHERE workspace_id=$1 AND active AND $2 = ANY(events)',

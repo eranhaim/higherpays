@@ -82,39 +82,41 @@ function publicOrder(row) {
   };
 }
 
-async function queueLifecycleEventForReference(referenceId, type, providerTransactionId) {
+async function enqueueLifecycleEventForReference(c, referenceId, type, providerTransactionId) {
   if (!configured()) return;
-  await withTransaction(async (c) => {
-    const row = (await c.query(
-      `SELECT mo.marketplace_order_id, mo.amount_minor, mo.currency, pl.reference_id, p.id AS payment_id
-         FROM marketplace_orders mo
-         JOIN payment_links pl ON pl.id=mo.payment_link_id
-         LEFT JOIN payments p ON p.payment_link_id=pl.id
-        WHERE pl.reference_id=$1
-        LIMIT 1 FOR UPDATE`,
-      [referenceId],
-    )).rows[0];
-    if (!row) return;
-    const eventId = crypto.randomUUID();
-    const payload = {
-      eventId,
-      type,
-      occurredAt: new Date().toISOString(),
-      marketplaceOrderId: row.marketplace_order_id,
-      paymentLinkReference: row.reference_id,
-      paymentId: row.payment_id || null,
-      providerTransactionId: providerTransactionId || null,
-      amountMinor: Number(row.amount_minor),
-      currency: row.currency,
-    };
-    await c.query(
-      `INSERT INTO marketplace_event_outbox
-         (marketplace_order_id, event_type, payload)
-       VALUES ($1,$2,$3)
-       ON CONFLICT (marketplace_order_id, event_type, (payload->>'providerTransactionId')) DO NOTHING`,
-      [row.marketplace_order_id, type, payload],
-    );
-  });
+  const row = (await c.query(
+    `SELECT mo.marketplace_order_id, mo.amount_minor, mo.currency, pl.reference_id, p.id AS payment_id
+       FROM marketplace_orders mo
+       JOIN payment_links pl ON pl.id=mo.payment_link_id
+       LEFT JOIN payments p ON p.payment_link_id=pl.id
+      WHERE pl.reference_id=$1
+      LIMIT 1 FOR UPDATE`,
+    [referenceId],
+  )).rows[0];
+  if (!row) return;
+  const eventId = crypto.randomUUID();
+  const payload = {
+    eventId,
+    type,
+    occurredAt: new Date().toISOString(),
+    marketplaceOrderId: row.marketplace_order_id,
+    paymentLinkReference: row.reference_id,
+    paymentId: row.payment_id || null,
+    providerTransactionId: providerTransactionId || null,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+  };
+  await c.query(
+    `INSERT INTO marketplace_event_outbox
+       (marketplace_order_id, event_type, payload)
+     VALUES ($1,$2,$3)
+     ON CONFLICT (marketplace_order_id, event_type, (payload->>'providerTransactionId')) DO NOTHING`,
+    [row.marketplace_order_id, type, payload],
+  );
+}
+
+async function queueLifecycleEventForReference(referenceId, type, providerTransactionId) {
+  await withTransaction((c) => enqueueLifecycleEventForReference(c, referenceId, type, providerTransactionId));
   void drainMarketplaceOutbox();
 }
 
@@ -177,7 +179,7 @@ router.post('/orders', asyncHandler(async (req, res) => {
       return { order: existing };
     }
     const setup = (await c.query(
-      `SELECT w.currency, w.status, a.id AS account_id, ag.id AS agent_id
+      `SELECT w.currency, w.status, w.is_marketplace, a.id AS account_id, ag.id AS agent_id
          FROM workspaces w
          JOIN accounts a ON a.id=$2 AND a.workspace_id=w.id AND a.status='active'
          JOIN agents ag ON ag.id=$3 AND ag.workspace_id=w.id
@@ -186,6 +188,7 @@ router.post('/orders', asyncHandler(async (req, res) => {
       [config.marketplaceWorkspaceId, config.marketplaceAccountId, config.marketplaceAgentId],
     )).rows[0];
     if (!setup) return { setupMissing: true };
+    if (!setup.is_marketplace) return { workspaceNotDesignated: true };
     if (setup.currency !== currency.toUpperCase()) return { currencyMismatch: true };
     const fee = (await c.query('SELECT checkout_fee FROM effective_platform_fee($1, now())', [config.marketplaceWorkspaceId])).rows[0];
     const referenceId = generateOrderReference();
@@ -230,4 +233,4 @@ function startMarketplaceOutboxLoop() {
   return timer;
 }
 
-module.exports = { router, queueLifecycleEventForReference, drainMarketplaceOutbox, startMarketplaceOutboxLoop, eventSignature };
+module.exports = { router, queueLifecycleEventForReference, enqueueLifecycleEventForReference, drainMarketplaceOutbox, startMarketplaceOutboxLoop, eventSignature };

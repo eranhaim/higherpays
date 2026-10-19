@@ -31,14 +31,12 @@ test('a paid payment waits for details; completing it creates the customer and f
 
   const linkAfter = (await pool.query('SELECT status FROM payment_links WHERE id = $1', [link.id])).rows[0];
   assert.equal(linkAfter.status, 'done');
-  const customer = (await pool.query('SELECT total_spend FROM customers WHERE id = $1', [done.customerId])).rows[0];
-  assert.equal(Number(customer.total_spend), 40);
-
   const customers = (await request(app).get(`/workspaces/${t.workspaceId}/customers`)
     .set(agent.headers).expect(200)).body.customers;
   assert.equal(customers.some((item) => item.id === done.customerId), true);
   const customerDetail = (await request(app).get(`/workspaces/${t.workspaceId}/customers/${done.customerId}`)
     .set(agent.headers).expect(200)).body;
+  assert.equal(customerDetail.totalSpend, 40);
   assert.equal(customerDetail.payments[0].linkId, link.id);
   assert.equal(customerDetail.payments[0].linkReference, link.referenceId);
   assert.equal(customerDetail.payments[0].needsDetails, false);
@@ -86,11 +84,170 @@ test('an account owner sees their own payments and none of the fees', async () =
   await paySale(app, t, otherAccount, 99);
   const list = (await request(app).get(`/workspaces/${t.workspaceId}/payments`).set(account.ownerHeaders).expect(200)).body.items;
   assert.equal(list.length, 1);
-  assert.equal(list[0].amount, 40);
+  // Net only: gross beside it would be the platform fee by subtraction.
+  assert.equal(list[0].amount, undefined);
+  assert.ok(list[0].amountAfterFees > 0);
   assert.equal(list[0].platformFee, undefined);
   const admin = (await request(app).get(`/workspaces/${t.workspaceId}/payments`).set(t.authHeaders).expect(200)).body.items;
   assert.equal(admin.length, 2);
   assert.ok(admin[0].platformFee > 0);
+});
+
+test('failed payment decline details are searchable and respect the payment scope', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const otherAccount = await createAccount(app, t);
+  const agent = await createAgent(app, t);
+  await assignAgent(app, t, account.id, agent.id);
+  const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+    .send({ accountId: account.id, type: 'single_use', amount: 30, currency: 'EUR' }).expect(201)).body;
+  const payload = buildPaidPayload({
+    reference: link.referenceId,
+    transId: newTransId(),
+    amount: 30,
+    replyCode: '100.051',
+  });
+  payload.reply_desc = 'Insufficient funds';
+  const result = await postWebhook(app, await endpointFor(t.workspaceId), payload).expect(200);
+
+  const own = (await request(app)
+    .get(`/workspaces/${t.workspaceId}/payments?status=failed&q=insufficient`)
+    .set(account.ownerHeaders).expect(200)).body.items;
+  assert.equal(own.length, 1);
+  assert.equal(own[0].id, result.body.paymentId);
+  assert.equal(own[0].declineCode, '100.051');
+  assert.equal(own[0].declineReason, 'Insufficient funds');
+  assert.equal(own[0].declineCodeSource, 'mantapay_webhook_signed');
+  assert.equal(own[0].declineReasonSource, 'mantapay_webhook');
+
+  const agentLink = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(agent.headers)
+    .send({ accountId: account.id, type: 'single_use', amount: 30, currency: 'EUR' }).expect(201)).body;
+  const agentPayload = buildPaidPayload({
+    reference: agentLink.referenceId,
+    transId: newTransId(),
+    amount: 30,
+    replyCode: '100.051',
+  });
+  agentPayload.reply_desc = 'Insufficient funds';
+  const agentFailure = await postWebhook(app, await endpointFor(t.workspaceId), agentPayload).expect(200);
+
+  const agentPayments = (await request(app)
+    .get(`/workspaces/${t.workspaceId}/payments?status=failed&q=insufficient`)
+    .set(agent.headers).expect(200)).body.items;
+  assert.equal(agentPayments.length, 1);
+  assert.equal(agentPayments[0].id, agentFailure.body.paymentId);
+  assert.equal(agentPayments[0].declineCode, '100.051');
+  assert.equal(agentPayments[0].declineReason, 'Insufficient funds');
+  assert.equal(agentPayments[0].declineCodeSource, 'mantapay_webhook_signed');
+  assert.equal(agentPayments[0].declineReasonSource, 'mantapay_webhook');
+  assert.equal(agentPayments[0].platformFee, undefined);
+
+  const adminPayment = (await request(app)
+    .get(`/workspaces/${t.workspaceId}/payments/${agentFailure.body.paymentId}`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(adminPayment.declineReason, 'Insufficient funds');
+
+  const other = (await request(app)
+    .get(`/workspaces/${t.workspaceId}/payments?status=failed&q=insufficient`)
+    .set(otherAccount.ownerHeaders).expect(200)).body.items;
+  assert.equal(other.length, 0);
+
+  const outside = await createTenant(app);
+  await request(app).get(`/workspaces/${t.workspaceId}/payments/${agentFailure.body.paymentId}`)
+    .set({ Authorization: outside.authHeaders.Authorization, 'X-Workspace-Id': t.workspaceId })
+    .expect(403);
+});
+
+// MantaPay sends reply code 017 with an empty reply_desc, which left 45
+// production declines showing a bare number to every role that can read them.
+test('a decline with no MantaPay description still reads as a sentence for every payment role', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const agent = await createAgent(app, t);
+  await assignAgent(app, t, account.id, agent.id);
+  const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(agent.headers)
+    .send({ accountId: account.id, type: 'single_use', amount: 30, currency: 'EUR' }).expect(201)).body;
+  const payload = buildPaidPayload({
+    reference: link.referenceId,
+    transId: newTransId(),
+    amount: 30,
+    replyCode: '017',
+  });
+  payload.reply_desc = '';
+  const failure = await postWebhook(app, await endpointFor(t.workspaceId), payload).expect(200);
+
+  for (const [role, headers, scoped] of [
+    ['admin', t.authHeaders, false],
+    ['agent', agent.headers, true],
+    ['account owner', account.ownerHeaders, true],
+  ]) {
+    const payment = (await request(app)
+      .get(`/workspaces/${t.workspaceId}/payments/${failure.body.paymentId}`)
+      .set(headers).expect(200)).body;
+    assert.equal(payment.declineCode, '017', role);
+    assert.ok(payment.declineReason, `${role} must get a reason, not null`);
+    assert.notEqual(payment.declineReason, '017', `${role} must not get the bare code`);
+    assert.match(payment.declineReason, /\s/, `${role} must get words, not an identifier`);
+    assert.equal(payment.declineReasonSource, 'derived_no_provider_text', role);
+    // Decline details reach limited scopes, so they must carry no fee figure.
+    if (scoped) assert.equal(payment.platformFee, undefined, role);
+  }
+});
+
+test('pending and abandoned MantaPay replies do not create failed payments', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+
+  const reply = async (replyCode) => {
+    const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+      .send({ accountId: account.id, type: 'single_use', amount: 30, currency: 'EUR' }).expect(201)).body;
+    return (await postWebhook(app, await endpointFor(t.workspaceId), buildPaidPayload({
+      reference: link.referenceId,
+      transId: newTransId(),
+      amount: 30,
+      replyCode,
+    })).expect(200)).body;
+  };
+
+  // 001 is a wire or PIX the customer has not finished: a real pending payment.
+  const pending = await reply('001');
+  assert.equal(pending.status, 'pending');
+  assert.ok(pending.paymentId);
+
+  // 600 is the customer closing the window, which leaves nothing to record.
+  const abandoned = await reply('600');
+  assert.equal(abandoned.ignored, 'non_final_status');
+
+  const payments = (await request(app).get(`/workspaces/${t.workspaceId}/payments?status=failed`)
+    .set(t.authHeaders).expect(200)).body.items;
+  assert.equal(payments.length, 0);
+});
+
+test('payment filters use ranges and only expose values in the caller scope', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const otherAccount = await createAccount(app, t);
+  const agent = await createAgent(app, t);
+  await assignAgent(app, t, account.id, agent.id);
+  const category = await createCategory(app, t, 'Membership');
+  const mine = await paySale(app, t, account, 40, { headers: agent.headers });
+  await request(app).patch(`/workspaces/${t.workspaceId}/payments/${mine.paymentId}/details`).set(agent.headers)
+    .send({ categoryId: category.id, customer: { name: 'Scoped customer' } }).expect(200);
+  await paySale(app, t, otherAccount, 99);
+
+  const options = (await request(app).get(`/workspaces/${t.workspaceId}/payments/filters`)
+    .set(agent.headers).expect(200)).body;
+  assert.deepEqual(options.accounts, [{ id: account.id, name: account.name }]);
+  assert.deepEqual(options.agents, [{ id: agent.id, name: agent.name }]);
+  assert.deepEqual(options.customers, [{ id: options.customers[0].id, name: 'Scoped customer' }]);
+  assert.deepEqual(options.categories, [{ id: category.id, name: 'Membership' }]);
+  assert.ok(options.statuses.includes('paid'));
+
+  const range = (await request(app)
+    .get(`/workspaces/${t.workspaceId}/payments?status=paid&minAmount=30&maxAmount=50`)
+    .set(agent.headers).expect(200)).body.items;
+  assert.equal(range.length, 1);
+  assert.equal(range[0].id, mine.paymentId);
 });
 
 test('an agent sees the after-fee receipt, not the customer-facing price', async () => {
@@ -112,10 +269,41 @@ test('an agent sees the after-fee receipt, not the customer-facing price', async
     .set(agent.headers).expect(200)).body.items;
   const summary = (await request(app).get(`/workspaces/${t.workspaceId}/payments/summary`)
     .set(agent.headers).expect(200)).body;
-  assert.equal(list[0].amount, 40, 'the API retains the immutable sale amount');
+  assert.equal(list[0].amount, undefined, 'the customer-facing price stays with the agency');
   assert.equal(list[0].amountAfterFees, Number(entry.distributable));
   assert.equal(summary.afterFees, Number(entry.distributable));
   assert.equal(list[0].platformFee, undefined, 'the fee breakdown remains private');
+});
+
+test('a fee MantaPay has not reported is marked as an estimate until it does', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const agent = await createAgent(app, t);
+  await assignAgent(app, t, account.id, agent.id);
+  const { paymentId } = await paySale(app, t, account, 40, { headers: agent.headers });
+
+  const estimated = (await request(app).get(`/workspaces/${t.workspaceId}/payments/${paymentId}`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.ok(estimated.platformFee > 0);
+  assert.equal(estimated.feeIsEstimate, true);
+  const estimatedSummary = (await request(app).get(`/workspaces/${t.workspaceId}/payments/summary`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(estimatedSummary.feesEstimated, true);
+
+  const scoped = (await request(app).get(`/workspaces/${t.workspaceId}/payments/${paymentId}`)
+    .set(agent.headers).expect(200)).body;
+  assert.equal(scoped.feeIsEstimate, undefined, 'the fee breakdown remains private');
+
+  await pool.query(
+    `UPDATE transactions SET fee = 1.5, fee_is_estimate = false, net = gross - 1.5
+      WHERE payment_id = $1 AND type = 'payment'`, [paymentId]);
+
+  const reported = (await request(app).get(`/workspaces/${t.workspaceId}/payments/${paymentId}`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(reported.feeIsEstimate, false);
+  const reportedSummary = (await request(app).get(`/workspaces/${t.workspaceId}/payments/summary`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(reportedSummary.feesEstimated, false);
 });
 
 test('payment summaries use all filtered rows and keep checkout-fee revenue platform-only', async () => {
@@ -161,4 +349,47 @@ test('payment summaries use all filtered rows and keep checkout-fee revenue plat
   assert.equal(paid.link.referenceId, (await request(app)
     .get(`/workspaces/${t.workspaceId}/payments?q=${paid.link.referenceId}`)
     .set(t.authHeaders).expect(200)).body.items[0].linkReference);
+});
+
+// The Payments page turns the picker's day into an ISO instant before it asks.
+// A build that then appended the day suffix a second time sent
+// `...ZT23:59:59.999`, which Postgres reads as a timezone name and refuses, so
+// the list, the totals and the export all answered 500 on a customer's screen.
+test('a date filter that is not a date is refused, and a real range still totals its payments', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const { paymentId } = await paySale(app, t, account, 40);
+  const base = `/workspaces/${t.workspaceId}/payments`;
+
+  const occurredAt = (await request(app).get(base).set(t.authHeaders).expect(200))
+    .body.items.find((p) => p.id === paymentId).occurredAt;
+  const day = occurredAt.slice(0, 10);
+  const startOfDay = `${day}T00:00:00.000Z`;
+  const endOfDay = `${day}T23:59:59.999Z`;
+
+  for (const path of [base, `${base}/summary`, `${base}/export`]) {
+    const refused = await request(app)
+      .get(`${path}?from=${startOfDay}&to=${encodeURIComponent(`${endOfDay}T23:59:59.999`)}`)
+      .set(t.authHeaders).expect(400);
+    assert.deepEqual(refused.body.fields, ['to']);
+  }
+
+  // An open upper bound is a filter, not an error: the picker has one between
+  // the first and the second click of a range.
+  assert.ok((await request(app).get(`${base}?from=${startOfDay}`).set(t.authHeaders).expect(200))
+    .body.items.some((p) => p.id === paymentId));
+
+  const inDay = `?from=${startOfDay}&to=${endOfDay}`;
+  assert.ok((await request(app).get(base + inDay).set(t.authHeaders).expect(200))
+    .body.items.some((p) => p.id === paymentId));
+  assert.equal((await request(app).get(`${base}/summary${inDay}`).set(t.authHeaders).expect(200))
+    .body.grossContent, 40);
+
+  // The bounds are compared, not ignored: a window that closes before the sale
+  // holds neither the row nor its money.
+  const beforeSale = `?to=${new Date(Date.parse(occurredAt) - 1000).toISOString()}`;
+  assert.equal((await request(app).get(base + beforeSale).set(t.authHeaders).expect(200))
+    .body.items.length, 0);
+  assert.equal((await request(app).get(`${base}/summary${beforeSale}`).set(t.authHeaders).expect(200))
+    .body.grossContent, 0);
 });

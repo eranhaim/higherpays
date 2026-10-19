@@ -16,7 +16,7 @@ const {
 // ---------------------------------------------------------------------------
 const USER_STATUS = ['active', 'suspended', 'invited'];
 const WORKSPACE_STATUS = ['active', 'suspended', 'archived'];
-const WORKSPACE_ROLE = ['workspace_owner', 'workspace_admin', 'analyst', 'agent', 'account_owner'];
+const WORKSPACE_ROLE = ['workspace_owner', 'workspace_admin', 'member', 'agent', 'account_owner'];
 const ACCESS_STATUS = ['active', 'suspended', 'removed'];
 
 const ACCOUNT_STATUS = [ 'active', 'paused', 'archived'];
@@ -44,7 +44,9 @@ const LINK_EVENT_TYPE = [
 //   paid      the provider approved the charge
 //   failed    the provider declined it
 //   refunded  a paid charge was reversed, by refund or chargeback
-const PAYMENT_STATUS = ['pending', 'paid', 'failed', 'refunded'];
+// 'superseded': an attempt that a later approval of the same order beat. See
+// migrations/038_superseded_attempts.sql.
+const PAYMENT_STATUS = ['pending', 'paid', 'failed', 'refunded', 'superseded'];
 const TRANSACTION_TYPE = ['payment', 'refund', 'chargeback', 'adjustment'];
 const TRANSACTION_STATUS = ['pending', 'approved', 'declined', 'refunded', 'charged_back'];
 const REVENUE_ENTRY_TYPE = ['sale', 'refund', 'chargeback'];
@@ -127,6 +129,11 @@ const Workspace = entity('workspaces', {
     webhookSecret:     text().notNull()
       .default("replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '')"),
 
+    // Which workspace holds the marketplace's carts. Set in the database, not
+    // by MARKETPLACE_WORKSPACE_ID alone, so a mistyped env var cannot book
+    // marketplace sales as a real agency's revenue.
+    isMarketplace:     bool().notNull().default('false'),
+
     minLinkAmount:     money(),
     maxLinkAmount:     money(),
     linkTtlMinutes:    int(),   // how long a single-use link lives; null = platform default
@@ -142,8 +149,25 @@ const Workspace = entity('workspaces', {
   checks: [
     'min_link_amount IS NULL OR max_link_amount IS NULL OR min_link_amount <= max_link_amount',
   ],
-  indexes: ['webhookEndpointId'],
+  indexes: [
+    'webhookEndpointId',
+    { columns: ['isMarketplace'], unique: true, where: 'is_marketplace' },
+  ],
   timestamps: 'both',
+});
+
+// The currencies an agency may price a link in. workspaces.currency is its base
+// currency and is always in the set. There are no per-currency fee or limit
+// overrides: every currency inherits the workspace's rate card and link limits.
+const WorkspaceCurrency = entity('workspace_currencies', {
+  fields: {
+    workspaceId: uuid().references('workspaces').notNull(),
+    currency:    char(3).notNull(),
+    enabled:     bool().notNull().default('true'),  // false: kept for history, no new links
+  },
+  primaryKey: ['workspaceId', 'currency'],
+  checks: ["currency ~ '^[A-Z]{3}$'"],
+  timestamps: 'created',
 });
 
 // Effective-dated platform rate card. marginRatePct is HigherPays' own cut:
@@ -197,6 +221,9 @@ const WorkspaceUser = entity('workspace_users', {
     workspaceId: uuid().references('workspaces').notNull(),
     userId:      uuid().references('users').notNull(),
     role:        text().notNull(),
+    permissions: textArray().notNull().default("'{}'"),
+    // The custom role this seat follows; NULL when its permissions are its own.
+    customRoleKey: text(),
     status:      enumOf(ACCESS_STATUS).notNull().default("'active'"),
     platformGranted: bool().notNull().default('false'),
   },
@@ -204,9 +231,11 @@ const WorkspaceUser = entity('workspace_users', {
   foreignKeys: [
     { columns: ['workspaceId', 'role'], table: 'workspace_roles',
       references: ['workspaceId', 'key'], onDelete: 'RESTRICT' },
+    { columns: ['workspaceId', 'customRoleKey'], table: 'workspace_roles',
+      references: ['workspaceId', 'key'], onDelete: 'RESTRICT' },
   ],
-  // Redundant on its own — accounts and agents point at it to prove the user
-  // holds the matching role in that workspace.
+  // Accounts and agents point at this membership so their business records
+  // remain scoped to the same workspace while their access role can change.
   unique: [['workspaceId', 'userId', 'role']],
   indexes: [
     'userId',
@@ -222,6 +251,7 @@ const Invite = entity('invites', {
     workspaceId:     uuid().references('workspaces').notNull(),
     email:           citext().notNull(),
     role:            text().notNull(),
+    permissions:     textArray().notNull().default("'{}'"),
     tokenHash:       text().unique().notNull(),
     invitedByUserId: uuid().references('users', 'SET NULL'),
     expiresAt:       timestamp().notNull(),
@@ -245,8 +275,7 @@ const Account = entity('accounts', {
     id:                uuid().primaryKey(),
     workspaceId:       uuid().references('workspaces').notNull(),
     userId:            uuid().notNull(),
-    // Constant, and only here so the foreign key below can carry it: the owner
-    // must hold role 'account_owner' in this same workspace.
+    // Identifies the business profile. Access comes from workspace_users.
     role:              enumOf(['account_owner']).notNull().default("'account_owner'"),
     name:              text().notNull(),   // trading name; the person's name is users.fullName
     handle:            text(),
@@ -257,8 +286,8 @@ const Account = entity('accounts', {
     salaryAmount:      money().notNull().default('0'),      // owed once per payout period
   },
   foreignKeys: [
-    { columns: ['workspaceId', 'userId', 'role'], table: 'workspace_users',
-      references: ['workspaceId', 'userId', 'role'], onDelete: 'RESTRICT' },
+    { columns: ['workspaceId', 'userId'], table: 'workspace_users',
+      references: ['workspaceId', 'userId'], onDelete: 'RESTRICT' },
   ],
   unique: [
     ['workspaceId', 'userId'],   // one account per owner, per workspace
@@ -275,14 +304,14 @@ const Agent = entity('agents', {
     id:            uuid().primaryKey(),
     workspaceId:   uuid().references('workspaces').notNull(),
     userId:        uuid().notNull(),
-    // Same device as accounts.role: the user must hold role 'agent' here.
+    // Identifies the business profile. Access comes from workspace_users.
     role:          enumOf(['agent']).notNull().default("'agent'"),
     country:       char(2),
     commissionPct: percent().notNull(),                     // set for each agent
   },
   foreignKeys: [
-    { columns: ['workspaceId', 'userId', 'role'], table: 'workspace_users',
-      references: ['workspaceId', 'userId', 'role'], onDelete: 'RESTRICT' },
+    { columns: ['workspaceId', 'userId'], table: 'workspace_users',
+      references: ['workspaceId', 'userId'], onDelete: 'RESTRICT' },
   ],
   unique: [
     ['workspaceId', 'userId'],
@@ -334,7 +363,6 @@ const Customer = entity('customers', {
     phone:          text(),
     country:        char(2),
     segment:        enumOf(CUSTOMER_SEGMENT).notNull().default("'new'"),
-    totalSpend:     money().notNull().default('0'),   // cached, recomputed on payment
     lastPurchaseAt: timestamp(),
     archivedAt:     timestamp(),   // reversible operational archive
     deletedAt:      timestamp(),
@@ -370,10 +398,15 @@ const PaymentLink = entity('payment_links', {
     expiresAt:             timestamp(),   // single_use only; creation + TTL, or null for a no-expiry link
     paidAt:                timestamp(),   // single_use only; reusable links read payments
     archivedAt:            timestamp(),   // hidden from the default operations list
+    lateCheckAt:           timestamp(),   // last late-approval poll; see migration 038
   },
   checks: [
     "pricing_mode = 'open' OR (amount IS NOT NULL AND amount > 0)",
     "type = 'single_use' OR (expires_at IS NULL AND paid_at IS NULL)",
+  ],
+  // A link can only be priced in a currency this agency is allowed.
+  foreignKeys: [
+    { columns: ['workspaceId', 'currency'], table: 'workspace_currencies', references: ['workspaceId', 'currency'] },
   ],
   indexes: [
     'workspaceId', 'accountId', 'customerId',
@@ -447,9 +480,22 @@ const Transaction = entity('transactions', {
     net:                   money().notNull().default('0'),
     currency:              char(3).notNull(),
     providerTransactionId: text(),
+    providerDeclineCode:   text(),
+    providerDeclineReason: text(),
+    providerDeclineCodeSource: text(),
+    providerDeclineReasonSource: text(),
     occurredAt:            timestamp().notNull().default('now()'),
     rawPayload:            jsonb(),
   },
+  checks: [
+    `provider_decline_code_source IS NULL OR provider_decline_code_source IN (
+      'mantapay_webhook_signed', 'mantapay_status', 'stored_raw_payload'
+    )`,
+    `provider_decline_reason_source IS NULL OR provider_decline_reason_source IN (
+      'mantapay_webhook', 'mantapay_status', 'stored_raw_payload',
+      'derived_no_provider_text'
+    )`,
+  ],
   unique: [['workspaceId', 'providerTransactionId']],
   indexes: [
     'workspaceId', 'paymentId',
@@ -615,10 +661,14 @@ const Notification = entity('notifications', {
     currency:          char(3),
     entityType:        text(),
     entityId:          uuid(),
+    eventKey:          text(),                  // prevents repeat delivery of one business event
     accountId:         uuid().references('accounts', 'SET NULL'),
     agentId:           uuid().references('agents', 'SET NULL'),
   },
-  indexes: [{ columns: ['workspaceId', 'createdAt'] }],
+  indexes: [
+    { columns: ['workspaceId', 'createdAt'] },
+    { columns: ['workspaceId', 'event', 'eventKey'], unique: true, where: 'event_key IS NOT NULL' },
+  ],
   timestamps: 'created',
 });
 
@@ -705,7 +755,7 @@ const AuditLog = entity('audit_log', {
 
 module.exports = {
   // global
-  User, RefreshToken, ImpersonationSession, Workspace, PlatformFeeRate,
+  User, RefreshToken, ImpersonationSession, Workspace, WorkspaceCurrency, PlatformFeeRate,
   // access
   WorkspaceRole, WorkspaceUser, Invite,
   // commercial

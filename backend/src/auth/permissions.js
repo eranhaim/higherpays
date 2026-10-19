@@ -1,6 +1,6 @@
 'use strict';
-// The permission matrix. Permissions live in code, keyed by workspace role;
-// the frontend mirrors this list for what it shows, the server enforces it.
+// The fixed membership defaults. A seat keeps its own permission snapshot;
+// this matrix only supplies new seats and the migration from legacy roles.
 
 const { status } = require('../schema/entities');
 
@@ -41,7 +41,7 @@ const ROLE_PERMISSIONS = {
   workspace_owner: new Set(PERMISSIONS),
   workspace_admin: new Set(PERMISSIONS),
 
-  analyst: new Set([
+  member: new Set([
     'payments.view', 'payments.export',
     'links.view',
     'analytics.view',
@@ -98,7 +98,33 @@ function validatePermissions(permissions, allowedPermissions = PERMISSIONS) {
   return null;
 }
 
+const FULL_ACCESS_ROLES = new Set(['workspace_owner', 'workspace_admin']);
+
+// An owner or admin may grant any permission. Everyone else may only hand on
+// what their own seat holds, so nobody can lift a seat above their own level.
+function validateGrantablePermissions(access, permissions) {
+  const grantable = FULL_ACCESS_ROLES.has(access.role) ? PERMISSIONS : [...access.permissions];
+  return validatePermissions(permissions, grantable);
+}
+
+// An admin seat can grant every permission whatever list it was created with,
+// so only an owner or admin may make one. Otherwise a team manager could
+// create an "admin" with a short list and use it to reach the rest.
+function canGrantRole(access, role) {
+  return !FULL_ACCESS_ROLES.has(role) || FULL_ACCESS_ROLES.has(access.role);
+}
+
+// A seat outranks the caller when it is an owner or admin, or holds any
+// permission the caller lacks. Such a seat is not theirs to edit, suspend or
+// reset, or a team manager could take over the admin's login.
+function seatOutranksCaller(access, seat) {
+  if (FULL_ACCESS_ROLES.has(access.role)) return false;
+  if (FULL_ACCESS_ROLES.has(seat.role)) return true;
+  return (seat.permissions || []).some((permission) => !access.permissions.has(permission));
+}
+
 module.exports = {
   PERMISSIONS, PERMISSION_DEPENDENCIES, ROLE_PERMISSIONS,
   WORKSPACE_ROLE: status.WORKSPACE_ROLE, can, hasPermission, validatePermissions,
-};
+    validateGrantablePermissions, seatOutranksCaller, canGrantRole,
+  };

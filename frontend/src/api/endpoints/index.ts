@@ -1,5 +1,5 @@
 export { authApi, type TwoFactorSetup, type Session } from './auth';
-export { workspacesApi, type PlatformFee, type LinkLimits, type WorkspacePermissions, type WorkspaceSettings, type UpdateWorkspaceInput, type AuditEntry } from './workspaces';
+export { workspacesApi, type WorkspaceCurrency, type SelectableCurrency, type WorkspaceCurrencies, type PlatformFee, type LinkLimits, type WorkspacePermissions, type WorkspaceSettings, type UpdateWorkspaceInput, type AuditEntry } from './workspaces';
 export {
   platformApi,
   type PlatformWorkspace, type PlatformOverview, type OnboardAgencyInput,
@@ -26,14 +26,14 @@ export {
   linksApi, LINK_TYPES, LINK_TYPE_LABELS, LINK_STATUSES, LINK_STATUS_LABELS,
   PROVIDER_ATTEMPT_STATUSES, PROVIDER_ATTEMPT_STATUS_LABELS, isShareable,
   type ListLinksQuery, type PaymentLink, type LinkStatus, type LinkType, type LinkSort, type CreateLinkInput,
-  type ReassignImpact, type ReassignInput, type ProviderAttempt, type ProviderAttemptStatus, type LinksSummary,
+  type ReassignImpact, type ReassignInput, type ProviderOutcome, type ProviderAttemptStatus, type LinksSummary,
   type LinkEvent, type LinkEventType, type PaymentLinkDetail,
 } from './links';
 export {
   paymentsApi, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, getPaymentExportColumns,
-  PROVIDER_FEE_SOURCE_LABELS, isReversed, paymentStatusLabel,
-  type Payment, type PaymentFlow, type PaymentFlowParty, type PaymentFlowRate, type PaymentsSummary, type PaymentStatus, type ListPaymentsQuery, type CompletePaymentInput, type ReversalResult,
-  type ExportColumn, type ExportOptions, type PaymentSort,
+  PROVIDER_FEE_SOURCE_LABELS, isReversed, visibleAmount, paymentStatusLabel, declineReasonLabel,
+  type Payment, type PaymentFlow, type PaymentFlowParty, type PaymentFlowRate, type PaymentsSummary, type PaymentStatus, type PaymentFilterOptions, type ListPaymentsQuery, type CompletePaymentInput, type ReversalResult,
+  type ExportColumn, type ExportOptions, type PaymentSort, type MantaPayDeclineSource,
 } from './payments';
 export { payoutsApi, type PayoutBreakdown, type RunPayoutInput, type PayoutRecord, type PayoutHistoryFilters } from './payouts';
 export { meApi, type Earnings } from './me';

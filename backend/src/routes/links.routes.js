@@ -4,15 +4,19 @@ const { query, withTransaction } = require('../db');
 const { requirePermission, requireArchiveManager } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
-const { badRequest } = require('../util/validate');
+const { badRequest, invalidDateFilter } = require('../util/validate');
 const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const { resolveDataScope, scopeParams } = require('../auth/dataScope');
+const { resolveCallerAgentId } = require('../auth/callerAgent');
+const { hasPermission } = require('../auth/permissions');
 const { status: vocab } = require('../schema/entities');
 const config = require('../config');
 const linksService = require('../services/links.service');
+const currencies = require('../services/currencies.service');
 const { recordLinkEvent } = require('../services/linkEvents');
-const { resolveAttribution } = require('../services/attribution');
+const { resolveAttribution, repostSales } = require('../services/attribution');
 const { generateOrderReference } = require('../lib/orderReference');
+const { payUrl } = require('../lib/payUrl');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -31,7 +35,12 @@ function isValidMoneyAmount(value) {
 const EFFECTIVE_STATUS = `CASE WHEN pl.status = 'active' AND pl.expires_at IS NOT NULL AND pl.expires_at < now()
                                THEN 'expired' ELSE pl.status END`;
 
-const LATEST_ATTEMPT = `
+// The order's outcome at MantaPay, not its last attempt. An approved order is
+// often retried afterwards -- HP-NXEW-YCSX-EVMS was approved at 21:13 and
+// declined twice by 21:23 -- and picking the latest attempt made a paid link
+// report "Declined", which is the contradiction the agency keeps reporting.
+// An approval wins; otherwise the most recent attempt stands.
+const PROVIDER_OUTCOME = `
   LEFT JOIN LATERAL (
     SELECT t.status AS provider_status,
            t.provider_transaction_id,
@@ -51,7 +60,7 @@ const LATEST_ATTEMPT = `
       FROM payments p
       JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment' AND p.archived_at IS NULL
      WHERE p.payment_link_id = pl.id
-     ORDER BY t.occurred_at DESC, t.id DESC
+     ORDER BY (t.status = 'approved') DESC, t.occurred_at DESC, t.id DESC
      LIMIT 1
   ) latest ON true`;
 
@@ -63,7 +72,7 @@ const publicLink = (l) => ({
   archivedAt: l.archived_at, createdAt: l.created_at,
   accountId: l.account_id, account: l.account,
   agentId: l.created_by_agent_id, agent: l.agent,
-  latestProviderAttempt: l.provider_status ? {
+  providerOutcome: l.provider_status ? {
     status: l.provider_status,
     replyCode: l.provider_reply_code,
     replyDescription: l.provider_reply_description,
@@ -90,15 +99,16 @@ function linkFilterParams(req, scope, includeArchived = null) {
   ];
 }
 
-const LINK_FILTERS = `
+// Everything that selects a link other than the date range. Split out because
+// /summary dates its money by the payment rather than by the link, so it needs
+// these predicates without the range.
+const LINK_FILTERS_UNDATED = `
   ($2::uuid IS NULL OR pl.created_by_agent_id = $2::uuid)
   AND ($3::uuid IS NULL OR pl.account_id = $3::uuid)
   AND ($4::text IS NULL OR pl.effective_status = $4::text)
   AND ($5::text IS NULL OR pl.type = $5::text)
   AND ($6::numeric IS NULL OR pl.amount >= $6::numeric)
   AND ($7::numeric IS NULL OR pl.amount <= $7::numeric)
-  AND ($8::timestamptz IS NULL OR pl.created_at >= $8::timestamptz)
-  AND ($9::timestamptz IS NULL OR pl.created_at <= $9::timestamptz)
   AND ($10::uuid IS NULL OR pl.account_id = $10::uuid)
   AND ($11::text IS NULL OR lower(pl.reference_id) LIKE $11::text
        OR lower(COALESCE(pl.provider_transaction_id, '')) LIKE $11::text
@@ -106,11 +116,18 @@ const LINK_FILTERS = `
   AND ($12::text IS NULL OR pl.provider_status = $12::text)
   AND ($13::boolean OR pl.archived_at IS NULL)`;
 
-// The public endpoint starts MantaPay's APM page and redirects the payer to
-// the returned CentroBill URL. No card data touches this server.
-function generateProviderLink(referenceId) {
-  return `${config.appPublicBase}/api/pay/${encodeURIComponent(referenceId)}`;
-}
+// A link belongs to the window when it was created in it.
+const LINK_CREATED_IN_RANGE = `
+  ($8::timestamptz IS NULL OR pl.created_at >= $8::timestamptz)
+  AND ($9::timestamptz IS NULL OR pl.created_at <= $9::timestamptz)`;
+
+const LINK_FILTERS = `${LINK_FILTERS_UNDATED} AND ${LINK_CREATED_IN_RANGE}`;
+
+// A payment belongs to the window when it was taken in it. Same column and
+// same bounds as GET /analytics, so the two screens total the same rows.
+const PAYMENT_OCCURRED_IN_RANGE = `
+  ($8::timestamptz IS NULL OR t.occurred_at >= $8::timestamptz)
+  AND ($9::timestamptz IS NULL OR t.occurred_at <= $9::timestamptz)`;
 
 // What a caller may sort by. Not free text: the key picks the expression and
 // the cast the cursor comparison. A link's amount is optional, so it sorts as
@@ -138,6 +155,8 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
   const cursor = decodeCursor(req.query.cursor);
   const min = numberFilter(req.query.min), max = numberFilter(req.query.max);
   if (min != null && max != null && max < min) return badRequest(res, 'max must be >= min', ['min', 'max']);
+  const invalidDate = invalidDateFilter(req.query);
+  if (invalidDate) return badRequest(res, `${invalidDate} must be a date`, [invalidDate]);
 
   const rows = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
@@ -147,7 +166,7 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
                 latest.provider_status, latest.provider_reply_code, latest.provider_reply_description,
                 latest.provider_transaction_id, latest.provider_occurred_at
            FROM payment_links pl
-           ${LATEST_ATTEMPT}
+           ${PROVIDER_OUTCOME}
           WHERE pl.workspace_id = $1
        )
        SELECT pl.*, pl.effective_status AS status,
@@ -167,61 +186,84 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
 }));
 
 // GET /summary — every matching link and successful payment, before pagination.
+//
+// Two date axes, deliberately. How many links there are, and how many of them
+// converted, is a property of the links created in the window, so those count
+// on pl.created_at. Money is a property of the payments taken in the window,
+// so it counts on transactions.occurred_at over the ledger rows GET /analytics
+// reads. Dating revenue by the link's creation instead made this screen
+// under-report whenever a link was paid on a later day, which is what put it
+// at odds with Analytics.
 router.get('/summary', requirePermission('links.view'), asyncHandler(async (req, res) => {
   const min = numberFilter(req.query.min), max = numberFilter(req.query.max);
   if (min != null && max != null && max < min) return badRequest(res, 'max must be >= min', ['min', 'max']);
+  const invalidDate = invalidDateFilter(req.query);
+  if (invalidDate) return badRequest(res, `${invalidDate} must be a date`, [invalidDate]);
 
   const row = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
+    // Counts, price bands and revenue are about one currency; summing across
+    // currencies would be meaningless.
+    const currency = await currencies.resolveReportingCurrency(c, wid(req), req.query.currency);
     return (await c.query(
       `WITH effective AS (
          SELECT pl.*, ${EFFECTIVE_STATUS} AS effective_status,
                 latest.provider_status, latest.provider_transaction_id
            FROM payment_links pl
-           ${LATEST_ATTEMPT}
+           ${PROVIDER_OUTCOME}
           WHERE pl.workspace_id = $1
        ),
        matching_links AS (
-         SELECT pl.id, pl.amount
+         SELECT pl.id, pl.amount, pl.created_at
            FROM effective pl
            JOIN accounts a ON a.id = pl.account_id
            LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
            LEFT JOIN users u ON u.id = ag.user_id
-          WHERE ${LINK_FILTERS}
+          WHERE ${LINK_FILTERS_UNDATED} AND pl.currency = $14::char(3)
        ),
-       successful AS (
-         SELECT p.payment_link_id,
-                COUNT(*)::int AS payment_count,
-                COALESCE(SUM(t.gross) FILTER (WHERE p.review_reason IS NULL), 0) AS gross,
-                COALESCE(SUM(t.gross - COALESCE(re.platform_fee, 0))
-                  FILTER (WHERE p.review_reason IS NULL), 0) AS net
-           FROM payments p
+       links_in_range AS (
+         SELECT pl.id, pl.amount,
+                EXISTS (
+                  SELECT 1 FROM payments p
+                   JOIN transactions t ON t.payment_id = p.id
+                        AND t.type = 'payment' AND t.status = 'approved'
+                  WHERE p.payment_link_id = pl.id AND p.archived_at IS NULL
+                ) AS is_paid
+           FROM matching_links pl
+          WHERE ${LINK_CREATED_IN_RANGE}
+       ),
+       link_counts AS (
+         SELECT COUNT(*)::int AS total_links,
+                COUNT(*) FILTER (WHERE is_paid)::int AS paid_links,
+                COUNT(*) FILTER (WHERE amount >= 0 AND amount < 50)::int AS band_0_50,
+                COUNT(*) FILTER (WHERE amount >= 50 AND amount < 100)::int AS band_50_100,
+                COUNT(*) FILTER (WHERE amount >= 100 AND amount < 200)::int AS band_100_200,
+                COUNT(*) FILTER (WHERE amount >= 200 AND amount < 500)::int AS band_200_500,
+                COUNT(*) FILTER (WHERE amount >= 500)::int AS band_500_plus
+           FROM links_in_range
+       ),
+       revenue AS (
+         SELECT COUNT(*) FILTER (WHERE re.entry_type = 'sale')::int AS successful_payments,
+                COALESCE(SUM(re.gross) FILTER (WHERE re.entry_type = 'sale'), 0) AS gross_sales,
+                COALESCE(SUM(re.distributable), 0) AS net_after_fees
+           FROM revenue_entries re
+           JOIN transactions t ON t.id = re.transaction_id
+           JOIN payments p ON p.id = t.payment_id
            JOIN matching_links ml ON ml.id = p.payment_link_id
-           JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment' AND t.status = 'approved'
-             AND p.archived_at IS NULL
-           LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
-          GROUP BY p.payment_link_id
+          WHERE re.workspace_id = $1 AND p.archived_at IS NULL
+            AND ${PAYMENT_OCCURRED_IN_RANGE}
        )
-       SELECT COUNT(*)::int AS total_links,
-              COUNT(*) FILTER (WHERE successful.payment_count > 0)::int AS paid_links,
-              COALESCE(SUM(successful.payment_count), 0)::int AS successful_payments,
-              COALESCE(SUM(successful.gross), 0) AS gross_sales,
-              COALESCE(SUM(successful.net), 0) AS net_after_fees,
-              COUNT(*) FILTER (WHERE matching_links.amount >= 0 AND matching_links.amount < 50)::int AS band_0_50,
-              COUNT(*) FILTER (WHERE matching_links.amount >= 50 AND matching_links.amount < 100)::int AS band_50_100,
-              COUNT(*) FILTER (WHERE matching_links.amount >= 100 AND matching_links.amount < 200)::int AS band_100_200,
-              COUNT(*) FILTER (WHERE matching_links.amount >= 200 AND matching_links.amount < 500)::int AS band_200_500,
-              COUNT(*) FILTER (WHERE matching_links.amount >= 500)::int AS band_500_plus,
-              (SELECT currency FROM workspaces WHERE id = $1) AS currency
-         FROM matching_links
-         LEFT JOIN successful ON successful.payment_link_id = matching_links.id`,
-      linkFilterParams(req, scope, false))).rows[0];
+       SELECT link_counts.*, revenue.*, $14::char(3) AS currency
+         FROM link_counts, revenue`,
+      [...linkFilterParams(req, scope, false), currency])).rows[0];
   });
   res.json({
     totalLinks: row.total_links,
     paidLinks: row.paid_links,
     successfulPayments: row.successful_payments,
-    grossSales: Number(row.gross_sales),
+    // An agent or creator gets the net figure only. Reporting gross beside it
+    // hands them the platform fee by subtraction.
+    ...(hasPermission(req.access, 'data.view_all') ? { grossSales: Number(row.gross_sales) } : {}),
     netAfterFees: Number(row.net_after_fees),
     priceBands: [
       { min: 0, max: 50, count: row.band_0_50 },
@@ -246,7 +288,7 @@ router.get('/:id', requirePermission('links.view'), asyncHandler(async (req, res
          JOIN accounts a ON a.id = pl.account_id
          LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
          LEFT JOIN users u ON u.id = ag.user_id
-         ${LATEST_ATTEMPT}
+         ${PROVIDER_OUTCOME}
         WHERE pl.workspace_id = $1 AND pl.id = $2
           AND ($3::uuid IS NULL OR pl.created_by_agent_id = $3::uuid)
           AND ($4::uuid IS NULL OR pl.account_id = $4::uuid)`,
@@ -297,8 +339,8 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
   const amt = amount;
   if (amt < MIN_FIXED_AMOUNT) return badRequest(res, `minimum amount is ${MIN_FIXED_AMOUNT}`, ['amount']);
   const cur = currency.toUpperCase();
-  if (!config.supportedCurrencies.includes(cur)) {
-    return badRequest(res, `currency ${cur} is not enabled (supported: ${config.supportedCurrencies.join(', ')})`, ['currency']);
+  if (!currencies.isCheckoutSupported(cur)) {
+    return badRequest(res, `links cannot be created in ${cur} yet: the payment provider does not support it`, ['currency']);
   }
 
   // The provider echoes this back unchanged as the attribution key.
@@ -308,10 +350,11 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
     // This conflicts with the platform currency update's FOR UPDATE lock.
     // Currency and limits therefore come from the same state as the insert.
     const ws = (await c.query(
-      'SELECT currency, min_link_amount, max_link_amount, link_ttl_minutes, reusable_links_enabled FROM workspaces WHERE id=$1 FOR SHARE',
+      'SELECT min_link_amount, max_link_amount, link_ttl_minutes, reusable_links_enabled FROM workspaces WHERE id=$1 FOR SHARE',
       [wid(req)])).rows[0];
-    if (cur !== ws.currency) {
-      return { validation: `currency must match the workspace currency (${ws.currency})`, fields: ['currency'] };
+    const allowed = await c.query('SELECT 1 FROM workspace_currencies WHERE workspace_id=$1 AND currency=$2 AND enabled', [wid(req), cur]);
+    if (!allowed.rowCount) {
+      return { validation: `currency ${cur} is not allowed for this workspace`, fields: ['currency'] };
     }
     if (type === 'reusable' && !ws.reusable_links_enabled) {
       return { validation: 'reusable links are disabled for this workspace', fields: ['type'] };
@@ -324,6 +367,10 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
     }
 
     const scope = await resolveDataScope(c, req);
+    // Who owns the link is a question about the caller, not about what they
+    // may see. An agent granted data.view_all resolves to a workspace scope,
+    // and reading the agent out of that scope left their links unattributed.
+    const createdByAgentId = await resolveCallerAgentId(c, req);
 
     // The account must be active, in this workspace and, for an agent, one
     // they are assigned. An unassigned account reports the same not-found as a
@@ -347,7 +394,7 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
       };
     }
 
-    const checkoutUrl = generateProviderLink(referenceId);
+    const checkoutUrl = payUrl(referenceId);
     const ttlMinutes = ws.link_ttl_minutes == null ? config.linkTtlMinutes : Number(ws.link_ttl_minutes);
     // A reusable link never has a deadline; a single_use one gets the TTL unless
     // it was explicitly created with no expiry.
@@ -361,7 +408,7 @@ router.post('/', requirePermission('links.create'), asyncHandler(async (req, res
           status, reference_id, provider_link_id, description, expires_at, checkout_url)
        VALUES ($1,$2,$3,$4,'fixed',$5,$6,$7,'active',$8,$8,$9,$10,$11)
        RETURNING *`,
-      [wid(req), accountId, scope.kind === 'agent' ? scope.agentId : null,
+      [wid(req), accountId, createdByAgentId,
         type, amt, checkoutFee, cur, referenceId, description || null, expiresAt, checkoutUrl])).rows[0];
     await recordLinkEvent(c, {
       workspaceId: wid(req), linkId: link.id, eventType: 'created',
@@ -496,23 +543,33 @@ router.post('/:id/reactivate', requirePermission('archive.manage'), requireArchi
   res.json(publicLink(row));
 }));
 
-// GET /:id/impact — how many past payments will remain unchanged. Read before
-// the confirmation, so the dialog can describe the future-only change.
+// GET /:id/impact — how much money reassigning this link would move, and how
+// much of it a payout has already settled. Read before the confirmation, so the
+// dialog can say it in numbers rather than in general.
+// Only settled payments are counted: a declined or superseded attempt moves
+// with the order, but it is not money and must not appear in a money figure.
 router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
   const row = (await query(`
     SELECT count(*)::int AS payments,
            count(*) FILTER (WHERE re.account_payout_id IS NOT NULL OR re.agent_payout_id IS NOT NULL)::int AS paid_out,
-           COALESCE(SUM(p.amount), 0) AS amount
+           COALESCE(SUM(p.amount), 0) AS amount,
+           (SELECT currency FROM payment_links WHERE workspace_id = $1 AND id = $2) AS currency
       FROM payments p
       LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
       LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
-     WHERE p.workspace_id = $1 AND p.payment_link_id = $2 AND p.archived_at IS NULL`, [wid(req), req.params.id])).rows[0];
-  res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount) });
+     WHERE p.workspace_id = $1 AND p.payment_link_id = $2 AND p.archived_at IS NULL
+       AND p.status IN ('paid', 'refunded')`, [wid(req), req.params.id])).rows[0];
+  // One link is one currency, so this sum is never mixed.
+  res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount), currency: row.currency });
 }));
 
 // PATCH /:id/attribution  { accountId?, agentId? }
-// Changes the attribution used for future payments on this link. Existing
-// payments keep their original attribution and ledger entries.
+// Moves the link and the payments already taken on it to another creator or
+// agent, re-posting each sale against the new attribution so the ledger, the
+// payout figures and analytics all agree with the page. A payout that already
+// paid the old creator is left overpaid -- /impact says so before confirming.
+// A reversed payment cannot move: only its sale entry would be re-posted,
+// leaving the refund that mirrors it against the old creator.
 router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
   const { accountId, agentId } = req.body || {};
   if (accountId === undefined && agentId === undefined) {
@@ -530,11 +587,27 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
     });
     if (next.err) return next;
 
+    const reversed = (await c.query(
+      `SELECT 1 FROM payments
+        WHERE payment_link_id = $1 AND status = 'refunded' AND archived_at IS NULL LIMIT 1`,
+      [link.id])).rows[0];
+    if (reversed) return { err: 'payment_reversed', fields: [] };
+
     await c.query(
       'UPDATE payment_links SET account_id = $2, created_by_agent_id = $3 WHERE id = $1',
       [link.id, next.accountId, next.agentId]);
 
+    const moved = (await c.query(
+      `UPDATE payments SET account_id = $2, agent_id = $3
+        WHERE payment_link_id = $1 AND workspace_id = $4
+          AND archived_at IS NULL AND review_reason IS NULL
+        RETURNING id`,
+      [link.id, next.accountId, next.agentId, wid(req)])).rows.map((r) => r.id);
+    const reposted = moved.length ? await repostSales(c, moved) : 0;
+
     return {
+      moved: moved.length,
+      reposted,
       link: (await c.query(`
         SELECT pl.*, ${EFFECTIVE_STATUS} AS status, a.name AS account, u.full_name AS agent,
                latest.provider_status, latest.provider_reply_code, latest.provider_reply_description,
@@ -543,9 +616,8 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
           JOIN accounts a ON a.id = pl.account_id
           LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id
           LEFT JOIN users u ON u.id = ag.user_id
-          ${LATEST_ATTEMPT}
+          ${PROVIDER_OUTCOME}
          WHERE pl.id = $1`, [link.id])).rows[0],
-      futureOnly: true,
       from: { accountId: link.account_id, agentId: link.created_by_agent_id },
     };
   });
@@ -558,10 +630,11 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
     metadata: {
       from: out.from,
       to: { accountId: out.link.account_id, agentId: out.link.created_by_agent_id },
-      futureOnly: out.futureOnly,
+      moved: out.moved,
+      reposted: out.reposted,
     },
   });
-  res.json({ ...publicLink(out.link), futureOnly: out.futureOnly });
+  res.json({ ...publicLink(out.link), moved: out.moved, reposted: out.reposted });
 }));
 
 // POST /reconcile — the same reconciliation the server runs on a timer, on

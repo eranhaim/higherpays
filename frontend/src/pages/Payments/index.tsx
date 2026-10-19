@@ -7,46 +7,105 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useRateCard } from '../../hooks/useRateCard';
 import Modal from '../../components/Modal';
 import ReassignFields from '../../components/ReassignFields';
+import CompletePaymentModal from '../../components/CompletePaymentModal';
 import { HttpError } from '../../api/http';
 import EnableTwoFactorModal from '../../components/EnableTwoFactorModal';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DateCell,
-  DataTable, FilterBar, Calendar, DateRangePicker, DetailRow, Select, ViewPicker, RowViewButton,
+  DataTable, FilterBar, DateRangePicker, CurrencyPicker, DetailRow, Select, ViewPicker, RowViewButton,
   type Column, type DateRange, type SortState,
 } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
-import { formatMoney } from '../../lib/format';
+import { formatMoney, toInstantRange } from '../../lib/format';
 import {
-  isReversed, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, paymentStatusLabel, getPaymentExportColumns,
-  PROVIDER_FEE_SOURCE_LABELS,
-  paymentsApi, type Payment, type PaymentFlow, type PaymentStatus, type PaymentSort, type ListPaymentsQuery,
+  isReversed, visibleAmount, PAYMENT_STATUSES, PAYMENT_STATUS_LABELS, paymentStatusLabel, getPaymentExportColumns,
+  PROVIDER_FEE_SOURCE_LABELS, declineReasonLabel,
+  paymentsApi, type Payment, type PaymentFlow, type PaymentStatus, type PaymentSort, type ListPaymentsQuery, type MantaPayDeclineSource,
 } from '../../api/endpoints';
 import { usePaymentsData, type ExportInput } from './usePaymentsData';
 
-const STATUS_TONE: Record<PaymentStatus, 'ok' | 'no' | 'warn'> = {
-  pending: 'warn',
+// MantaPay reports actual per-transaction fees only through its Search API.
+// Until a sale has one, the fee and the net shown for it are the rate card's
+// expectation, so every surface that shows them says so.
+const ESTIMATED_FEE_NOTE = 'Calculated from the configured MantaPay rates. Actual provider fees have not been reported.';
+
+/** The payment's money figure as the list and the mobile card show it. */
+function PaymentAmount({ payment }: { payment: Payment }) {
+  const amount = visibleAmount(payment);
+  if (amount == null) return <>—</>;
+  return (
+    <Money
+      amount={amount}
+      currency={payment.currency}
+      direction={isReversed(payment.status) ? 'out' : payment.status === 'paid' && !payment.reviewRequired ? 'in' : undefined}
+    />
+  );
+}
+
+const STATUS_TONE: Record<Exclude<PaymentStatus, 'pending'>, 'ok' | 'no' | 'warn'> = {
   paid: 'ok',
   failed: 'no',
   refunded: 'no',
+  superseded: 'warn',
 };
 
+// A superseded attempt is not lost money: MantaPay approved the same order
+// under a new transaction id, and the Completed payment beside it is that
+// approval. Saying so on the row is what stops the agency reading its own
+// history as a failure.
+const SUPERSEDED_NOTE = 'This attempt did not go through; the same order was approved on a later attempt.';
+
 function StatusPill({ payment }: { payment: Payment }) {
+  if (payment.status === 'pending') return <span className="sub">Waiting for payment</span>;
   if (payment.reviewRequired) return <Pill tone="warn">Review required</Pill>;
   return <Pill tone={payment.needsDetails ? 'warn' : STATUS_TONE[payment.status]}>{paymentStatusLabel(payment)}</Pill>;
+}
+
+function PaymentStatus({ payment }: { payment: Payment }) {
+  if (payment.status === 'superseded') {
+    return (
+      <div>
+        <StatusPill payment={payment} />
+        <div className="sub" title={SUPERSEDED_NOTE}>Superseded by a later approval</div>
+      </div>
+    );
+  }
+  if (payment.status !== 'failed') return <StatusPill payment={payment} />;
+  const reason = declineReasonLabel(payment.declineReason);
+  const code = payment.declineCode ? ` (${payment.declineCode})` : '';
+  return (
+    <div>
+      <StatusPill payment={payment} />
+      <div className="sub" title={`${reason}${code}`}>{reason}{code}</div>
+    </div>
+  );
 }
 
 interface Filters {
   status: '' | PaymentStatus;
   accountId: string;
   agentId: string;
+  customerId: string;
+  categoryId: string;
   from: string;
   to: string;
   search: string;
   needsDetails: boolean;
+  minAmount: string;
+  maxAmount: string;
+  minFee: string;
+  maxFee: string;
 }
 
-const DEFAULT_FILTERS: Filters = { status: '', accountId: '', agentId: '', from: '', to: '', search: '', needsDetails: false };
+// No status is pre-selected. The summary's own SQL already filters each figure
+// to the statuses it is about, so a default of 'paid' made three of the cards
+// meaningless: approval rate could only ever be 100% and refunds only ever 0.
+const DEFAULT_FILTERS: Filters = {
+  status: '', accountId: '', agentId: '', customerId: '', categoryId: '',
+  from: '', to: '', search: '', needsDetails: false,
+  minAmount: '', maxAmount: '', minFee: '', maxFee: '',
+};
 
 type ReversalKind = 'refund' | 'chargeback';
 
@@ -54,6 +113,7 @@ export default function PaymentsPage() {
   const can = useCan();
   const { labels, user, activeWorkspaceId } = useCurrentSession();
   const { rateCard } = useRateCard();
+  const declineFee = rateCard.declineFee ?? 0;
   const canScope = can('data.view_all');
   const canComplete = can('payments.complete');
   const canReverse = can('revenue.manage');
@@ -78,18 +138,26 @@ export default function PaymentsPage() {
     status: filters.status || undefined,
     accountId: filters.accountId || undefined,
     agentId: filters.agentId || undefined,
-    from: filters.from || undefined,
-    to: filters.to || undefined,
+    customerId: filters.customerId || undefined,
+    categoryId: filters.categoryId || undefined,
+    ...toInstantRange({ from: filters.from, to: filters.to }),
     q: search.trim() || undefined,
     needsDetails: filters.needsDetails || undefined,
+    minAmount: filters.minAmount || undefined,
+    maxAmount: filters.maxAmount || undefined,
+    minFee: canScope ? filters.minFee || undefined : undefined,
+    maxFee: canScope ? filters.maxFee || undefined : undefined,
     sort: sort.key as PaymentSort,
     dir: sort.dir,
-  }), [filters.status, filters.accountId, filters.agentId, filters.from, filters.to, filters.needsDetails, search, sort]);
+  }), [
+    canScope, filters.status, filters.accountId, filters.agentId, filters.customerId, filters.categoryId,
+    filters.from, filters.to, filters.needsDetails, filters.minAmount, filters.maxAmount, filters.minFee, filters.maxFee,
+    search, sort,
+  ]);
 
   const {
-    payments, summary, categories, customers, accounts, agents,
-    areCustomersLoading, hasCustomersError, retryCustomers,
-    isLoading, isError, isSummaryLoading, isSummaryError, hasMore, isLoadingMore, loadMore, complete, recordReversal, reassign, archivePayment, exportCsv,
+    payments, summary, accounts, filterOptions,
+    isLoading, isError, isSummaryLoading, isSummaryError, hasMore, isLoadingMore, loadMore, recordReversal, reassign, archivePayment, exportCsv,
   } = usePaymentsData(query, canScope);
 
   const [detail, setDetail] = useState<Payment | null>(null);
@@ -108,22 +176,31 @@ export default function PaymentsPage() {
   });
 
   const statsUnknown = isSummaryLoading || isSummaryError || !summary;
+  const detailAmount = detail ? visibleAmount(detail) : null;
 
   const statCards = [
     {
       key: 'gross', label: 'Gross',
       card: canScope
         ? <StatCard isUnknown={statsUnknown} label="Gross revenue" value={<Money amount={summary?.grossContent ?? 0} currency={summary?.currency} direction="in" />} sub="Before fees" />
-        : <StatCard isUnknown={statsUnknown} label="After fees" value={<Money amount={summary?.afterFees ?? 0} currency={summary?.currency} direction="in" />} sub="What reached the agency after all fees" />,
+        : <StatCard isUnknown={statsUnknown} label="Net revenue" value={<Money amount={summary?.afterFees ?? 0} currency={summary?.currency} direction="in" />} sub="Revenue after all fees — your pay is based on this" />,
     },
     ...(canScope ? [{
       key: 'fees', label: 'Platform fees',
-      card: <StatCard isUnknown={statsUnknown} label="Platform fees" value={<Money amount={summary?.platformFees ?? 0} currency={summary?.currency} direction="out" />} sub={`${rateCard.blended.toFixed(1)}%`} />,
+      card: <StatCard isUnknown={statsUnknown} label="Platform fees" value={<Money amount={summary?.platformFees ?? 0} currency={summary?.currency} direction="out" />}
+        sub={`${rateCard.blended.toFixed(1)}%${summary?.feesEstimated ? ' · estimated' : ''}`} />,
     }] : []),
     ...(canScope ? [{
       key: 'netProfit', label: 'Net profit',
       card: <StatCard isUnknown={statsUnknown} label="Net profit"
-        value={<Money amount={summary?.netProfit ?? 0} currency={summary?.currency} direction="in" emphasis />} sub="Gross after platform fees" />,
+        value={<Money amount={summary?.netProfit ?? 0} currency={summary?.currency} direction="in" emphasis />}
+        sub={summary?.feesEstimated ? 'Gross after estimated platform fees' : 'Gross after platform fees'} />,
+    }] : []),
+    ...(canScope && declineFee ? [{
+      key: 'declineFees', label: 'Decline fees',
+      card: <StatCard isUnknown={statsUnknown} label="Decline fees"
+        value={<Money amount={(summary?.declinedCount ?? 0) * declineFee} currency={summary?.currency} direction="out" />}
+        sub={`${summary?.declinedCount ?? 0} declined · ${declineFee.toFixed(2)} each`} />,
     }] : []),
     ...(canViewFlow ? [{
       key: 'checkoutFees', label: 'Checkout-fee revenue',
@@ -162,6 +239,13 @@ export default function PaymentsPage() {
 
   const range: DateRange = { from: filters.from, to: filters.to };
   const setRange = (r: DateRange) => setFilters((f) => ({ ...f, ...r }));
+  const availableStatuses = PAYMENT_STATUSES.filter((status) =>
+    status === filters.status || filterOptions?.statuses.includes(status),
+  );
+  const activeMoreFilters = [
+    filters.customerId, filters.accountId, filters.agentId, filters.categoryId,
+    filters.minAmount, filters.maxAmount, canScope ? filters.minFee : '', canScope ? filters.maxFee : '',
+  ].filter(Boolean).length;
 
   const columns: Column<Payment>[] = [
     {
@@ -178,63 +262,45 @@ export default function PaymentsPage() {
     },
     {
       key: 'account', header: labels.account, render: (p) => p.account,
-      isFiltered: filters.accountId !== '',
-      filter: canScope ? (
-        <Select label={labels.account} hideLabel value={filters.accountId} onChange={(v) => setFilters((f) => ({ ...f, accountId: v }))}>
-          <option value="">All {labels.accounts.toLowerCase()}</option>
-          {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </Select>
-      ) : undefined,
     },
     {
       key: 'agent', header: labels.agent, render: (p) => p.agent ?? '—',
-      isFiltered: filters.agentId !== '',
-      filter: canScope ? (
-        <Select label={labels.agent} hideLabel value={filters.agentId} onChange={(v) => setFilters((f) => ({ ...f, agentId: v }))}>
-          <option value="">All {labels.agents.toLowerCase()}</option>
-          {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </Select>
-      ) : undefined,
     },
     { key: 'category', header: 'Category', render: (p) => p.category ?? '—' },
     {
-      key: 'amount', header: canScope ? 'Amount' : 'After fees', sortKey: 'amount',
-      render: (p) => <Money amount={canScope ? p.amount : (p.amountAfterFees ?? p.amount)} currency={p.currency}
-        direction={isReversed(p.status) ? 'out' : p.status === 'paid' && !p.reviewRequired ? 'in' : undefined} />,
+      key: 'amount', header: canScope ? 'Amount' : 'Net revenue', sortKey: 'amount',
+      render: (p) => <PaymentAmount payment={p} />,
     },
     ...(canScope ? [{
       key: 'fee', header: 'Fee',
-      render: (p: Payment) => p.platformFee == null ? '—' : <Money amount={p.platformFee} direction="out" />,
+      render: (p: Payment) => p.status === 'failed' && declineFee ? (
+        <>
+          <Money amount={declineFee} currency={p.currency} direction="out" />
+          <span className="sub inline"> · decline fee</span>
+        </>
+      ) : p.platformFee == null ? '—' : (
+        <>
+          <Money amount={p.platformFee} currency={p.currency} direction="out" />
+          {p.feeIsEstimate && <span className="sub inline" title={ESTIMATED_FEE_NOTE}> · estimated</span>}
+        </>
+      ),
     }] : []),
     {
-      key: 'status', header: 'Status', sortKey: 'status', render: (p) => <StatusPill payment={p} />,
-      isFiltered: filters.status !== '' || filters.needsDetails,
-      filter: (
-        <Select
-          label="Status" hideLabel
-          value={filters.needsDetails ? 'needs_details' : filters.status}
-          onChange={(v) => setFilters((f) => ({ ...f, needsDetails: v === 'needs_details', status: v === 'needs_details' ? '' : v as Filters['status'] }))}
-        >
-          <option value="">All statuses</option>
-          <option value="needs_details">Waiting to fill details</option>
-          {PAYMENT_STATUSES.map((s) => <option key={s} value={s}>{PAYMENT_STATUS_LABELS[s]}</option>)}
-        </Select>
-      ),
+      key: 'status', header: 'Status', sortKey: 'status', render: (p) => <PaymentStatus payment={p} />,
     },
     {
-      key: 'date', header: 'Date', sortKey: 'date', render: (p) => <DateCell ts={p.occurredAt} />,
-      isFiltered: filters.from !== '' || filters.to !== '',
-      filter: <Calendar value={range} onChange={setRange} />,
+      key: 'date', header: 'Date', sortKey: 'date', render: (p) => (
+        <span className="payment-date"><DateCell ts={p.occurredAt} /></span>
+      ),
     },
   ];
 
   const columnsView = useViewLayout('payments.columns', columns.map((c) => ({ key: c.key, label: c.header })));
   const shownColumns: Column<Payment>[] = [
-    // The explicit way to open a row's detail modal, always first and never
-    // hidden or reordered. It also shows on the phone card, so it is kept out
-    // of the card's expanded field list.
+    // The explicit way to open a row's detail dialog, always first and never
+    // hidden or reordered.
     {
-      key: 'view', header: 'View', hideHeader: true, hideInMobileDetails: true, width: 44,
+      key: 'view', header: 'View', hideHeader: true, width: 44,
       render: (p: Payment) => <RowViewButton onClick={() => setDetail(p)} />,
     },
     ...orderBy(columns, columnsView.visibleKeys),
@@ -263,7 +329,13 @@ export default function PaymentsPage() {
         title="Payments"
         actions={
           <>
-            <ViewPicker label="Edit cards" view={statsView} />
+            <ViewPicker
+              label="Customise view"
+              sections={[
+                { label: 'Cards', view: statsView },
+                { label: 'Columns', view: columnsView },
+              ]}
+            />
             {canExport && <button className="btn ghost" onClick={() => setExportOpen(true)}>Export CSV</button>}
           </>
         }
@@ -280,16 +352,83 @@ export default function PaymentsPage() {
       </StatGrid>
 
       <FilterBar>
-        <input
-          type="search"
-          className="search-input"
-          aria-label="Search payments"
-          placeholder="Search any visible payment field"
-          value={filters.search}
-          onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
-        />
-        <button className="btn ghost" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear filters</button>
-        <ViewPicker label="Edit columns" view={columnsView} />
+        <CurrencyPicker />
+        <div className="payment-filter-top">
+          <input
+            type="search"
+            className="search-input"
+            aria-label="Search payments"
+            placeholder="Search any visible payment field"
+            value={filters.search}
+            onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
+          />
+          <Select
+            label="Status"
+            hideLabel
+            value={filters.status}
+            onChange={(value) => setFilters((f) => ({ ...f, status: value as Filters['status'] }))}
+          >
+            <option value="">All statuses</option>
+            {availableStatuses.map((status) => (
+              <option key={status} value={status}>{PAYMENT_STATUS_LABELS[status]}</option>
+            ))}
+          </Select>
+          <DateRangePicker value={range} onChange={setRange} />
+          {/* Its own control, not a status: a payment waiting for its details
+              already has one (Paid), and the two narrow the list together. */}
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={filters.needsDetails}
+              onChange={(e) => setFilters((f) => ({ ...f, needsDetails: e.target.checked }))}
+            />
+            <span>Waiting to fill details</span>
+          </label>
+          <button className="btn ghost" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear filters</button>
+        </div>
+        <details className="payment-filter-more">
+          <summary>More filters{activeMoreFilters ? ` (${activeMoreFilters})` : ''}</summary>
+          <div className="payment-filter-grid">
+            <Select label="Customer" value={filters.customerId} onChange={(customerId) => setFilters((f) => ({ ...f, customerId }))}>
+              <option value="">All customers</option>
+              {filterOptions?.customers.map((customer) => (
+                <option key={customer.id} value={customer.id}>{customer.name}</option>
+              ))}
+            </Select>
+            <Select label={labels.account} value={filters.accountId} onChange={(accountId) => setFilters((f) => ({ ...f, accountId }))}>
+              <option value="">All {labels.accounts.toLowerCase()}</option>
+              {filterOptions?.accounts.map((account) => (
+                <option key={account.id} value={account.id}>{account.name}</option>
+              ))}
+            </Select>
+            <Select label={labels.agent} value={filters.agentId} onChange={(agentId) => setFilters((f) => ({ ...f, agentId }))}>
+              <option value="">All {labels.agents.toLowerCase()}</option>
+              {filterOptions?.agents.map((agent) => (
+                <option key={agent.id} value={agent.id}>{agent.name}</option>
+              ))}
+            </Select>
+            <Select label="Category" value={filters.categoryId} onChange={(categoryId) => setFilters((f) => ({ ...f, categoryId }))}>
+              <option value="">All categories</option>
+              {filterOptions?.categories.map((category) => (
+                <option key={category.id} value={category.id}>{category.name}</option>
+              ))}
+            </Select>
+            <RangeFilter
+              label="Amount"
+              min={filters.minAmount}
+              max={filters.maxAmount}
+              onChange={(minAmount, maxAmount) => setFilters((f) => ({ ...f, minAmount, maxAmount }))}
+            />
+            {canScope && (
+              <RangeFilter
+                label="Fee"
+                min={filters.minFee}
+                max={filters.maxFee}
+                onChange={(minFee, maxFee) => setFilters((f) => ({ ...f, minFee, maxFee }))}
+              />
+            )}
+          </div>
+        </details>
       </FilterBar>
 
       <DataTable
@@ -297,25 +436,13 @@ export default function PaymentsPage() {
         rows={payments}
         rowKey={(p) => p.id}
         onRowClick={setDetail}
-        mobileSummary={(p, { expanded, toggle }) => (
+        mobileSummary={(p) => (
           <div className="mobile-data-card-summary">
-            <div className="mobile-data-card-amount">
-              <Money amount={canScope ? p.amount : (p.amountAfterFees ?? p.amount)} currency={p.currency}
-                direction={isReversed(p.status) ? 'out' : p.status === 'paid' && !p.reviewRequired ? 'in' : undefined} />
-            </div>
+            <div className="mobile-data-card-amount"><PaymentAmount payment={p} /></div>
             <div className="mobile-data-card-status"><StatusPill payment={p} /></div>
             <div className="mobile-data-card-creator">{labels.account}: {p.account}</div>
             <div className="mobile-card-actions">
               <RowViewButton onClick={() => setDetail(p)} />
-              <button
-                type="button"
-                className="mobile-card-toggle"
-                aria-label={expanded ? 'Collapse payment details' : 'Expand payment details'}
-                aria-expanded={expanded}
-                onClick={toggle}
-              >
-                <span className={`mobile-card-chevron${expanded ? ' open' : ''}`} aria-hidden="true" />
-              </button>
             </div>
           </div>
         )}
@@ -336,11 +463,11 @@ export default function PaymentsPage() {
         }
       />
 
-      <Modal open={!!detail && !reversing && !completing} onClose={() => setDetail(null)} title="Payment">
+      <Modal className="payment-detail-modal" open={!!detail && !reversing && !completing} onClose={() => setDetail(null)} title="Payment">
         {detail && (
           <>
             <div className="modal-topline">
-              <StatusPill payment={detail} />
+              <PaymentStatus payment={detail} />
             </div>
             <DetailRow label="HigherPays Order">
               {detail.linkReference
@@ -348,6 +475,18 @@ export default function PaymentsPage() {
                 : '—'}
             </DetailRow>
             <DetailRow label="MantaPay transaction ID">{detail.providerTransactionId ?? '—'}</DetailRow>
+            {detail.status === 'superseded' && (
+              <div className="callout"><p className="sub">{SUPERSEDED_NOTE}</p></div>
+            )}
+            {detail.status === 'failed' && (
+              <>
+                <DetailRow label="MantaPay decline reason">{declineReasonLabel(detail.declineReason)}</DetailRow>
+                <DetailRow label="MantaPay decline code">{detail.declineCode ?? 'Unknown'}</DetailRow>
+                <DetailRow label="MantaPay code source">{declineSourceLabel(detail.declineCodeSource)}</DetailRow>
+                <DetailRow label="MantaPay reason source">{declineSourceLabel(detail.declineReasonSource)}</DetailRow>
+                <p className="sub">The reason is MantaPay display text, or our own wording where MantaPay sent none; the signed reply code is the payment outcome.</p>
+              </>
+            )}
             <DetailRow label="Customer">{detail.customer ?? '—'}{detail.customerTelegram ? <span className="sub inline"> · {detail.customerTelegram}</span> : null}</DetailRow>
             <DetailRow label="Category">{detail.category ?? '—'}</DetailRow>
             {canReverse && !isReversed(detail.status) && !detail.reviewRequired ? (
@@ -370,12 +509,17 @@ export default function PaymentsPage() {
                 <DetailRow label={labels.agent}>{detail.agent ?? '—'}</DetailRow>
               </>
             )}
-            <DetailRow label={detail.amountAfterFees != null ? 'After fees' : 'Amount'}><Money amount={detail.amountAfterFees ?? detail.amount} currency={detail.currency}
-              direction={detail.reviewRequired ? undefined : 'in'} /></DetailRow>
-            {detail.platformFee != null && (
+            <DetailRow label={canScope ? 'Amount' : 'Net revenue'}>
+              {detailAmount == null ? '—' : (
+                <Money amount={detailAmount} currency={detail.currency}
+                  direction={detail.reviewRequired ? undefined : 'in'} />
+              )}
+            </DetailRow>
+            {detail.amount != null && detail.platformFee != null && (
               <>
-                <DetailRow label="Platform fee"><Money amount={detail.platformFee} direction="out" /></DetailRow>
-                <DetailRow label="Net"><Money amount={detail.amount - detail.platformFee} direction="in" emphasis /></DetailRow>
+                <DetailRow label={detail.feeIsEstimate ? 'Platform fee · estimated' : 'Platform fee'}><Money amount={detail.platformFee} currency={detail.currency} direction="out" /></DetailRow>
+                <DetailRow label={detail.feeIsEstimate ? 'Net · estimated' : 'Net'}><Money amount={detail.amount - detail.platformFee} currency={detail.currency} direction="in" emphasis /></DetailRow>
+                {detail.feeIsEstimate && <p className="sub">{ESTIMATED_FEE_NOTE}</p>}
               </>
             )}
             <DetailRow label="Date"><DateCell ts={detail.occurredAt} /></DetailRow>
@@ -445,16 +589,10 @@ export default function PaymentsPage() {
       </Modal>
 
       {completing && (
-        <CompleteDetailsModal
+        <CompletePaymentModal
           payment={completing}
-          categories={categories}
-          customers={customers}
-          areCustomersLoading={areCustomersLoading}
-          hasCustomersError={hasCustomersError}
-          retryCustomers={retryCustomers}
           onClose={() => setCompleting(null)}
-          onSubmit={async (input) => {
-            await complete(completing.id, input);
+          onCompleted={() => {
             setCompleting(null);
             setDetail(null);
             toast('Payment details saved.');
@@ -484,16 +622,62 @@ export default function PaymentsPage() {
           fee={reversing.kind === 'refund' ? rateCard.refundFee : rateCard.chargebackFee}
           onClose={() => setReversing(null)}
           onSubmit={async () => {
+            const reversed = visibleAmount(reversing.payment);
             await recordReversal(reversing.payment.id, reversing.kind);
             setReversing(null);
             setDetail(null);
-            toast(`Recorded ${reversing.kind} of ${formatMoney(reversing.payment.amount, reversing.payment.currency)}.`);
+            toast(reversed == null
+              ? `Recorded ${reversing.kind}.`
+              : `Recorded ${reversing.kind} of ${formatMoney(reversed, reversing.payment.currency)}.`);
           }}
         />
       )}
       {enableTwoFactorOpen && (
         <EnableTwoFactorModal onClose={() => setEnableTwoFactorOpen(false)} />
       )}
+    </div>
+  );
+}
+
+function RangeFilter({ label, min, max, onChange }: {
+  label: string;
+  min: string;
+  max: string;
+  onChange: (min: string, max: string) => void;
+}) {
+  const minId = `payment-${label.toLowerCase()}-min`;
+  const maxId = `payment-${label.toLowerCase()}-max`;
+  return (
+    <div className="payment-range-filter">
+      <span className="field-label">{label}</span>
+      <div className="payment-range-inputs">
+        <label htmlFor={minId}>
+          Minimum
+          <input
+            id={minId}
+            type="number"
+            min="0"
+            step="0.01"
+            inputMode="decimal"
+            placeholder="No minimum"
+            value={min}
+            onChange={(event) => onChange(event.target.value, max)}
+          />
+        </label>
+        <label htmlFor={maxId}>
+          Maximum
+          <input
+            id={maxId}
+            type="number"
+            min="0"
+            step="0.01"
+            inputMode="decimal"
+            placeholder="No maximum"
+            value={max}
+            onChange={(event) => onChange(min, event.target.value)}
+          />
+        </label>
+      </div>
     </div>
   );
 }
@@ -509,6 +693,17 @@ function paymentFlowError(error: unknown): string {
     }
   }
   return "Couldn't load the payment flow. Try again.";
+}
+
+function declineSourceLabel(source: MantaPayDeclineSource | null | undefined): string {
+  switch (source) {
+    case 'mantapay_webhook_signed': return 'Signed MantaPay webhook';
+    case 'mantapay_webhook': return 'MantaPay webhook';
+    case 'mantapay_status': return 'MantaPay status lookup';
+    case 'stored_raw_payload': return 'Stored MantaPay payload';
+    case 'derived_no_provider_text': return 'No reason from MantaPay';
+    default: return 'Unknown';
+  }
 }
 
 function PaymentFlowContent({ flow, labels }: {
@@ -561,7 +756,7 @@ function PaymentFlowContent({ flow, labels }: {
               <Money amount={flow.fees.provider} currency={flow.currency} direction="out" />
             </DetailRow>
             {flow.fees.providerSource === 'estimated' && (
-              <p className="sub flow-fee-note">Calculated from the configured MantaPay rates. Actual provider fees have not been reported.</p>
+              <p className="sub flow-fee-note">{ESTIMATED_FEE_NOTE}</p>
             )}
             <div className="flow-breakdown">
               {providerItems.map(([label, amount, rate]) => (
@@ -625,7 +820,8 @@ function ExportModal({ range, loadedCount, canSeeFees, labels, onClose, onSubmit
   const submit = async () => {
     if (selected.length === 0) { toast('Pick at least one column.'); return; }
     setIsExporting(true);
-    try { await onSubmit({ from: dates.from, to: dates.to, columns: selected, limit: scope === 'loaded' ? loadedCount : undefined }); }
+    const range = toInstantRange(dates);
+    try { await onSubmit({ from: range.from ?? '', to: range.to ?? '', columns: selected, limit: scope === 'loaded' ? loadedCount : undefined }); }
     catch (err) { toast(err instanceof Error ? err.message : 'Export failed.'); }
     finally { setIsExporting(false); }
   };
@@ -695,6 +891,7 @@ function ReversalModal({ payment, kind, fee, onClose, onSubmit }: {
   onSubmit: () => Promise<void>;
 }) {
   const copy = REVERSAL_COPY[kind];
+  const amount = visibleAmount(payment);
   const [confirmed, setConfirmed] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -709,10 +906,12 @@ function ReversalModal({ payment, kind, fee, onClose, onSubmit }: {
   return (
     <Modal open onClose={onClose} title={copy.title} subtitle={copy.subtitle}>
       <div className="callout">
-        <DetailRow label="Reversed"><Money amount={payment.amount} currency={payment.currency} direction="out" /></DetailRow>
-        {fee !== undefined && <DetailRow label={copy.feeLabel}><Money amount={fee} direction="out" /></DetailRow>}
+        <DetailRow label="Reversed">
+          {amount == null ? '—' : <Money amount={amount} currency={payment.currency} direction="out" />}
+        </DetailRow>
+        {fee !== undefined && <DetailRow label={copy.feeLabel}><Money amount={fee} currency={payment.currency} direction="out" /></DetailRow>}
         {payment.platformFee != null && (
-          <p className="sub">Platform fees already taken ({formatMoney(payment.platformFee)}) are not returned by the provider.</p>
+          <p className="sub">Platform fees already taken ({formatMoney(payment.platformFee, payment.currency)}) are not returned by the provider.</p>
         )}
       </div>
       <label className="check-row">
@@ -722,111 +921,9 @@ function ReversalModal({ payment, kind, fee, onClose, onSubmit }: {
       <div className="modal-actions">
         <button className="btn ghost" onClick={onClose}>Cancel</button>
         <button className="btn danger" onClick={submit} disabled={isSaving}>
-          {isSaving ? 'Recording…' : `Record ${kind} of ${formatMoney(payment.amount, payment.currency)}`}
-        </button>
-      </div>
-    </Modal>
-  );
-}
-
-interface CompleteDetailsModalProps {
-  payment: Payment;
-  categories: { id: string; name: string }[];
-  customers: { id: string; name: string; telegramName: string | null; email: string | null }[];
-  areCustomersLoading: boolean;
-  hasCustomersError: boolean;
-  retryCustomers: () => void;
-  onClose: () => void;
-  onSubmit: (input: { categoryId: string; customerId?: string; customer?: { name: string; telegramName?: string; email?: string } }) => Promise<void>;
-}
-
-/** The agent says who paid and what for. An existing customer or a new one. */
-function CompleteDetailsModal({
-  payment, categories, customers, areCustomersLoading, hasCustomersError, retryCustomers, onClose, onSubmit,
-}: CompleteDetailsModalProps) {
-  const [categoryId, setCategoryId] = useState(categories[0]?.id ?? '');
-  const [customerId, setCustomerId] = useState(payment.customerId ?? '');
-  const [name, setName] = useState('');
-  const [telegramName, setTelegramName] = useState('');
-  const [email, setEmail] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
-  const typingNew = customerId === '';
-
-  const submit = async () => {
-    if (areCustomersLoading || hasCustomersError) { toast('Wait for the customer list to load.'); return; }
-    if (!categoryId) { toast('Pick a category.'); return; }
-    if (typingNew && !name.trim()) { toast('Enter the customer name.'); return; }
-    setIsSaving(true);
-    try {
-      await onSubmit({
-        categoryId,
-        ...(typingNew
-          ? {
-            customer: {
-              name: name.trim(),
-              ...(telegramName.trim() ? { telegramName: telegramName.trim() } : {}),
-              ...(email.trim() ? { email: email.trim() } : {}),
-            },
-          }
-          : { customerId }),
-      });
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'Could not save the details.');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  return (
-    <Modal open onClose={onClose} title="Fill payment details" subtitle={`${formatMoney(payment.amount, payment.currency)} · ${payment.account}`}>
-      {hasCustomersError && (
-        <div className="warnbar" role="alert">
-          Existing customers could not be loaded. Retry before creating a new one.{' '}
-          <button className="btn ghost small" onClick={retryCustomers}>Try again</button>
-        </div>
-      )}
-      <Select id="complete-customer" label="Customer" value={customerId} onChange={setCustomerId}
-        disabled={areCustomersLoading || hasCustomersError}>
-        <option value="">{areCustomersLoading ? 'Loading customers…' : hasCustomersError ? 'Customers unavailable' : 'New customer…'}</option>
-        {customers.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name}{c.email ? ` · ${c.email}` : c.telegramName ? ` · ${c.telegramName}` : ''}
-          </option>
-        ))}
-      </Select>
-      {typingNew && !areCustomersLoading && !hasCustomersError && (
-        <div className="form-row">
-          <div className="field">
-            <label htmlFor="complete-name">Customer name</label>
-            <input id="complete-name" type="text" value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-          <div className="field">
-            <label htmlFor="complete-telegram">Telegram name</label>
-            <input id="complete-telegram" type="text" placeholder="@name" value={telegramName} onChange={(e) => setTelegramName(e.target.value)} />
-          </div>
-          <div className="field">
-            <label htmlFor="complete-email">Email (optional)</label>
-            <input id="complete-email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-          </div>
-        </div>
-      )}
-      <Select id="complete-category" label="Category" value={categoryId} onChange={setCategoryId}
-        hint={categories.length === 0 ? (
-          <>
-            No categories defined yet.{' '}
-            <Link className="btn ghost small" to="/settings?tab=categories" target="_blank" rel="noreferrer">
-              Manage categories
-            </Link>
-          </>
-        ) : undefined}>
-        {categories.length === 0 && <option value="">No categories defined</option>}
-        {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-      </Select>
-      <div className="modal-actions">
-        <button className="btn ghost" onClick={onClose}>Cancel</button>
-        <button className="btn" onClick={submit}
-          disabled={isSaving || !categoryId || areCustomersLoading || hasCustomersError}>
-          {isSaving ? 'Saving…' : 'Save details'}
+          {isSaving ? 'Recording…'
+            : amount == null ? `Record ${kind}`
+              : `Record ${kind} of ${formatMoney(amount, payment.currency)}`}
         </button>
       </div>
     </Modal>

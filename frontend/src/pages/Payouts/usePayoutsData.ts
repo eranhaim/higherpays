@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useTimezone } from '../../hooks/useTimezone';
+import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import {
   payoutsApi, meApi,
   type PayoutBreakdown, type PayoutRecord, type RunPayoutInput, type Earnings, type PayoutHistoryFilters,
@@ -41,10 +42,11 @@ export function usePayoutsData(selected: DateRange, historyFilters: PayoutHistor
   const { activeWorkspaceId } = useCurrentSession();
   const queryClient = useQueryClient();
   const range = useIsoRange(selected);
+  const { currency } = useReportingCurrency();
 
   const breakdown = useQuery({
-    queryKey: ['payouts-breakdown', activeWorkspaceId, range.from, range.to],
-    queryFn: () => payoutsApi.getBreakdown(range.from, range.to),
+    queryKey: ['payouts-breakdown', activeWorkspaceId, range.from, range.to, currency],
+    queryFn: () => payoutsApi.getBreakdown(range.from, range.to, currency),
     enabled: Boolean(activeWorkspaceId),
   });
   const history = useQuery({
@@ -55,7 +57,7 @@ export function usePayoutsData(selected: DateRange, historyFilters: PayoutHistor
 
   const run = useMutation({
     mutationFn: (input: Pick<RunPayoutInput, 'payeeType' | 'targetId'>) =>
-      payoutsApi.run({ ...input, from: range.from, to: range.to }),
+      payoutsApi.run({ ...input, from: range.from, to: range.to, currency }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['payouts-breakdown', activeWorkspaceId] });
       queryClient.invalidateQueries({ queryKey: ['payouts-history', activeWorkspaceId] });
@@ -81,9 +83,10 @@ export function usePayoutsData(selected: DateRange, historyFilters: PayoutHistor
 export function useEarnings(selected: DateRange) {
   const { activeWorkspaceId } = useCurrentSession();
   const range = useIsoRange(selected);
+  const { currency } = useReportingCurrency();
   const query = useQuery<Earnings>({
-    queryKey: ['earnings', activeWorkspaceId, range.from, range.to],
-    queryFn: () => meApi.earnings(range.from, range.to),
+    queryKey: ['earnings', activeWorkspaceId, range.from, range.to, currency],
+    queryFn: () => meApi.earnings(range.from, range.to, currency),
     enabled: Boolean(activeWorkspaceId),
   });
   return { earnings: query.data ?? null, isLoading: query.isLoading, isError: query.isError };

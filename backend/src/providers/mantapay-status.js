@@ -14,6 +14,7 @@
 //                reference back to the real outcome.
 const config = require('../config');
 const sig = require('./mantapay-signature');
+const reply = require('./mantapay-reply');
 const { fetchWithTimeout } = require('./http');
 
 const STATUS_PATH = '/member/getStatus.asp';
@@ -66,14 +67,14 @@ async function getStatusByOrder(companyNum, order, hashKey) {
 
   const transactions = (body.data || []).map((d) => ({
     // camelCase here, snake_case in notifications — accept whatever arrives
-    replyCode: d.replyCode != null ? String(d.replyCode) : (d.Reply != null ? String(d.Reply) : null),
-    replyDesc: d.replyDesc || d.ReplyDesc || null,
+    replyCode: reply.readReplyCode(d),
+    replyDesc: reply.readReplyDescription(d),
     transId: d.trans_id != null ? String(d.trans_id) : (d.TransID != null ? String(d.TransID) : null),
     date: parseTransDate(d.trans_date),
     amount: d.trans_amount != null ? Number(d.trans_amount) : null,
     currency: d.trans_currency || null,
     order: d.trans_order != null ? String(d.trans_order) : String(order),
-    status: sig.mapReplyCode(d.replyCode != null ? d.replyCode : d.Reply),
+    status: sig.mapReplyCode(reply.readReplyCode(d)),
   }));
   return { ok: true, transactions };
 }
@@ -84,8 +85,13 @@ async function getStatusById(companyNum, transId, { includeNonPending = true } =
   if (includeNonPending) qs.set('RequestType', '1');
   const res = await httpGet(`${config.mantapayProcessBase}${STATUS_PATH}?${qs.toString()}`);
   const p = parseFormReply(res.text);
-  const code = p.Reply != null ? String(p.Reply) : null;
-  return { replyCode: code, replyDesc: p.ReplyDesc || null, transId: p.TransID || String(transId), status: sig.mapReplyCode(code) };
+  const code = reply.readReplyCode(p);
+  return {
+    replyCode: code,
+    replyDesc: reply.readReplyDescription(p),
+    transId: p.TransID || String(transId),
+    status: sig.mapReplyCode(code),
+  };
 }
 
 // Their dates are DD/MM/YYYY HH:mm:ss (note: the settlement report used dd.mm.yyyy).

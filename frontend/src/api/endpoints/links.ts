@@ -57,7 +57,7 @@ export interface PaymentLink {
   account: string;
   agentId: string | null;
   agent: string | null;
-  latestProviderAttempt: ProviderAttempt | null;
+  providerOutcome: ProviderOutcome | null;
 }
 
 export type LinkEventType =
@@ -86,7 +86,12 @@ export const PROVIDER_ATTEMPT_STATUS_LABELS: Record<ProviderAttemptStatus, strin
   declined: 'Declined',
 };
 
-export interface ProviderAttempt {
+/**
+ * What MantaPay says became of this order. An approved attempt is the outcome
+ * even when the customer retried afterwards and was declined, so this never
+ * contradicts a paid link.
+ */
+export interface ProviderOutcome {
   status: ProviderAttemptStatus;
   replyCode: string | null;
   replyDescription: string | null;
@@ -98,7 +103,8 @@ export interface LinksSummary {
   totalLinks: number;
   paidLinks: number;
   successfulPayments: number;
-  grossSales: number;
+  /** Only sent to callers with workspace-wide data access. */
+  grossSales?: number;
   netAfterFees: number;
   /** Non-overlapping bands: min inclusive, max exclusive. */
   priceBands: Array<{ min: number; max: number | null; count: number }>;
@@ -125,6 +131,8 @@ export interface ReassignImpact {
   /** How many of them are in a payout that has already been paid. */
   paidOut: number;
   amount: number;
+  /** The link's own currency; the amount is never mixed. */
+  currency: string;
 }
 
 /** Who a link or a payment should belong to from now on. */
@@ -139,7 +147,7 @@ export interface ListLinksQuery {
   type?: string;
   min?: string;
   max?: string;
-  /** YYYY-MM-DD, inclusive. */
+  /** ISO instant, inclusive. A picker's day becomes one through `toInstantRange`. */
   from?: string;
   to?: string;
   /** Matches HigherPays Order, MantaPay transaction ID, or agent name. */
@@ -155,9 +163,7 @@ function filterParams(filters: ListLinksQuery): URLSearchParams {
   const qs = new URLSearchParams();
   for (const [key, value] of Object.entries(filters)) {
     if (!value) continue;
-    if (key === 'from') qs.set('from', `${value}T00:00:00`);
-    else if (key === 'to') qs.set('to', `${value}T23:59:59.999`);
-    else qs.set(key, value);
+    qs.set(key, value);
   }
   return qs;
 }
@@ -170,8 +176,12 @@ export const linksApi = {
     return api.get<Page<PaymentLink>>(workspacePath(`/links?${qs.toString()}`));
   },
 
-  summary: (filters: ListLinksQuery = {}) =>
-    api.get<LinksSummary>(workspacePath(`/links/summary?${filterParams(filters).toString()}`)),
+  /** Totals are in one currency; pass the one to report in. */
+  summary(filters: ListLinksQuery = {}, currency?: string) {
+    const qs = filterParams(filters);
+    if (currency) qs.set('currency', currency);
+    return api.get<LinksSummary>(workspacePath(`/links/summary?${qs.toString()}`));
+  },
 
   create: (input: CreateLinkInput) => api.post<PaymentLink>(workspacePath('/links'), input),
 

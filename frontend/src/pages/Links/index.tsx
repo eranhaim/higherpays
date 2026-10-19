@@ -1,17 +1,19 @@
 import { Fragment, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useDebounced } from '../../hooks/useDebounced';
 import { useCan } from '../../hooks/usePermission';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useRateCard } from '../../hooks/useRateCard';
+import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import { feeBreakdown } from '../../business/feeBreakdown';
-import { formatMoney } from '../../lib/format';
+import { formatMoney, toInstantRange } from '../../lib/format';
 import Modal from '../../components/Modal';
 import ReassignFields from '../../components/ReassignFields';
+import CompletePaymentModal from '../../components/CompletePaymentModal';
 import { toast } from '../../lib/toast';
 import {
   PageHeader, StatCard, StatGrid, Money, Pill, DateCell, CopyButton, DetailRow, Select,
-  DataTable, FilterBar, DateRangePicker, ViewPicker, RowViewButton,
+  DataTable, FilterBar, DateRangePicker, CurrencyPicker, ViewPicker, RowViewButton,
   type Column, type DateRange, type SortState,
 } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
@@ -19,8 +21,9 @@ import {
   LINK_TYPES, LINK_TYPE_LABELS, LINK_STATUSES, LINK_STATUS_LABELS,
   PROVIDER_ATTEMPT_STATUS_LABELS, isShareable,
   type PaymentLink, type LinkEventType, type LinkStatus, type LinkType, type LinkSort, type ProviderAttemptStatus,
+  type Payment,
 } from '../../api/endpoints';
-import { useLinkDetail, useLinksData } from './useLinksData';
+import { findPaymentNeedingDetails, useLinkDetail, useLinksData } from './useLinksData';
 import { DEFAULT_FILTERS, hasActiveFilters, rangeIsInverted, type LinksFilters } from './filters';
 
 const STATUS_TONE: Record<LinkStatus, 'ok' | 'no' | 'warn' | 'info' | 'muted'> = {
@@ -59,6 +62,11 @@ export default function LinksPage() {
   const can = useCan();
   const { labels } = useCurrentSession();
   const { rateCard } = useRateCard();
+  const { currency: reportingCurrency, currencies: knownCurrencies } = useReportingCurrency();
+  const allowedCurrencies = knownCurrencies.filter((c) => c.enabled);
+  // The currency a new link is priced in. Only checkout-supported ones can be chosen.
+  const [linkCurrency, setLinkCurrency] = useState(reportingCurrency);
+  const formatLinkMoney = (n: number) => formatMoney(n, linkCurrency);
   const canCreate = can('links.create');
   const canArchive = can('archive.manage');
   const canComplete = can('payments.complete');
@@ -85,8 +93,7 @@ export default function LinksPage() {
     type: filters.type || undefined,
     min: min || undefined,
     max: max || undefined,
-    from: filters.from || undefined,
-    to: filters.to || undefined,
+    ...toInstantRange({ from: filters.from, to: filters.to }),
     q: search.trim() || undefined,
     accountId: filters.accountId || undefined,
     showArchived: filters.showArchived || undefined,
@@ -115,6 +122,25 @@ export default function LinksPage() {
   const [isCancelling, setIsCancelling] = useState(false);
   const [deleting, setDeleting] = useState<PaymentLink | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [completing, setCompleting] = useState<Payment | null>(null);
+  const [findingDetailsFor, setFindingDetailsFor] = useState<string | null>(null);
+
+  // Filling in a payment's details used to mean navigating to Payments with a
+  // search term pre-applied, which left the agent on a filtered page they did
+  // not ask for. The link knows its reference, so look the payment up here and
+  // open the same dialog in place.
+  const openFillDetails = async (link: PaymentLink) => {
+    setFindingDetailsFor(link.id);
+    try {
+      const payment = await findPaymentNeedingDetails(link.referenceId);
+      if (!payment) { toast('This link has no payment waiting for details.'); return; }
+      setCompleting(payment);
+    } catch {
+      toast("Couldn't open the payment for this link. Try again.");
+    } finally {
+      setFindingDetailsFor(null);
+    }
+  };
 
   const conversion = summary?.totalLinks ? Math.round((summary.paidLinks / summary.totalLinks) * 100) : 0;
   const statsUnknown = isSummaryLoading || isSummaryError || !summary;
@@ -126,8 +152,9 @@ export default function LinksPage() {
     { key: 'links', label: 'Links', card: <StatCard isUnknown={statsUnknown} label="Links" value={summary?.totalLinks ?? 0} sub="Matching links" /> },
     { key: 'paid', label: 'Paid links', card: <StatCard isUnknown={statsUnknown} label="Paid links" value={summary?.paidLinks ?? 0} sub={`${conversion}% conversion`} /> },
     { key: 'payments', label: 'Successful payments', card: <StatCard isUnknown={statsUnknown} label="Successful payments" value={summary?.successfulPayments ?? 0} sub="Reusable payments count separately" /> },
-    { key: 'gross', label: 'Gross sales', card: <StatCard isUnknown={statsUnknown} label="Gross sales" value={<Money amount={summary?.grossSales ?? 0} currency={summary?.currency} direction="in" />} sub="Content sales" /> },
-    { key: 'net', label: 'Net after fees', card: <StatCard isUnknown={statsUnknown} label="Net after fees" value={<Money amount={summary?.netAfterFees ?? 0} currency={summary?.currency} direction="in" emphasis />} sub="Gross less platform fees" /> },
+    // Gross is agency-only: beside net it gives away the platform fee.
+    ...(can('data.view_all') ? [{ key: 'gross', label: 'Gross sales', card: <StatCard isUnknown={statsUnknown} label="Gross sales" value={<Money amount={summary?.grossSales ?? 0} currency={summary?.currency} direction="in" />} sub="Content sales" /> }] : []),
+    { key: 'net', label: 'Net revenue', card: <StatCard isUnknown={statsUnknown} label="Net revenue" value={<Money amount={summary?.netAfterFees ?? 0} currency={summary?.currency} direction="in" emphasis />} sub="Revenue after all fees" /> },
   ];
   const statsView = useViewLayout('links.stats', statCards);
 
@@ -146,25 +173,32 @@ export default function LinksPage() {
 
   const openCreate = () => {
     setAccountId(activeAccounts[0]?.id ?? '');
+    setLinkCurrency(allowedCurrencies.find((c) => c.currency === reportingCurrency && c.checkoutSupported)?.currency
+      ?? allowedCurrencies.find((c) => c.checkoutSupported)?.currency ?? reportingCurrency);
     setType('single_use');
     setNoExpiry(false);
     setAmountText('');
     setDescription('');
+    setCreatedUrl(null);
     setCreateOpen(true);
+  };
+
+  const closeCreate = () => {
+    setCreateOpen(false);
+    setCreatedUrl(null);
   };
 
   const submitCreate = async () => {
     if (!accountId) { toast(`Pick a ${labels.account.toLowerCase()}.`); return; }
-    if (!(amount >= minAmount)) { toast(`Minimum link amount is ${formatMoney(minAmount)}.`); return; }
-    if (aboveMax) { toast(`Maximum link amount is ${formatMoney(maxAmount ?? 0)}.`); return; }
+    if (!(amount >= minAmount)) { toast(`Minimum link amount is ${formatLinkMoney(minAmount)}.`); return; }
+    if (aboveMax) { toast(`Maximum link amount is ${formatLinkMoney(maxAmount ?? 0)}.`); return; }
     setIsCreating(true);
     try {
       const created = await createLink({
-        accountId, type, amount,
+        accountId, type, amount, currency: linkCurrency,
         description: description.trim() || undefined,
         noExpiry: type === 'single_use' ? noExpiry : undefined,
       });
-      setCreateOpen(false);
       setCreatedUrl(created.checkoutUrl);
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Could not create the link.');
@@ -254,11 +288,10 @@ export default function LinksPage() {
 
   const columnsView = useViewLayout('links.columns', columns.map((c) => ({ key: c.key, label: c.header })));
   const shownColumns: Column<PaymentLink>[] = [
-    // The explicit way to open a link's detail modal, always first and never
-    // hidden or reordered. It also shows on the phone card, so it is kept out
-    // of the card's expanded field list.
+    // The explicit way to open a link's detail dialog, always first and never
+    // hidden or reordered.
     {
-      key: 'view', header: 'View', hideHeader: true, hideInMobileDetails: true, width: 44,
+      key: 'view', header: 'View', hideHeader: true, width: 44,
       render: (l: PaymentLink) => <RowViewButton onClick={() => openDetail(l)} />,
     },
     ...orderBy(columns, columnsView.visibleKeys),
@@ -270,7 +303,9 @@ export default function LinksPage() {
           {isShareable(l.status) && l.checkoutUrl && <CopyButton value={l.checkoutUrl} label="Copy" small />}
           {isShareable(l.status) && canCreate && <button className="btn ghost small" onClick={() => setCancelling(l)}>Cancel</button>}
           {l.status === 'pending' && canComplete && (
-            <Link className="btn ghost small" to={`/payments?needs_details=1&q=${encodeURIComponent(l.referenceId)}`}>Fill details</Link>
+            <button className="btn ghost small" disabled={findingDetailsFor === l.id} onClick={() => void openFillDetails(l)}>
+              {findingDetailsFor === l.id ? 'Opening…' : 'Fill details'}
+            </button>
           )}
         </div>
       ),
@@ -283,7 +318,13 @@ export default function LinksPage() {
         title="Payment links"
         actions={
           <>
-            <ViewPicker label="Edit cards" view={statsView} />
+            <ViewPicker
+              label="Customise view"
+              sections={[
+                { label: 'Cards', view: statsView },
+                { label: 'Columns', view: columnsView },
+              ]}
+            />
             {canCreate && <button className="btn" onClick={openCreate}>New link</button>}
           </>
         }
@@ -303,18 +344,8 @@ export default function LinksPage() {
       <StatGrid>
         {orderBy(statCards, statsView.visibleKeys).map((c) => <Fragment key={c.key}>{c.card}</Fragment>)}
       </StatGrid>
-      {summary && (
-        <div className="callout price-bands">
-          <span className="field-label">Link price bands</span>
-          {summary.priceBands.map((band) => (
-            <span key={band.min} className="sub">
-              {band.max == null ? `${band.min}+` : `${band.min}–<${band.max}`}: <b>{band.count}</b>
-            </span>
-          ))}
-        </div>
-      )}
-
       <FilterBar>
+        <CurrencyPicker />
         <input type="search" className="search-input" aria-label="Search links" placeholder="Search HigherPays Order, MantaPay ID, agent"
           value={filters.search} onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))} />
         <Select label="Type" hideLabel value={filters.type} onChange={(v) => setFilters((f) => ({ ...f, type: v as LinksFilters['type'] }))}>
@@ -342,7 +373,6 @@ export default function LinksPage() {
           <span>Show archived</span>
         </label>
         <button className="btn ghost" onClick={() => setFilters(DEFAULT_FILTERS)}>Clear filters</button>
-        <ViewPicker label="Edit columns" view={columnsView} />
       </FilterBar>
 
       <DataTable
@@ -350,7 +380,7 @@ export default function LinksPage() {
         rows={links}
         rowKey={(l) => l.id}
         onRowClick={openDetail}
-        mobileSummary={(l, { expanded, toggle }) => (
+        mobileSummary={(l) => (
           <div className="mobile-data-card-summary">
             <div className="mobile-data-card-amount">
               {l.amount == null ? '—' : <Money amount={l.amount} currency={l.currency} />}
@@ -361,15 +391,6 @@ export default function LinksPage() {
             <div className="mobile-data-card-creator">{labels.account}: {l.account}</div>
             <div className="mobile-card-actions">
               <RowViewButton onClick={() => openDetail(l)} label={`View ${l.referenceId}`} />
-              <button
-                type="button"
-                className="mobile-card-toggle"
-                aria-label={expanded ? `Collapse ${l.referenceId}` : `Expand ${l.referenceId}`}
-                aria-expanded={expanded}
-                onClick={toggle}
-              >
-                <span className={`mobile-card-chevron${expanded ? ' open' : ''}`} aria-hidden="true" />
-              </button>
             </div>
           </div>
         )}
@@ -390,7 +411,7 @@ export default function LinksPage() {
         }
       />
 
-      <Modal open={detail !== null && cancelling === null} onClose={() => setDetail(null)} title="Payment link">
+      <Modal open={detail !== null && cancelling === null && completing === null} onClose={() => setDetail(null)} title="Payment link">
         {detailQuery.isError && <div className="warnbar" role="alert">Couldn't load the full link history. Try again.</div>}
         {detailData && (
           <>
@@ -430,18 +451,18 @@ export default function LinksPage() {
                 <DetailRow label="Last opened"><DateCell ts={detailQuery.data.lastOpenedAt} /></DetailRow>
               </>
             )}
-            {detailData.latestProviderAttempt && (
+            {detailData.providerOutcome && (
               <>
-                <DetailRow label="MantaPay attempt (internal)">
-                  <Pill tone={PROVIDER_STATUS_TONE[detailData.latestProviderAttempt.status]}>
-                    {PROVIDER_ATTEMPT_STATUS_LABELS[detailData.latestProviderAttempt.status]}
+                <DetailRow label="MantaPay outcome">
+                  <Pill tone={PROVIDER_STATUS_TONE[detailData.providerOutcome.status]}>
+                    {PROVIDER_ATTEMPT_STATUS_LABELS[detailData.providerOutcome.status]}
                   </Pill>
                 </DetailRow>
-                <DetailRow label="MantaPay transaction ID">{detailData.latestProviderAttempt.transactionId ?? '—'}</DetailRow>
+                <DetailRow label="MantaPay transaction ID">{detailData.providerOutcome.transactionId ?? '—'}</DetailRow>
                 <DetailRow label="MantaPay reply">
-                  {[detailData.latestProviderAttempt.replyCode, detailData.latestProviderAttempt.replyDescription].filter(Boolean).join(' · ') || '—'}
+                  {[detailData.providerOutcome.replyCode, detailData.providerOutcome.replyDescription].filter(Boolean).join(' · ') || '—'}
                 </DetailRow>
-                <DetailRow label="Provider attempt time"><DateCell ts={detailData.latestProviderAttempt.occurredAt} /></DetailRow>
+                <DetailRow label="MantaPay outcome time"><DateCell ts={detailData.providerOutcome.occurredAt} /></DetailRow>
               </>
             )}
             <div className="field">
@@ -479,7 +500,9 @@ export default function LinksPage() {
             )}
             <div className="modal-actions">
               {detailData.status === 'pending' && canComplete && (
-                <Link className="btn" to={`/payments?needs_details=1&q=${encodeURIComponent(detailData.referenceId)}`}>Fill details</Link>
+                <button className="btn" disabled={findingDetailsFor === detailData.id} onClick={() => void openFillDetails(detailData)}>
+                  {findingDetailsFor === detailData.id ? 'Opening…' : 'Fill details'}
+                </button>
               )}
               {isShareable(detailData.status) && canCreate && (
                 <button className="btn danger" onClick={() => setCancelling(detailData)}>Cancel link</button>
@@ -497,7 +520,23 @@ export default function LinksPage() {
         )}
       </Modal>
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New payment link">
+      {/* One dialog, two states. Creating a link used to close this and open a
+          second dialog just to show the URL; the job finishes where it started. */}
+      <Modal open={createOpen} onClose={closeCreate} title={createdUrl ? 'Link ready' : 'New payment link'}>
+        {createdUrl ? (
+          <>
+            <div className="field">
+              <label htmlFor="created-url">Checkout URL</label>
+              <input id="created-url" type="text" readOnly value={createdUrl} onFocus={(e) => e.target.select()} />
+              <p className="sub">Send it to the customer through whichever channel you use.</p>
+            </div>
+            <div className="modal-actions">
+              <button className="btn ghost" onClick={closeCreate}>Done</button>
+              <CopyButton value={createdUrl} label="Copy link" primary />
+            </div>
+          </>
+        ) : (
+          <>
         <Select id="link-account" label={labels.account} value={accountId} onChange={setAccountId}>
           {activeAccounts.length === 0 && <option value="">No active {labels.accounts.toLowerCase()}</option>}
           {activeAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
@@ -518,14 +557,23 @@ export default function LinksPage() {
             <span>No expiry — keep this link open until it is paid or cancelled.</span>
           </label>
         )}
+        {allowedCurrencies.length > 1 && (
+          <Select id="link-currency" label="Currency" value={linkCurrency} onChange={setLinkCurrency}>
+            {allowedCurrencies.map((c) => (
+              <option key={c.currency} value={c.currency} disabled={!c.checkoutSupported}>
+                {c.checkoutSupported ? c.currency : `${c.currency} (not supported by the payment provider yet)`}
+              </option>
+            ))}
+          </Select>
+        )}
         <div className="field">
           <label htmlFor="link-amount">Amount</label>
           <input id="link-amount" type="number" min={minAmount} max={maxAmount ?? undefined} step={0.01} placeholder="0.00"
             value={amountText} onChange={(e) => setAmountText(e.target.value)} />
           <p className="sub">
-            {belowMin ? <span className="text-neg">Below the {formatMoney(minAmount)} minimum.</span>
-              : aboveMax ? <span className="text-neg">Above the {formatMoney(maxAmount ?? 0)} maximum.</span>
-                : [`Minimum ${formatMoney(minAmount)}`, maxAmount != null ? `Maximum ${formatMoney(maxAmount)}` : null].filter(Boolean).join(' · ')}
+            {belowMin ? <span className="text-neg">Below the {formatLinkMoney(minAmount)} minimum.</span>
+              : aboveMax ? <span className="text-neg">Above the {formatLinkMoney(maxAmount ?? 0)} maximum.</span>
+                : [`Minimum ${formatLinkMoney(minAmount)}`, maxAmount != null ? `Maximum ${formatLinkMoney(maxAmount)}` : null].filter(Boolean).join(' · ')}
           </p>
         </div>
         <div className="field">
@@ -537,56 +585,42 @@ export default function LinksPage() {
         <div className={`pl-fees${fees && fees.effectivePct >= 18 ? ' hot' : fees && fees.effectivePct >= 15 ? ' warm' : ''}`}>
           <div className="fee-line">
             <span>Customer pays</span>
-            <b className="fee-val">{fees ? formatMoney(fees.customerTotal) : '—'}</b>
+            <b className="fee-val">{fees ? formatLinkMoney(fees.customerTotal) : '—'}</b>
           </div>
           <div className="fee-line">
-            <span>MDR ({rateCard.pspRate}% of {fees ? formatMoney(fees.customerTotal) : '—'})</span>
-            <b className="fee-val">{fees ? formatMoney(fees.mdrFee) : '—'}</b>
+            <span>MDR ({rateCard.pspRate}% of {fees ? formatLinkMoney(fees.customerTotal) : '—'})</span>
+            <b className="fee-val">{fees ? formatLinkMoney(fees.mdrFee) : '—'}</b>
           </div>
           <div className="fee-line">
             <span>Transaction fee</span>
-            <b className="fee-val">{fees ? formatMoney(fees.fixed) : '—'}</b>
+            <b className="fee-val">{fees ? formatLinkMoney(fees.fixed) : '—'}</b>
           </div>
           <div className="fee-line">
-            <span>Settlement fee ({rateCard.settlementRate}% of {fees ? formatMoney(fees.settlementBase) : '—'})</span>
-            <b className="fee-val">{fees ? formatMoney(fees.settlementFee) : '—'}</b>
+            <span>Settlement fee ({rateCard.settlementRate}% of {fees ? formatLinkMoney(fees.settlementBase) : '—'})</span>
+            <b className="fee-val">{fees ? formatLinkMoney(fees.settlementFee) : '—'}</b>
           </div>
           {rateCard.marginRate > 0 && (
             <div className="fee-line">
-              <span>HigherPays margin ({rateCard.marginRate}% of {fees ? formatMoney(fees.amount) : '—'})</span>
-              <b className="fee-val">{fees ? formatMoney(fees.marginFee) : '—'}</b>
+              <span>HigherPays margin ({rateCard.marginRate}% of {fees ? formatLinkMoney(fees.amount) : '—'})</span>
+              <b className="fee-val">{fees ? formatLinkMoney(fees.marginFee) : '—'}</b>
             </div>
           )}
           <div className="fee-tot">
             <span>Total fees</span>
-            <span className="fee-val">{fees ? formatMoney(fees.total) : '—'}</span>
+            <span className="fee-val">{fees ? formatLinkMoney(fees.total) : '—'}</span>
           </div>
           <div className="fee-net">
             <span>Net profit</span>
-            <span className="fee-val">{fees ? formatMoney(fees.net) : '—'}</span>
+            <span className="fee-val">{fees ? formatLinkMoney(fees.net) : '—'}</span>
           </div>
         </div>
 
         <div className="modal-actions">
-          <button className="btn ghost" onClick={() => setCreateOpen(false)}>Cancel</button>
+          <button className="btn ghost" onClick={closeCreate}>Cancel</button>
           <button className="btn" onClick={submitCreate} disabled={isCreating || !accountId}>
             {isCreating ? 'Creating…' : 'Create link'}
           </button>
         </div>
-      </Modal>
-
-      <Modal open={createdUrl !== null} onClose={() => setCreatedUrl(null)} title="Link ready"
-        subtitle="Copy this URL and send it to the customer through whichever channel you use.">
-        {createdUrl && (
-          <>
-            <div className="field">
-              <label htmlFor="created-url">Checkout URL</label>
-              <input id="created-url" type="text" readOnly value={createdUrl} onFocus={(e) => e.target.select()} />
-            </div>
-            <div className="modal-actions">
-              <button className="btn ghost" onClick={() => setCreatedUrl(null)}>Close</button>
-              <CopyButton value={createdUrl} label="Copy link" primary />
-            </div>
           </>
         )}
       </Modal>
@@ -616,6 +650,18 @@ export default function LinksPage() {
           </div>
         )}
       </Modal>
+
+      {completing && (
+        <CompletePaymentModal
+          payment={completing}
+          onClose={() => setCompleting(null)}
+          onCompleted={() => {
+            setCompleting(null);
+            setDetail(null);
+            toast('Payment details saved.');
+          }}
+        />
+      )}
     </div>
   );
 }

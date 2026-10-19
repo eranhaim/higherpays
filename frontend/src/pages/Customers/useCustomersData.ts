@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
+import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import { customersApi, type Customer, type CustomerDetail, type CreateCustomerInput, type UpdateCustomerInput, type ListCustomersQuery } from '../../api/endpoints';
 
 /** The most the customers endpoint returns in one call. */
@@ -21,12 +22,13 @@ export interface UseCustomersDataResult {
 
 export function useCustomersData(query: Omit<ListCustomersQuery, 'limit' | 'offset'>): UseCustomersDataResult {
   const { activeWorkspaceId } = useCurrentSession();
+  const { currency } = useReportingCurrency();
   const queryClient = useQueryClient();
   const enabled = Boolean(activeWorkspaceId);
 
   const customers = useInfiniteQuery({
-    queryKey: ['customers', activeWorkspaceId, query],
-    queryFn: ({ pageParam }) => customersApi.list({ ...query, limit: PAGE_SIZE, offset: pageParam }),
+    queryKey: ['customers', activeWorkspaceId, query, currency],
+    queryFn: ({ pageParam }) => customersApi.list({ ...query, currency, limit: PAGE_SIZE, offset: pageParam }),
     initialPageParam: 0,
     // A short page means the end of the list; the endpoint returns no total.
     getNextPageParam: (last, pages) => (last.length < PAGE_SIZE ? undefined : pages.length * PAGE_SIZE),
@@ -54,16 +56,17 @@ export function useCustomersData(query: Omit<ListCustomersQuery, 'limit' | 'offs
     createCustomer: async (input) => { await create.mutateAsync(input); },
     updateCustomer: async (id, input) => { await update.mutateAsync({ id, input }); },
     eraseCustomer: async (id) => { await erase.mutateAsync(id); },
-    exportCsv: () => customersApi.exportCsv(),
+    exportCsv: () => customersApi.exportCsv(currency),
   };
 }
 
 /** One customer with their payment history, for the detail view. */
 export function useCustomerDetail(id: string | null) {
   const { activeWorkspaceId } = useCurrentSession();
+  const { currency } = useReportingCurrency();
   return useQuery<CustomerDetail>({
-    queryKey: ['customer', activeWorkspaceId, id],
-    queryFn: () => customersApi.get(id as string),
+    queryKey: ['customer', activeWorkspaceId, id, currency],
+    queryFn: () => customersApi.get(id as string, currency),
     enabled: Boolean(activeWorkspaceId && id),
   });
 }

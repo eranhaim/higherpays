@@ -123,7 +123,7 @@ async function createAgent(app, tenant, overrides = {}) {
   return { ...res.body, email, headers: headersFor(session, tenant.workspaceId), accessToken: session.accessToken, refreshToken: session.refreshToken };
 }
 
-/** Invite + accept + login for an admin or analyst. */
+/** Invite + accept + login for an admin or member. */
 async function addMember(app, owner, role, opts = {}) {
   const email = opts.email || `member+${tag()}@test.local`;
   await request(app).post(`/workspaces/${owner.workspaceId}/invites`).set(owner.authHeaders).send({ email, role }).expect(201);

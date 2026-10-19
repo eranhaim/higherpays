@@ -81,12 +81,14 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/pay', publicPaymentRoutes);
 
 // Health reports on the database too: a green health check with Postgres down
-// hides the only failure that matters. Unprocessed webhooks older than an hour
-// mean a payment exists at the provider and not in the ledger.
+// hides the only failure that matters. An approved or reversed payment webhook
+// left unprocessed for an hour means money exists at the provider and not in
+// the ledger. A declined one moves no money, and a decline the app rejects on
+// purpose (amount mismatch) never clears, so it must not keep this red.
 app.get('/health', asyncHandler(async (req, res) => {
   try {
     const { rows } = await query(
-      "SELECT count(*)::int AS stale FROM webhook_events WHERE processed = false AND signature_valid = true AND received_at < now() - interval '1 hour'");
+      "SELECT count(*)::int AS stale FROM webhook_events WHERE processed = false AND signature_valid = true AND event_type <> 'declined' AND received_at < now() - interval '1 hour'");
     const staleWebhooks = rows[0].stale;
     res.status(staleWebhooks ? 503 : 200).json({ ok: staleWebhooks === 0, env: config.env, db: 'up', staleWebhooks });
   } catch (e) {

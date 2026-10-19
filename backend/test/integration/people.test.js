@@ -14,10 +14,14 @@ test('a workspace owner can create a plain member with a password and no invitat
 
   const created = await request(app).post(`/workspaces/${t.workspaceId}/team`)
     .set(t.authHeaders)
-    .send({ email, fullName: 'Direct Member', password, role: 'analyst' })
+    .send({ email, fullName: 'Direct Member', password: 'DirectMember123!', role: 'member', permissions: [
+      'payments.view', 'payments.export', 'links.view', 'analytics.view',
+      'accounts.view', 'agents.view', 'customers.view', 'revenue.view',
+      'team.view', 'settings.view', 'data.view_all',
+    ] })
     .expect(201);
 
-  assert.equal(created.body.role, 'analyst');
+  assert.equal(created.body.role, 'member');
   assert.equal((await pool.query(
     'SELECT count(*)::int AS count FROM invites WHERE workspace_id=$1 AND email=$2',
     [t.workspaceId, email])).rows[0].count, 0);
@@ -69,6 +73,32 @@ test('an account owner cannot also be made an agent in the same workspace', asyn
   assert.match(res.body.detail, /already a account_owner/);
 });
 
+test('two live creators cannot share a name, by creation or by rename', async () => {
+  const t = await createTenant(app);
+  const first = await createAccount(app, t, { name: 'Bohema' });
+
+  // A second creator under the same name is the mistake: the console lists
+  // creators by name, so nobody would see the duplicate afterwards.
+  const clash = await request(app).post(`/workspaces/${t.workspaceId}/accounts`).set(t.authHeaders)
+    .send({ email: `dup+${tag()}@test.local`, fullName: 'Someone Else', name: 'bohema', revenueSplitPct: 10 })
+    .expect(400);
+  assert.deepEqual(clash.body.fields, ['name']);
+
+  // Renaming into the name is the same mistake by another route.
+  const other = await createAccount(app, t, { name: `Dina ${tag()}` });
+  const renamed = await request(app).patch(`/workspaces/${t.workspaceId}/accounts/${other.id}`)
+    .set(t.authHeaders).send({ name: 'Bohema' }).expect(400);
+  assert.deepEqual(renamed.body.fields, ['name']);
+
+  // A creator may keep its own name, and an archived name frees up again.
+  await request(app).patch(`/workspaces/${t.workspaceId}/accounts/${first.id}`)
+    .set(t.authHeaders).send({ name: 'Bohema', handle: 'bohema' }).expect(200);
+  await request(app).patch(`/workspaces/${t.workspaceId}/accounts/${first.id}`)
+    .set(t.authHeaders).send({ status: 'archived' }).expect(200);
+  await request(app).patch(`/workspaces/${t.workspaceId}/accounts/${other.id}`)
+    .set(t.authHeaders).send({ name: 'Bohema' }).expect(200);
+});
+
 test('a new login needs a password; an existing user is attached without one', async () => {
   const t = await createTenant(app);
   const email = `nopw+${tag()}@test.local`;
@@ -85,13 +115,19 @@ test('a new login needs a password; an existing user is attached without one', a
   assert.equal(users, 1);
 });
 
-test('the database refuses an agent profile for a user without the agent role', async () => {
+// Migration 029 deliberately dropped the role from this foreign key, so a
+// profile survives a permission-role change. The seat itself is still required,
+// and the role pairing is now enforced by the service layer (see the
+// account-owner case above).
+test('the database refuses an agent profile for a user with no seat in the workspace', async () => {
   const t = await createTenant(app);
-  const analyst = await addMember(app, t, 'analyst');
+  const outsider = (await pool.query(
+    "INSERT INTO users (email, full_name) VALUES ($1, 'Outsider') RETURNING id",
+    [`outsider+${tag()}@test.local`])).rows[0];
   await assert.rejects(
     () => pool.query(
       'INSERT INTO agents (workspace_id, user_id, commission_pct) VALUES ($1,$2,10)',
-      [t.workspaceId, analyst.userId]),
+      [t.workspaceId, outsider.id]),
     /foreign key/);
 });
 
@@ -113,14 +149,17 @@ test('suspending a member ends their access but keeps the profile; removal is re
   await request(app).delete(`/workspaces/${t.workspaceId}/team/${agent.userId}`).set(t.authHeaders).expect(409);
 
   await request(app).patch(`/workspaces/${t.workspaceId}/team/${agent.userId}/status`).set(t.authHeaders).send({ status: 'suspended' }).expect(200);
-  await request(app).get(`/workspaces/${t.workspaceId}/links`).set(agent.headers).expect(403);
+  // Suspension revokes the sessions, so the access token dies at requireAuth
+  // rather than surviving as far as the membership check.
+  const blocked = await request(app).get(`/workspaces/${t.workspaceId}/links`).set(agent.headers).expect(401);
+  assert.equal(blocked.body.error, 'session_revoked');
   const still = (await pool.query('SELECT 1 FROM agents WHERE id = $1', [agent.id])).rowCount;
   assert.equal(still, 1);
 });
 
 test('removing a plain seat preserves it as former and allows reactivation', async () => {
   const t = await createTenant(app);
-  const member = await addMember(app, t, 'analyst');
+  const member = await addMember(app, t, 'member');
 
   await request(app).delete(`/workspaces/${t.workspaceId}/team/${member.userId}`)
     .set(t.authHeaders).expect(204);
@@ -128,7 +167,7 @@ test('removing a plain seat preserves it as former and allows reactivation', asy
     'SELECT status FROM workspace_users WHERE workspace_id=$1 AND user_id=$2',
     [t.workspaceId, member.userId])).rows[0];
   assert.equal(stored.status, 'removed');
-  await request(app).get(`/workspaces/${t.workspaceId}/team`).set(member.headers).expect(403);
+  await request(app).get(`/workspaces/${t.workspaceId}/team`).set(member.headers).expect(401);
   await request(app).post('/auth/refresh').send({ refreshToken: member.refreshToken }).expect(401);
 
   const former = (await request(app).get(`/workspaces/${t.workspaceId}/team`)
@@ -149,7 +188,7 @@ test('archiving an agent suspends access and hides new assignments until reactiv
 
   await request(app).post(`/workspaces/${t.workspaceId}/agents/${agent.id}/archive`)
     .set(t.authHeaders).expect(200);
-  await request(app).get(`/workspaces/${t.workspaceId}/links`).set(agent.headers).expect(403);
+  await request(app).get(`/workspaces/${t.workspaceId}/links`).set(agent.headers).expect(401);
 
   const active = (await request(app).get(`/workspaces/${t.workspaceId}/agents`)
     .set(t.authHeaders).expect(200)).body.agents;
@@ -166,16 +205,52 @@ test('archiving an agent suspends access and hides new assignments until reactiv
     .set(t.authHeaders).send({ agentId: agent.id }).expect(201);
 });
 
-test('the last admin cannot be suspended, and an analyst cannot manage the team', async () => {
+test('the owner seat cannot be suspended or removed, and a member cannot manage the team', async () => {
   const t = await createTenant(app);
-  const analyst = await addMember(app, t, 'analyst');
-  await request(app).patch(`/workspaces/${t.workspaceId}/team/${t.userId}/status`).set(analyst.headers).send({ status: 'suspended' }).expect(403);
+  const member = await addMember(app, t, 'member');
+  await request(app).patch(`/workspaces/${t.workspaceId}/team/${t.userId}/status`).set(member.headers).send({ status: 'suspended' }).expect(403);
 
+  // The owner is protected by ownership, not by being the last admin: another
+  // admin has to be given the seat before this one can be closed.
   const admin2 = await addMember(app, t, 'workspace_admin');
-  await request(app).patch(`/workspaces/${t.workspaceId}/team/${admin2.userId}/status`).set(t.authHeaders).send({ status: 'suspended' }).expect(200);
-  // t is now the only active admin.
-  await request(app).patch(`/workspaces/${t.workspaceId}/team/${t.userId}/status`).set(admin2.headers).expect(403);
-  const res = await request(app).delete(`/workspaces/${t.workspaceId}/team/${t.userId}`)
-    .set({ ...t.authHeaders, Authorization: admin2.headers.Authorization }).expect(403);
-  assert.equal(res.body.error, 'not_a_member');
+  const guarded = await request(app).patch(`/workspaces/${t.workspaceId}/team/${t.userId}/status`)
+    .set(admin2.headers).send({ status: 'suspended' }).expect(409);
+  assert.equal(guarded.body.error, 'transfer_owner');
+  await request(app).delete(`/workspaces/${t.workspaceId}/team/${t.userId}`).set(admin2.headers).expect(409);
+
+  await request(app).patch(`/workspaces/${t.workspaceId}/team/${admin2.userId}/status`)
+    .set(t.authHeaders).send({ status: 'suspended' }).expect(200);
+  await request(app).get(`/workspaces/${t.workspaceId}/team`).set(admin2.headers).expect(401);
+});
+
+test('an agent can be raised to admin and lowered again without losing the agent profile', async () => {
+  const t = await createTenant(app);
+  const agent = await createAgent(app, t);
+  const team = `/workspaces/${t.workspaceId}/team/${agent.userId}`;
+
+  await request(app).patch(team).set(t.authHeaders).send({ role: 'workspace_admin' }).expect(200);
+  const raised = (await pool.query(
+    'SELECT role, permissions FROM workspace_users WHERE workspace_id=$1 AND user_id=$2', [t.workspaceId, agent.userId])).rows[0];
+  assert.equal(raised.role, 'workspace_admin');
+  assert.ok(raised.permissions.includes('team.manage'));
+  // Raised, they can manage the team; before, an agent could not.
+  await request(app).get(`/workspaces/${t.workspaceId}/team`).set(agent.headers).expect(200);
+
+  await request(app).patch(team).set(t.authHeaders).send({ role: 'agent' }).expect(200);
+  const lowered = (await pool.query(
+    'SELECT role, permissions FROM workspace_users WHERE workspace_id=$1 AND user_id=$2', [t.workspaceId, agent.userId])).rows[0];
+  assert.equal(lowered.role, 'agent');
+  assert.ok(!lowered.permissions.includes('team.manage'));
+  const profile = (await pool.query('SELECT id FROM agents WHERE id=$1', [agent.id])).rowCount;
+  assert.equal(profile, 1);
+});
+
+test('an agent cannot be turned into a plain member, and a creator keeps a fixed role', async () => {
+  const t = await createTenant(app);
+  const agent = await createAgent(app, t);
+  const account = await createAccount(app, t);
+  await request(app).patch(`/workspaces/${t.workspaceId}/team/${agent.userId}`).set(t.authHeaders)
+    .send({ role: 'member' }).expect(400);
+  await request(app).patch(`/workspaces/${t.workspaceId}/team/${account.ownerUserId}`).set(t.authHeaders)
+    .send({ role: 'workspace_admin' }).expect(409);
 });

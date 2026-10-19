@@ -15,13 +15,14 @@ const { Pool } = require('pg');
 const config = require('../config');
 const { hashPassword } = require('../auth/passwords');
 const { ensureWorkspaceRoles } = require('../services/workspaceRoles');
+const { ROLE_PERMISSIONS } = require('../auth/permissions');
 
 const PASSWORD = process.env.SEED_PASSWORD || 'higherpays123';
 const PLATFORM_ADMIN_EMAIL = process.env.SEED_PLATFORM_ADMIN || 'platform@higherpays.test';
 
 // One person who works for both agencies, to exercise the path where a single
 // login sees more than one workspace without being a platform admin.
-const SHARED_ANALYST = { email: 'finance@higherpays.test', fullName: 'Sam Okafor', role: 'analyst' };
+const SHARED_MEMBER = { email: 'finance@higherpays.test', fullName: 'Sam Okafor', role: 'member' };
 
 // The two agencies deliberately differ in vocabulary, split and fee model, so
 // anything that hardcodes one of them shows up immediately.
@@ -120,11 +121,11 @@ async function upsertWorkspace(c, agency) {
 
 async function upsertAccess(c, workspaceId, userId, role, status = 'active') {
   await c.query(
-    `INSERT INTO workspace_users (workspace_id, user_id, role, status)
-     VALUES ($1,$2,$3,$4)
+    `INSERT INTO workspace_users (workspace_id, user_id, role, permissions, status)
+     VALUES ($1,$2,$3,$4,$5)
      ON CONFLICT (workspace_id, user_id) DO UPDATE
-       SET role = EXCLUDED.role, status = EXCLUDED.status`,
-    [workspaceId, userId, role, status]);
+       SET role = EXCLUDED.role, permissions = EXCLUDED.permissions, status = EXCLUDED.status`,
+    [workspaceId, userId, role, [...(ROLE_PERMISSIONS[role] || [])], status]);
 }
 
 async function upsertAccount(c, workspaceId, userId, account) {
@@ -190,7 +191,7 @@ async function seedAgency(c, agency, passwordHash, platformAdminId) {
   await upsertAccess(c, workspace.id, platformAdminId, 'workspace_admin');
 
   const adminId = await person('admin', `${agency.name} Admin`, 'workspace_owner');
-  await person('analyst', `${agency.name} Analyst`, 'analyst');
+  await person('member', `${agency.name} Member`, 'member');
 
   const accountIds = {};
   for (const account of agency.accounts) {
@@ -253,16 +254,16 @@ async function main() {
     }
 
     const sharedAnalystId = await upsertUser(c, {
-      email: SHARED_ANALYST.email, fullName: SHARED_ANALYST.fullName, passwordHash,
+      email: SHARED_MEMBER.email, fullName: SHARED_MEMBER.fullName, passwordHash,
     });
     for (const { workspace } of seeded) {
-      await upsertAccess(c, workspace.id, sharedAnalystId, SHARED_ANALYST.role);
+      await upsertAccess(c, workspace.id, sharedAnalystId, SHARED_MEMBER.role);
     }
     await c.query('COMMIT');
 
     console.log(`\nPassword for every login below: ${PASSWORD}\n`);
     console.log(`  ${PLATFORM_ADMIN_EMAIL.padEnd(32)} platform admin, every workspace`);
-    console.log(`  ${SHARED_ANALYST.email.padEnd(32)} ${SHARED_ANALYST.role}, every workspace`);
+    console.log(`  ${SHARED_MEMBER.email.padEnd(32)} ${SHARED_MEMBER.role}, every workspace`);
     for (const { agency, workspace, logins } of seeded) {
       console.log(`\n${agency.name}  (${agency.currency}, webhook ${workspace.webhook_endpoint_id})`);
       for (const { email, role, status } of logins) {

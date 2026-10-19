@@ -5,12 +5,18 @@
 //   workspace — everything, plus the agent/account pivots
 //   agent     — only rows credited to them
 //   account   — only rows for their account
-// Scoped callers also lose the agency-side figures.
+//
+// Scoped callers also lose the agency-side figures. For them "revenue" means
+// the distributable, never the gross: they are paid out of the distributable,
+// and any gross or fee figure next to it would give away the platform fee by
+// subtraction. That is why REVENUE below picks the column, and every money
+// aggregate on this route sums REVENUE rather than re.gross.
 const express = require('express');
 const { withTransaction } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { resolveDataScope } = require('../auth/dataScope');
+const currencies = require('../services/currencies.service');
 
 const router = express.Router({ mergeParams: true });
 const { wid } = require('../lib/scope');
@@ -38,14 +44,21 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
       col = 're.account_id'; linkCol = 'pl.account_id'; payCol = 'p.account_id'; val = req.query.accountId;
     }
     const scoped = val != null;
-    // $1 from, $2 to, $3 workspace, ($4 scope)
+    const seesAgencyFigures = scope.kind === 'workspace';
+    const REVENUE = seesAgencyFigures ? 're.gross' : 're.distributable';
+    // Every figure is in one currency; summing across currencies would be meaningless.
+    const currency = await currencies.resolveReportingCurrency(c, wid(req), req.query.currency);
+    // $1 from, $2 to, $3 workspace, ($4 scope), then the currency
     const P = scoped ? [from, to, wid(req), val] : [from, to, wid(req)];
+    P.push(currency);
+    const CUR = `$${P.length}::char(3)`;
     const RE_FROM = 'FROM revenue_entries re JOIN transactions t ON t.id = re.transaction_id JOIN payments p ON p.id = t.payment_id';
-    const RE_WHERE = 'WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND p.archived_at IS NULL' + (scoped ? ` AND ${col} = $4` : '');
+    const RE_WHERE = 'WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND p.archived_at IS NULL'
+      + ` AND t.currency = ${CUR}` + (scoped ? ` AND ${col} = $4` : '');
 
     const h = (await c.query(`
       SELECT
-        COALESCE(SUM(re.gross) FILTER (WHERE re.entry_type='sale'),0)             AS gross_sales,
+        COALESCE(SUM(${REVENUE}) FILTER (WHERE re.entry_type='sale'),0)           AS revenue,
         COALESCE(SUM(re.distributable),0)                                          AS net,
         COALESCE(SUM(re.platform_fee),0)                                           AS platform_fee,
         COALESCE(SUM(re.account_amount),0)                                         AS account_payout,
@@ -53,22 +66,22 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
         COALESCE(SUM(re.agency_amount),0)                                          AS agency_keep,
         COUNT(*) FILTER (WHERE re.entry_type='sale')                               AS sale_count,
         COUNT(*) FILTER (WHERE re.entry_type IN ('chargeback','refund'))           AS cb_count,
-        COALESCE(-SUM(re.gross) FILTER (WHERE re.entry_type IN ('chargeback','refund')),0) AS cb_gross,
+        COALESCE(-SUM(${REVENUE}) FILTER (WHERE re.entry_type IN ('chargeback','refund')),0) AS cb_value,
         COALESCE(SUM(re.chargeback_fee) FILTER (WHERE re.entry_type IN ('chargeback','refund')),0) AS cb_fee,
         COALESCE(-SUM(re.account_amount) FILTER (WHERE re.entry_type IN ('chargeback','refund')),0) AS cb_account_borne,
         COALESCE(-SUM(re.agency_amount)  FILTER (WHERE re.entry_type IN ('chargeback','refund')),0) AS cb_agency_borne,
         COUNT(DISTINCT p.customer_id) FILTER (WHERE re.entry_type='sale')          AS buyers
       ${RE_FROM} ${RE_WHERE}`, P)).rows[0];
-    const grossSales = num(h.gross_sales), agencyKeep = num(h.agency_keep), saleCount = num(h.sale_count);
+    const revenue = num(h.revenue), agencyKeep = num(h.agency_keep), saleCount = num(h.sale_count);
 
     const ts = (await c.query(`
       SELECT to_char(date_trunc('day', t.occurred_at),'YYYY-MM-DD') AS d,
              COALESCE(SUM(re.gross),0) AS gross, COALESCE(SUM(re.distributable),0) AS net
       ${RE_FROM} ${RE_WHERE} GROUP BY 1 ORDER BY 1`, P)).rows
-      .map((r) => ({ d: r.d, gross: num(r.gross), net: num(r.net) }));
+      .map((r) => ({ d: r.d, net: num(r.net), ...(seesAgencyFigures ? { gross: num(r.gross) } : {}) }));
 
     // Link funnel: links issued in the window, and what happened to them.
-    const linkWhere = 'WHERE pl.workspace_id = $3 AND pl.created_at >= $1 AND pl.created_at <= $2 AND pl.archived_at IS NULL';
+    const linkWhere = `WHERE pl.workspace_id = $3 AND pl.created_at >= $1 AND pl.created_at <= $2 AND pl.archived_at IS NULL AND pl.currency = ${CUR}`;
     const scopedLinkWhere = linkWhere + (scoped ? ` AND ${linkCol} = $4` : '');
     const fn = (await c.query(`
       SELECT COUNT(*) AS created,
@@ -80,7 +93,7 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
     const created = num(fn.created);
     const failed = num((await c.query(`
       SELECT COUNT(*) AS c FROM payments p
-       WHERE p.workspace_id = $3 AND p.status = 'failed' AND p.archived_at IS NULL
+       WHERE p.workspace_id = $3 AND p.status = 'failed' AND p.archived_at IS NULL AND p.currency = ${CUR}
          AND p.occurred_at >= $1 AND p.occurred_at <= $2
          ${scoped ? `AND ${payCol} = $4` : ''}`, P)).rows[0].c);
 
@@ -103,7 +116,7 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
       ${RE_WHERE} GROUP BY a.name ORDER BY revenue DESC`, P)).rows;
 
     const perCust = (await c.query(`
-      SELECT p.customer_id AS id, COALESCE(SUM(re.gross),0) AS rev
+      SELECT p.customer_id AS id, COALESCE(SUM(${REVENUE}),0) AS rev
       ${RE_FROM} ${RE_WHERE} AND re.entry_type='sale' AND p.customer_id IS NOT NULL
       GROUP BY p.customer_id ORDER BY rev DESC`, P)).rows.map((r) => num(r.rev));
     const totRev = perCust.reduce((a, b) => a + b, 0) || 1;
@@ -115,50 +128,55 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
       SELECT COUNT(*) FILTER (WHERE n>=2) AS repeat_c, COUNT(*) AS any_c, COALESCE(AVG(n),0) AS freq
         FROM (SELECT p.customer_id, COUNT(*) n FROM payments p
                WHERE p.workspace_id = $1 AND p.status='paid' AND p.archived_at IS NULL AND p.customer_id IS NOT NULL
+                 AND p.currency = $3::char(3)
                  AND ($2::uuid IS NULL OR ${payCol || 'p.id'} = $2::uuid)
-               GROUP BY p.customer_id) q`, [wid(req), scoped ? val : null])).rows[0];
+               GROUP BY p.customer_id) q`, [wid(req), scoped ? val : null, currency])).rows[0];
     const categories = (await c.query(`
-      SELECT COALESCE(ca.name, 'Uncategorised') AS category, COALESCE(SUM(re.gross),0) AS rev
+      SELECT COALESCE(ca.name, 'Uncategorised') AS category, COALESCE(SUM(${REVENUE}),0) AS rev
       ${RE_FROM} LEFT JOIN categories ca ON ca.id = p.category_id
       ${RE_WHERE} AND re.entry_type='sale' GROUP BY ca.name ORDER BY rev DESC`, P)).rows
       .map((r) => ({ category: r.category, revenue: num(r.rev) }));
     const nr = (await c.query(`
       WITH firsts AS (SELECT customer_id, MIN(occurred_at) AS first_ts FROM payments WHERE workspace_id = $3 AND status='paid' AND archived_at IS NULL GROUP BY customer_id)
-      SELECT COALESCE(SUM(re.gross) FILTER (WHERE f.first_ts >= $1),0) AS new_rev,
-             COALESCE(SUM(re.gross) FILTER (WHERE f.first_ts <  $1),0) AS ret_rev
+      SELECT COALESCE(SUM(${REVENUE}) FILTER (WHERE f.first_ts >= $1),0) AS new_rev,
+             COALESCE(SUM(${REVENUE}) FILTER (WHERE f.first_ts <  $1),0) AS ret_rev
       ${RE_FROM} JOIN firsts f ON f.customer_id = p.customer_id
       ${RE_WHERE} AND re.entry_type='sale'`, P)).rows[0];
 
     const heatRows = (await c.query(`
-      SELECT EXTRACT(DOW FROM t.occurred_at)::int AS dow, EXTRACT(HOUR FROM t.occurred_at)::int AS hr, COALESCE(SUM(re.gross),0) AS rev
+      SELECT EXTRACT(DOW FROM t.occurred_at)::int AS dow, EXTRACT(HOUR FROM t.occurred_at)::int AS hr, COALESCE(SUM(${REVENUE}),0) AS rev
       ${RE_FROM} ${RE_WHERE} AND re.entry_type='sale' GROUP BY 1,2`, P)).rows;
     const heatmap = Array.from({ length: 7 }, () => Array(24).fill(0));
     heatRows.forEach((r) => { heatmap[r.dow][r.hr] = num(r.rev); });
 
-    const seesAgencyFigures = scope.kind === 'workspace';
     return {
-      range: { from, to, days }, scope: seesAgencyFigures ? 'agency' : scope.kind,
+      range: { from, to, days }, currency, scope: seesAgencyFigures ? 'agency' : scope.kind,
       timeseries: ts,
       headline: {
-        gross: grossSales, net: num(h.net),
+        net: num(h.net),
         ...(seesAgencyFigures ? {
+          gross: revenue,
           platformFee: num(h.platform_fee),
           accountPayout: num(h.account_payout), agentPayout: num(h.agent_payout), agencyKeep,
-          takeRatePct: grossSales ? +(agencyKeep / grossSales * 100).toFixed(1) : 0,
+          takeRatePct: revenue ? +(agencyKeep / revenue * 100).toFixed(1) : 0,
         } : {}),
-        aov: saleCount ? +(grossSales / saleCount).toFixed(2) : 0,
+        aov: saleCount ? +(revenue / saleCount).toFixed(2) : 0,
         paidCount: saleCount, uniqueBuyers: num(h.buyers),
       },
       reversals: {
-        count: num(h.cb_count), valueReversed: num(h.cb_gross), feeCost: num(h.cb_fee),
+        count: num(h.cb_count), valueReversed: num(h.cb_value),
         ratePct: saleCount ? +(num(h.cb_count) / saleCount * 100).toFixed(2) : 0,
-        rateValuePct: grossSales ? +(num(h.cb_gross) / grossSales * 100).toFixed(2) : 0,
-        ...(seesAgencyFigures ? { byBearer: { account: num(h.cb_account_borne), agency: num(h.cb_agency_borne) } } : {}),
+        rateValuePct: revenue ? +(num(h.cb_value) / revenue * 100).toFixed(2) : 0,
+        // The chargeback fee is a fee line, so it stays with the agency roles.
+        ...(seesAgencyFigures ? {
+          feeCost: num(h.cb_fee),
+          byBearer: { account: num(h.cb_account_borne), agency: num(h.cb_agency_borne) },
+        } : {}),
       },
       funnel: {
         created, paid: num(fn.paid), failed, expired: num(fn.expired), cancelled: num(fn.cancelled),
         conversionPct: created ? Math.round(num(fn.paid) / created * 100) : 0,
-        revenuePerLink: created ? +(grossSales / created).toFixed(2) : 0,
+        revenuePerLink: created ? +(revenue / created).toFixed(2) : 0,
       },
       // Per-party tables compare people to each other, so they belong to the
       // roles that manage the workspace.

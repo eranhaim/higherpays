@@ -15,6 +15,8 @@ interface DateRangePickerProps {
 /** Widest the popover gets. Used to decide which edge to anchor it to. */
 const POPOVER_WIDTH = 300;
 
+const NO_RANGE: DateRange = { from: '', to: '' };
+
 /**
  * The date filter as a standalone control: a button showing the current range,
  * opening the calendar. Inside a column header the calendar is shown directly
@@ -22,9 +24,14 @@ const POPOVER_WIDTH = 300;
  *
  * Empty strings mean "no bound" — a caller that needs a bounded window fills
  * one in itself rather than the picker refusing to be cleared.
+ *
+ * Picking runs on a draft, so the caller is told once about a finished range
+ * rather than once per click. A deliberately one-sided range is applied with
+ * Done; dismissing the popover drops a half-picked one.
  */
 export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
   const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(value);
   const [alignRight, setAlignRight] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -53,6 +60,7 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
 
   const toggle = () => {
     if (!open) {
+      setDraft(value);
       // Anchor to whichever edge keeps the popover on screen. A picker sitting
       // at the right of a header would otherwise open off the page.
       const rect = triggerRef.current?.getBoundingClientRect();
@@ -61,17 +69,24 @@ export function DateRangePicker({ value, onChange }: DateRangePickerProps) {
     setOpen((o) => !o);
   };
 
+  const pick = (range: DateRange) => {
+    setDraft(range);
+    if (range.from && range.to) onChange(range);
+  };
+
   return (
     <div className="range-picker" ref={rootRef}>
       <button type="button" className="btn ghost" aria-expanded={open} onClick={toggle} ref={triggerRef}>
         {label}
       </button>
       {open ? (
-        <div className={`rangepop open${alignRight ? ' right' : ''}`} role="dialog" aria-modal="true" aria-label="Date range">
-          <Calendar value={value} onChange={onChange} />
+        <div className={`rangepop open${alignRight ? ' right' : ''}`} role="group" aria-label="Date range">
+          <Calendar value={draft} onChange={pick} />
           <div className="rp-actions">
-            <button type="button" className="btn ghost small" onClick={() => onChange({ from: '', to: '' })}>Clear</button>
-            <button type="button" className="btn small" onClick={() => setOpen(false)}>Done</button>
+            <button type="button" className="btn ghost small"
+              onClick={() => { setDraft(NO_RANGE); onChange(NO_RANGE); }}>Clear</button>
+            <button type="button" className="btn small"
+              onClick={() => { setOpen(false); onChange(draft); }}>Done</button>
           </div>
         </div>
       ) : null}

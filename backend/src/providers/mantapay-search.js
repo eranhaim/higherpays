@@ -19,6 +19,7 @@
 const config = require('../config');
 const crypto = require('crypto');
 const auth = require('./mantapay-auth');
+const reply = require('./mantapay-reply');
 const { fetchWithTimeout } = require('./http');
 
 const SEARCH_PATH = '/v2/transactions.svc/Search';
@@ -76,8 +77,8 @@ function normaliseTransaction(t) {
     currency: t.CurrencyIso || null,
     sourceAmount: num(t.SourceAmount),
     sourceCurrency: t.SourceCurrency || null,
-    replyCode: t.ReplyCode != null && t.ReplyCode !== '' ? String(t.ReplyCode) : null,
-    replyDescription: t.ReplyDescription || null,
+    replyCode: reply.readReplyCode(t),
+    replyDescription: reply.readReplyDescription(t),
     is3D: !!t.Is3D,
     isRefund: !!t.IsRefund,
     isRefunded: !!t.IsRefunded,

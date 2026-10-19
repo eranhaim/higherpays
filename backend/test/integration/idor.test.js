@@ -15,17 +15,33 @@ test('a workspace user cannot substitute another workspace into object, export, 
     .send({ accountId: account.id, type: 'single_use', amount: 20, currency: 'EUR' })
     .expect(201)).body;
 
-  const foreignWorkspace = (path) => request(app).get(path).set(a.authHeaders).expect(403);
+  // The attack: A's token, but B's id in BOTH the header and the path, so the
+  // request is internally consistent and only the membership check can stop it.
+  const spoofed = { Authorization: `Bearer ${a.accessToken}`, 'X-Workspace-Id': b.workspaceId };
+  const foreignWorkspace = async (path) => {
+    const res = await request(app).get(path).set(spoofed).expect(403);
+    assert.equal(res.body.error, 'not_a_member');
+  };
   await foreignWorkspace(`/workspaces/${b.workspaceId}/accounts`);
   await foreignWorkspace(`/workspaces/${b.workspaceId}/links`);
+  await foreignWorkspace(`/workspaces/${b.workspaceId}/links/${link.id}`);
   await foreignWorkspace(`/workspaces/${b.workspaceId}/payments/export`);
   await foreignWorkspace(`/workspaces/${b.workspaceId}/customers/export`);
   await foreignWorkspace(`/workspaces/${b.workspaceId}/archive?type=links`);
   await foreignWorkspace(`/workspaces/${b.workspaceId}/settlements`);
 
-  await request(app).get(`/workspaces/${b.workspaceId}/links/${link.id}`)
-    .set({ ...a.authHeaders, 'X-Workspace-Id': b.workspaceId })
+  await request(app).post(`/workspaces/${b.workspaceId}/links`).set(spoofed)
+    .send({ accountId: account.id, type: 'single_use', amount: 20, currency: 'EUR' })
     .expect(403);
+  await request(app).patch(`/workspaces/${b.workspaceId}/accounts/${account.id}`).set(spoofed)
+    .send({ revenueSplitPct: 1 })
+    .expect(403);
+
+  // A header that disagrees with the path is a malformed request, refused
+  // before membership is ever looked up.
+  const mismatch = await request(app).get(`/workspaces/${b.workspaceId}/accounts`)
+    .set(a.authHeaders).expect(400);
+  assert.equal(mismatch.body.message, 'workspace_mismatch');
 
   const platform = await request(app).get('/platform/workspaces').set(a.authHeaders).expect(403);
   assert.equal(platform.body.error, 'not_platform_admin');

@@ -10,7 +10,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { analyticsApi, accountsApi, agentsApi } from '../../api/endpoints';
-import { DAY_MS } from '../../lib/format';
+import { useReportingCurrency } from '../../hooks/useReportingCurrency';
+import { DAY_MS, toLocalDateInput, startOfLocalDay, endOfLocalDay } from '../../lib/format';
 
 export interface AnalyticsFilters {
   /** Date-input values, `YYYY-MM-DD` in local time. */
@@ -26,25 +27,9 @@ export interface DateWindow {
   days: number;
 }
 
-/** `YYYY-MM-DD` for a timestamp in local time, matching what `<input type="date">` holds. */
-export function toLocalDateInput(ts: number): string {
-  const d = new Date(ts);
-  const y = d.getFullYear();
-  const mo = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${mo}-${day}`;
-}
-
 export function defaultFilters(): AnalyticsFilters {
   const now = Date.now();
   return { from: toLocalDateInput(now - 30 * DAY_MS), to: toLocalDateInput(now), accountId: '', agentId: '' };
-}
-
-function parseLocalDate(input: string, endOfDay: boolean): number | null {
-  const [y, m, d] = input.split('-').map(Number);
-  if (!y || !m || !d) return null;
-  const date = endOfDay ? new Date(y, m - 1, d, 23, 59, 59, 999) : new Date(y, m - 1, d);
-  return date.getTime();
 }
 
 /**
@@ -57,19 +42,20 @@ function parseLocalDate(input: string, endOfDay: boolean): number | null {
  */
 export function toDateWindow(filters: AnalyticsFilters): DateWindow | null {
   const to = filters.to || toLocalDateInput(Date.now());
-  const from = filters.from || toLocalDateInput((parseLocalDate(to, false) ?? Date.now()) - 29 * DAY_MS);
-  const fromMs = parseLocalDate(from, false);
-  const toMs = parseLocalDate(to, true);
+  const from = filters.from || toLocalDateInput((startOfLocalDay(to) ?? Date.now()) - 29 * DAY_MS);
+  const fromMs = startOfLocalDay(from);
+  const toMs = endOfLocalDay(to);
   if (fromMs === null || toMs === null || toMs < fromMs) return null;
   return { fromMs, toMs, days: Math.round((toMs - fromMs) / DAY_MS) };
 }
 
 export function useAnalyticsData(filters: AnalyticsFilters, canScope: boolean) {
   const { activeWorkspaceId } = useCurrentSession();
+  const { currency } = useReportingCurrency();
   const dateWindow = toDateWindow(filters);
   const enabled = Boolean(activeWorkspaceId) && dateWindow !== null;
 
-  const scope = { accountId: filters.accountId || undefined, agentId: filters.agentId || undefined };
+  const scope = { accountId: filters.accountId || undefined, agentId: filters.agentId || undefined, currency };
 
   const currentRange = dateWindow
     ? { from: new Date(dateWindow.fromMs).toISOString(), to: new Date(dateWindow.toMs).toISOString() }

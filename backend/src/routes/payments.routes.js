@@ -6,7 +6,7 @@ const { query, withTransaction } = require('../db');
 const { requirePermission, requireArchiveManager, requirePlatformAdmin } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
-const { isStr, isOptStr, badRequest, toCSV } = require('../util/validate');
+const { isStr, isOptStr, badRequest, invalidDateFilter, toCSV } = require('../util/validate');
 const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const { resolveDataScope, scopeParams } = require('../auth/dataScope');
 const { hasPermission } = require('../auth/permissions');
@@ -14,7 +14,12 @@ const { resolveAttribution, repostSales } = require('../services/attribution');
 const paymentsService = require('../services/payments.service');
 const { recordLinkEvent } = require('../services/linkEvents');
 const config = require('../config');
-const { queueLifecycleEventForReference } = require('./marketplace.routes');
+const currencies = require('../services/currencies.service');
+const {
+  enqueueLifecycleEventForReference,
+  drainMarketplaceOutbox,
+  queueLifecycleEventForReference,
+} = require('./marketplace.routes');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
@@ -22,10 +27,11 @@ const { wid, uid } = require('../lib/scope');
 const SELECT = `
   SELECT p.*, a.name AS account, cu.name AS customer, cu.telegram_name AS customer_telegram,
          ca.name AS category, u.full_name AS agent, pl.reference_id AS link_reference, pl.type AS link_type,
-         t.provider_transaction_id, t.fee AS provider_fee, t.surcharge,
-         t.status AS provider_status,
-         (SELECT platform_fee FROM revenue_entries re WHERE re.transaction_id = t.id AND re.entry_type = 'sale') AS platform_fee,
-         (SELECT distributable FROM revenue_entries re WHERE re.transaction_id = t.id AND re.entry_type = 'sale') AS distributable
+         t.provider_transaction_id, t.fee AS provider_fee, t.surcharge, t.fee_is_estimate,
+         t.status AS provider_status, t.provider_decline_code, t.provider_decline_reason,
+         t.provider_decline_code_source, t.provider_decline_reason_source,
+         (SELECT SUM(platform_fee) FROM revenue_entries re WHERE re.transaction_id = t.id AND re.entry_type = 'sale') AS platform_fee,
+         (SELECT SUM(distributable) FROM revenue_entries re WHERE re.transaction_id = t.id AND re.entry_type = 'sale') AS distributable
     FROM payments p
     JOIN accounts a ON a.id = p.account_id
     LEFT JOIN customers cu ON cu.id = p.customer_id
@@ -37,9 +43,12 @@ const SELECT = `
 
 // Whether the platform fee is shown depends on who asks: an agent or an owner
 // sees the payment, not what the agency was charged for it.
+//
+// No fee figure of any kind reaches a scoped caller — not the platform fee,
+// not its margin or PSP parts, and not a combined total.
 function publicPayment(p, { seesFees }) {
   return {
-    id: p.id, amount: Number(p.amount), currency: p.currency, status: p.status,
+    id: p.id, currency: p.currency, status: p.status,
     paymentMethod: p.payment_method, providerPaymentId: p.provider_payment_id,
     providerTransactionId: p.provider_transaction_id, occurredAt: p.occurred_at,
     accountId: p.account_id, account: p.account,
@@ -51,11 +60,19 @@ function publicPayment(p, { seesFees }) {
     reviewReason: p.review_reason,
     archivedAt: p.archived_at,
     needsDetails: p.status === 'paid' && p.review_reason == null && p.category_id == null,
-    // Agents need to see the actual amount the agency received, not the
-    // customer-facing content price. We expose the final ledger result, never
-    // recalculate fees in the HTTP layer.
-    ...(!seesFees ? { amountAfterFees: p.distributable == null ? null : Number(p.distributable) } : {}),
-    ...(seesFees ? { platformFee: p.platform_fee == null ? null : Number(p.platform_fee) } : {}),
+    ...(p.status === 'failed' ? {
+      declineCode: p.provider_decline_code,
+      declineReason: p.provider_decline_reason,
+      declineCodeSource: p.provider_decline_code_source,
+      declineReasonSource: p.provider_decline_reason_source,
+    } : {}),
+    ...(seesFees ? {
+      amount: Number(p.amount),
+      platformFee: p.platform_fee == null ? null : Number(p.platform_fee),
+      feeIsEstimate: p.fee_is_estimate !== false,
+    } : {
+      amountAfterFees: p.distributable == null ? null : Number(p.distributable),
+    }),
   };
 }
 
@@ -75,14 +92,23 @@ function sortFor(req) {
   return { ...PAYMENT_SORTS[key], dir, after: dir === 'ASC' ? '>' : '<' };
 }
 
-function paymentFilterParams(req, scope) {
+function numericFilter(value) {
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  return Number.isFinite(Number(value)) ? value : null;
+}
+
+function paymentFilterParams(req, scope, { canFilterFees }) {
   const q = typeof req.query.q === 'string' && req.query.q.trim()
     ? `%${req.query.q.trim().toLowerCase()}%`
     : null;
   return [
     wid(req), ...scopeParams(scope),
     req.query.status || null, req.query.accountId || null, req.query.agentId || null,
+    req.query.customerId || null, req.query.categoryId || null,
     req.query.from || null, req.query.to || null, q, req.query.needsDetails === 'true',
+    numericFilter(req.query.minAmount), numericFilter(req.query.maxAmount),
+    canFilterFees ? numericFilter(req.query.minFee) : null,
+    canFilterFees ? numericFilter(req.query.maxFee) : null,
   ];
 }
 
@@ -92,73 +118,106 @@ const PAYMENT_FILTERS = `
   AND ($4::text IS NULL OR p.status = $4::text)
   AND ($5::uuid IS NULL OR p.account_id = $5::uuid)
   AND ($6::uuid IS NULL OR p.agent_id = $6::uuid)
-  AND ($7::timestamptz IS NULL OR p.occurred_at >= $7::timestamptz)
-  AND ($8::timestamptz IS NULL OR p.occurred_at <= $8::timestamptz)
-  AND ($9::text IS NULL OR lower(COALESCE(pl.reference_id, '')) LIKE $9::text
-       OR lower(COALESCE(t.provider_transaction_id, '')) LIKE $9::text
-       OR lower(COALESCE(p.provider_payment_id, '')) LIKE $9::text
-       OR lower(COALESCE(cu.name, '')) LIKE $9::text
-       OR lower(COALESCE(cu.telegram_name, '')) LIKE $9::text
-       OR lower(a.name) LIKE $9::text
-       OR lower(COALESCE(u.full_name, '')) LIKE $9::text
-       OR lower(COALESCE(ca.name, '')) LIKE $9::text
-       OR lower(p.status) LIKE $9::text
-       OR lower(COALESCE(p.payment_method, '')) LIKE $9::text
-       OR lower(p.amount::text) LIKE $9::text
-       OR lower(p.currency) LIKE $9::text
-       OR lower(COALESCE(t.fee::text, '')) LIKE $9::text)
-  AND (NOT $10::boolean OR (p.status = 'paid' AND p.review_reason IS NULL AND p.category_id IS NULL))
+  AND ($7::uuid IS NULL OR p.customer_id = $7::uuid)
+  AND ($8::uuid IS NULL OR p.category_id = $8::uuid)
+  AND ($9::timestamptz IS NULL OR p.occurred_at >= $9::timestamptz)
+  AND ($10::timestamptz IS NULL OR p.occurred_at <= $10::timestamptz)
+  AND ($11::text IS NULL OR lower(COALESCE(pl.reference_id, '')) LIKE $11::text
+       OR lower(COALESCE(t.provider_transaction_id, '')) LIKE $11::text
+       OR lower(COALESCE(t.provider_decline_code, '')) LIKE $11::text
+       OR lower(COALESCE(t.provider_decline_reason, '')) LIKE $11::text
+       OR lower(COALESCE(p.provider_payment_id, '')) LIKE $11::text
+       OR lower(COALESCE(cu.name, '')) LIKE $11::text
+       OR lower(COALESCE(cu.telegram_name, '')) LIKE $11::text
+       OR lower(a.name) LIKE $11::text
+       OR lower(COALESCE(u.full_name, '')) LIKE $11::text
+       OR lower(COALESCE(ca.name, '')) LIKE $11::text
+       OR lower(p.status) LIKE $11::text
+       OR lower(COALESCE(p.payment_method, '')) LIKE $11::text
+       OR lower(p.amount::text) LIKE $11::text
+       OR lower(p.currency) LIKE $11::text
+       OR lower(COALESCE(t.fee::text, '')) LIKE $11::text)
+  AND (NOT $12::boolean OR (p.status = 'paid' AND p.review_reason IS NULL AND p.category_id IS NULL))
+  AND ($13::numeric IS NULL OR p.amount >= $13::numeric)
+  AND ($14::numeric IS NULL OR p.amount <= $14::numeric)
+  AND ($15::numeric IS NULL OR EXISTS (
+    SELECT 1 FROM revenue_entries fee_entry
+     WHERE fee_entry.transaction_id = t.id
+       AND fee_entry.entry_type = 'sale'
+       AND fee_entry.platform_fee >= $15::numeric
+  ))
+  AND ($16::numeric IS NULL OR EXISTS (
+    SELECT 1 FROM revenue_entries fee_entry
+     WHERE fee_entry.transaction_id = t.id
+       AND fee_entry.entry_type = 'sale'
+       AND fee_entry.platform_fee <= $16::numeric
+  ))
   AND p.archived_at IS NULL`;
 
 // The list and the export answer the same question with the same filters;
 // only the page size differs. `cursor` null and `limit` null mean "all".
-async function listPayments(c, req, { cursor, limit }) {
+async function listPayments(c, req, { cursor, limit, canFilterFees }) {
   const sort = sortFor(req);
   const scope = await resolveDataScope(c, req);
   return (await c.query(
     `${SELECT}
       WHERE p.workspace_id = $1
         AND ${PAYMENT_FILTERS}
-        AND ($11::text IS NULL OR (${sort.expr}, p.id) ${sort.after} ($11::${sort.cast}, $12::uuid))
-      ORDER BY ${sort.expr} ${sort.dir}, p.id ${sort.dir} LIMIT $13`,
-    [...paymentFilterParams(req, scope),
+        AND ($17::text IS NULL OR (${sort.expr}, p.id) ${sort.after} ($17::${sort.cast}, $18::uuid))
+      ORDER BY ${sort.expr} ${sort.dir}, p.id ${sort.dir} LIMIT $19`,
+    [...paymentFilterParams(req, scope, { canFilterFees }),
       cursor ? cursor.value : null, cursor ? cursor.id : null, limit])).rows;
 }
 
-// GET /?limit&cursor&sort&dir&status&accountId&agentId&from&to&q&needsDetails
+// GET /?limit&cursor&sort&dir&status&accountId&agentId&customerId&categoryId&from&to&q&needsDetails&minAmount&maxAmount&minFee&maxFee
 router.get('/', requirePermission('payments.view'), asyncHandler(async (req, res) => {
+  const invalidDate = invalidDateFilter(req.query);
+  if (invalidDate) return badRequest(res, `${invalidDate} must be a date`, [invalidDate]);
   const limit = parseLimit(req.query.limit);
   const cursor = decodeCursor(req.query.cursor);
-  const rows = await withTransaction((c) => listPayments(c, req, { cursor, limit: limit + 1 }));
   const seesFees = hasPermission(req.access, 'data.view_all');
+  const rows = await withTransaction((c) => listPayments(c, req, {
+    cursor, limit: limit + 1, canFilterFees: seesFees,
+  }));
   const result = page(rows, limit, sortFor(req).keyOf, (r) => r.id);
   res.json({ items: result.items.map((r) => publicPayment(r, { seesFees })), nextCursor: result.nextCursor });
 }));
 
 // GET /summary — the filtered totals across all matching rows, before pagination.
 router.get('/summary', requirePermission('payments.view'), asyncHandler(async (req, res) => {
+  const invalidDate = invalidDateFilter(req.query);
+  if (invalidDate) return badRequest(res, `${invalidDate} must be a date`, [invalidDate]);
   const out = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
+    // Every total below is in one currency; summing across currencies would be meaningless.
+    const currency = await currencies.resolveReportingCurrency(c, wid(req), req.query.currency);
     const row = (await c.query(
       `WITH matching AS (
          ${SELECT}
           WHERE p.workspace_id = $1
             AND ${PAYMENT_FILTERS}
+            AND p.currency = $17::char(3)
        )
        SELECT COALESCE(SUM(amount) FILTER (WHERE status = 'paid' AND review_reason IS NULL), 0) AS gross_content,
               COALESCE(SUM(COALESCE(platform_fee, 0)) FILTER (WHERE status = 'paid' AND review_reason IS NULL), 0) AS platform_fees,
               COALESCE(SUM(COALESCE(distributable, 0)) FILTER (WHERE status = 'paid' AND review_reason IS NULL), 0) AS after_fees,
               COUNT(*) FILTER (WHERE provider_status = 'approved')::int AS approved_payments,
               COUNT(*) FILTER (WHERE provider_status IN ('pending', 'approved', 'declined'))::int AS attempts,
+              COUNT(*) FILTER (WHERE provider_status = 'declined')::int AS declined_count,
               COUNT(*) FILTER (WHERE status = 'paid' AND review_reason IS NULL AND category_id IS NULL)::int AS details_needed,
+              COUNT(*) FILTER (
+                WHERE status = 'paid' AND review_reason IS NULL AND fee_is_estimate IS DISTINCT FROM false
+              )::int AS estimated_fee_sales,
               COUNT(*) FILTER (WHERE status = 'refunded')::int AS refunded_count,
               COALESCE(SUM(amount) FILTER (WHERE status = 'refunded'), 0) AS refunded_amount,
               COALESCE(SUM(surcharge) FILTER (
                 WHERE status IN ('paid', 'refunded') AND review_reason IS NULL
               ), 0) AS checkout_fees,
-              (SELECT currency FROM workspaces WHERE id = $1) AS currency
+              $17::char(3) AS currency
          FROM matching`,
-      paymentFilterParams(req, scope))).rows[0];
+      [...paymentFilterParams(req, scope, {
+        canFilterFees: hasPermission(req.access, 'data.view_all'),
+      }), currency])).rows[0];
     const platform = !req.user.actorId && (await c.query(
       'SELECT is_platform_admin FROM users WHERE id = $1', [req.user.id])).rows[0]?.is_platform_admin === true;
     return { row, platform };
@@ -169,9 +228,13 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
   const afterFees = Number(out.row.after_fees);
   const seesFees = hasPermission(req.access, 'data.view_all');
   res.json({
-    grossContent,
-    ...(seesFees ? { platformFees, netProfit: grossContent - platformFees } : {}),
-    ...(!seesFees ? { afterFees } : {}),
+    ...(seesFees ? {
+      grossContent,
+      platformFees,
+      netProfit: grossContent - platformFees,
+      feesEstimated: out.row.estimated_fee_sales > 0,
+      declinedCount: out.row.declined_count,
+    } : { afterFees }),
     approvedPayments: out.row.approved_payments,
     attempts: out.row.attempts,
     approvalRate: out.row.attempts ? Math.round((out.row.approved_payments / out.row.attempts) * 100) : 0,
@@ -183,18 +246,72 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
   });
 }));
 
+// GET /filters — only values that appear in payments visible to this caller.
+// Keeping these options on the payments scope prevents a dropdown from
+// revealing a customer, creator, or category from another caller's data.
+router.get('/filters', requirePermission('payments.view'), asyncHandler(async (req, res) => {
+  const options = await withTransaction(async (c) => {
+    const scope = await resolveDataScope(c, req);
+    const result = await c.query(
+      `WITH visible AS (
+        SELECT p.status, p.account_id, a.name AS account,
+               p.agent_id, u.full_name AS agent,
+               p.customer_id, cu.name AS customer,
+               p.category_id, ca.name AS category
+          FROM payments p
+          JOIN accounts a ON a.id = p.account_id
+          LEFT JOIN agents ag ON ag.id = p.agent_id
+          LEFT JOIN users u ON u.id = ag.user_id
+          LEFT JOIN customers cu ON cu.id = p.customer_id
+          LEFT JOIN categories ca ON ca.id = p.category_id
+         WHERE p.workspace_id = $1
+           AND ($2::uuid IS NULL OR p.agent_id = $2::uuid)
+           AND ($3::uuid IS NULL OR p.account_id = $3::uuid)
+           AND p.archived_at IS NULL
+      )
+      SELECT
+        COALESCE((SELECT json_agg(status ORDER BY status) FROM (
+          SELECT DISTINCT status FROM visible
+        ) statuses), '[]'::json) AS statuses,
+        COALESCE((SELECT json_agg(row_to_json(items) ORDER BY items.name) FROM (
+          SELECT DISTINCT account_id AS id, account AS name FROM visible
+        ) items), '[]'::json) AS accounts,
+        COALESCE((SELECT json_agg(row_to_json(items) ORDER BY items.name) FROM (
+          SELECT DISTINCT agent_id AS id, agent AS name FROM visible
+           WHERE agent_id IS NOT NULL
+        ) items), '[]'::json) AS agents,
+        COALESCE((SELECT json_agg(row_to_json(items) ORDER BY items.name) FROM (
+          SELECT DISTINCT customer_id AS id, customer AS name FROM visible
+           WHERE customer_id IS NOT NULL
+        ) items), '[]'::json) AS customers,
+        COALESCE((SELECT json_agg(row_to_json(items) ORDER BY items.name) FROM (
+          SELECT DISTINCT category_id AS id, category AS name FROM visible
+           WHERE category_id IS NOT NULL
+        ) items), '[]'::json) AS categories`,
+      [wid(req), ...scopeParams(scope)],
+    );
+    return result.rows[0];
+  });
+  res.json(options);
+}));
+
 // Every column the export can carry, in file order. Headers are what the agency
 // reads in the file, not our column names. `feesOnly` columns reach only a caller who sees the whole
 // workspace. Mirrored in frontend/src/api/endpoints/payments.ts.
+//
+// Gross is `feesOnly` for the same reason it is withheld from the list: beside
+// net it is the platform fee by subtraction. Net is the figure a scoped caller
+// is paid on, so it stays, and it is read off the ledger rather than
+// recalculated here.
 const exportColumns = (labels) => [
   { key: 'date', header: 'Date', value: (r) => new Date(r.occurred_at).toISOString() },
   { key: 'reference', header: 'HigherPays Order', value: (r) => r.link_reference },
   { key: 'providerTransaction', header: 'MantaPay Transaction ID', value: (r) => r.provider_transaction_id },
   { key: 'status', header: 'Status', value: (r) => r.status },
-  { key: 'gross', header: 'Gross Revenue', value: (r) => `${r.amount} ${r.currency}` },
+  { key: 'gross', header: 'Gross Revenue', feesOnly: true, value: (r) => `${r.amount} ${r.currency}` },
   { key: 'fee', header: 'Platform Fee', feesOnly: true, value: (r) => r.platform_fee },
-  { key: 'net', header: 'Net Revenue', feesOnly: true,
-    value: (r) => (r.platform_fee == null ? null : (Number(r.amount) - Number(r.platform_fee)).toFixed(2)) },
+  { key: 'net', header: 'Net Revenue',
+    value: (r) => (r.distributable == null ? null : Number(r.distributable).toFixed(2)) },
   { key: 'customer', header: 'Customer', value: (r) => r.customer },
   { key: 'telegram', header: 'Telegram', value: (r) => r.customer_telegram },
   { key: 'creator', header: labels.account, value: (r) => r.account },
@@ -206,6 +323,8 @@ const exportColumns = (labels) => [
 // range cannot hold a connection open building a file nobody can open.
 const EXPORT_MAX_ROWS = 20000;
 router.get('/export', requirePermission('payments.export'), asyncHandler(async (req, res) => {
+  const invalidDate = invalidDateFilter(req.query);
+  if (invalidDate) return badRequest(res, `${invalidDate} must be a date`, [invalidDate]);
   const seesFees = hasPermission(req.access, 'data.view_all');
   const workspace = (await query(
     'SELECT account_label, agent_label FROM workspaces WHERE id=$1',
@@ -224,7 +343,9 @@ router.get('/export', requirePermission('payments.export'), asyncHandler(async (
   const asked = Number(req.query.limit);
   const limit = Number.isFinite(asked) && asked > 0 ? Math.min(asked, EXPORT_MAX_ROWS) : EXPORT_MAX_ROWS;
 
-  const rows = await withTransaction((c) => listPayments(c, req, { cursor: null, limit }));
+  const rows = await withTransaction((c) => listPayments(c, req, {
+    cursor: null, limit, canFilterFees: seesFees,
+  }));
   await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'payment.export', metadata: { count: rows.length }, ip: req.ip || null });
   const csv = toCSV(columns.map((c) => c.header), rows.map((r) => columns.map((c) => c.value(r))));
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -258,10 +379,6 @@ router.post('/:id/archive', requirePermission('archive.manage'), requireArchiveM
     if (archived?.customer_id) {
       await c.query(
         `UPDATE customers SET
-            total_spend = (SELECT COALESCE(SUM(amount), 0)
-                             FROM payments
-                            WHERE customer_id = $1 AND status = 'paid'
-                              AND review_reason IS NULL AND archived_at IS NULL),
             last_purchase_at = (SELECT MAX(occurred_at)
                                   FROM payments
                                  WHERE customer_id = $1 AND status = 'paid'
@@ -289,10 +406,6 @@ router.post('/:id/reactivate', requirePermission('archive.manage'), requireArchi
     if (restored?.customer_id) {
       await c.query(
         `UPDATE customers SET
-            total_spend = (SELECT COALESCE(SUM(amount), 0)
-                             FROM payments
-                            WHERE customer_id = $1 AND status = 'paid'
-                              AND review_reason IS NULL AND archived_at IS NULL),
             last_purchase_at = (SELECT MAX(occurred_at)
                                   FROM payments
                                  WHERE customer_id = $1 AND status = 'paid'
@@ -465,8 +578,7 @@ router.patch('/:id/details', requirePermission('payments.complete'), asyncHandle
       'UPDATE payments SET category_id = $2, customer_id = $3 WHERE id = $1', [payment.id, category.id, resolvedCustomerId]);
     if (resolvedCustomerId) {
       await c.query(
-        `UPDATE customers SET total_spend = (SELECT COALESCE(SUM(amount),0) FROM payments WHERE customer_id = $1 AND status = 'paid' AND review_reason IS NULL AND archived_at IS NULL),
-                              last_purchase_at = GREATEST(coalesce(last_purchase_at, $2), $2)
+        `UPDATE customers SET last_purchase_at = GREATEST(coalesce(last_purchase_at, $2), $2)
           WHERE id = $1`, [resolvedCustomerId, payment.occurred_at]);
     }
     // A single-use link is finished once its one payment is complete.
@@ -490,25 +602,36 @@ router.patch('/:id/details', requirePermission('payments.complete'), asyncHandle
   res.json(publicPayment(out.row, { seesFees: hasPermission(req.access, 'data.view_all') }));
 }));
 
-// GET /:id/impact — whether this payment has already been paid out. Read
-// before the confirmation, so the dialog can say it in numbers rather than in
-// general. Same shape as a link's impact, over the one payment.
+// GET /:id/impact — how much money reassigning this payment's order would
+// move, and how much of it a payout has already settled. Read before the
+// confirmation, so the dialog can say it in numbers rather than in general.
+// Only settled payments are counted: a declined or superseded attempt moves
+// with the order, but it is not money and must not appear in a money figure.
 router.get('/:id/impact', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
   const row = (await query(`
     SELECT count(*)::int AS payments,
            count(*) FILTER (WHERE re.account_payout_id IS NOT NULL OR re.agent_payout_id IS NOT NULL)::int AS paid_out,
-           COALESCE(SUM(p.amount), 0) AS amount
+           COALESCE(SUM(p.amount), 0) AS amount,
+           (SELECT currency FROM payments WHERE workspace_id = $1 AND id = $2) AS currency
       FROM payments p
       LEFT JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
       LEFT JOIN revenue_entries re ON re.transaction_id = t.id AND re.entry_type = 'sale'
-     WHERE p.workspace_id = $1 AND p.id = $2 AND p.archived_at IS NULL`, [wid(req), req.params.id])).rows[0];
-  res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount) });
+     WHERE p.workspace_id = $1 AND p.archived_at IS NULL
+       AND p.status IN ('paid', 'refunded')
+       AND (p.id = $2 OR p.payment_link_id = (
+             SELECT pl.id FROM payments src
+               JOIN payment_links pl ON pl.id = src.payment_link_id
+              WHERE src.id = $2 AND src.workspace_id = $1 AND pl.type = 'single_use'))`,
+    [wid(req), req.params.id])).rows[0];
+  // One order is one currency, so this sum is never mixed.
+  res.json({ payments: row.payments, paidOut: row.paid_out, amount: Number(row.amount), currency: row.currency });
 }));
 
 // PATCH /:id/attribution  { accountId?, agentId? }
-// Moves one payment to another creator or agent. The sale is re-posted against
-// the new attribution, so a payout that already paid the old creator for it is
-// left overpaid — /impact says so before confirming.
+// Moves a payment, and the rest of its single-use order, to another creator or
+// agent. Each sale is re-posted against the new attribution, so a payout that
+// already paid the old creator for it is left overpaid — /impact says so
+// before confirming.
 router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
   const { accountId, agentId } = req.body || {};
   if (accountId === undefined && agentId === undefined) {
@@ -530,20 +653,32 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
     });
     if (next.err) return next;
 
-    await c.query(
-      'UPDATE payments SET account_id = $2, agent_id = $3 WHERE id = $1',
-      [payment.id, next.accountId, next.agentId]);
-    // A single-use link carries exactly this payment, so it follows it. A
-    // reusable link stays where it is: its other payments have not moved.
+    // A single-use link is one order, so the link and every attempt on it
+    // follow the payment. Moving the winner alone is what left
+    // HP-NXEW-YCSX-EVMS showing one Completed payment under one creator and
+    // two beaten attempts under another. A reusable link stays where it is:
+    // its other payments are other orders and have not moved.
+    let orderPaymentIds = [payment.id];
     if (payment.payment_link_id) {
-      await c.query(
-        "UPDATE payment_links SET account_id = $2, created_by_agent_id = $3 WHERE id = $1 AND type = 'single_use'",
-        [payment.payment_link_id, next.accountId, next.agentId]);
+      const link = (await c.query(
+        "UPDATE payment_links SET account_id = $2, created_by_agent_id = $3 WHERE id = $1 AND type = 'single_use' RETURNING id",
+        [payment.payment_link_id, next.accountId, next.agentId])).rows[0];
+      if (link) {
+        orderPaymentIds = (await c.query(
+          `SELECT id FROM payments
+            WHERE payment_link_id = $1 AND workspace_id = $2
+              AND archived_at IS NULL AND review_reason IS NULL`,
+          [link.id, wid(req)])).rows.map((r) => r.id);
+      }
     }
-    const reposted = await repostSales(c, [payment.id]);
+    await c.query(
+      'UPDATE payments SET account_id = $2, agent_id = $3 WHERE workspace_id = $4 AND id = ANY($1::uuid[])',
+      [orderPaymentIds, next.accountId, next.agentId, wid(req)]);
+    const reposted = await repostSales(c, orderPaymentIds);
     return {
       row: await loadScoped(c, req, payment.id),
       reposted,
+      moved: orderPaymentIds.length,
       from: { accountId: payment.account_id, agentId: payment.agent_id },
     };
   });
@@ -556,20 +691,41 @@ router.patch('/:id/attribution', requirePermission('revenue.manage'), asyncHandl
     metadata: {
       from: out.from,
       to: { accountId: out.row.account_id, agentId: out.row.agent_id },
+      moved: out.moved,
       reposted: out.reposted,
     },
   });
-  res.json({ ...publicPayment(out.row, { seesFees: hasPermission(req.access, 'data.view_all') }), reposted: out.reposted });
+  res.json({
+    ...publicPayment(out.row, { seesFees: hasPermission(req.access, 'data.view_all') }),
+    moved: out.moved,
+    reposted: out.reposted,
+  });
 }));
 
 // A refund or chargeback reverses the sale in the ledger and records a second
 // transaction under the same payment. Idempotent: the ledger refuses a second
 // reversal.
 async function reverse(req, res, kind) {
-  const result = await withTransaction((c) => paymentsService.recordPaymentReversal(c, wid(req), {
-    paymentId: req.params.id,
-    kind,
-  }));
+  const result = await withTransaction(async (c) => {
+    const reversal = await paymentsService.recordPaymentReversal(c, wid(req), {
+      paymentId: req.params.id,
+      kind,
+    });
+    if (reversal.notFound || reversal.noSale || reversal.already) return reversal;
+    const link = (await c.query(
+      'SELECT reference_id FROM payment_links WHERE id=(SELECT payment_link_id FROM payments WHERE id=$1)',
+      [req.params.id],
+    )).rows[0];
+    if (link?.reference_id) {
+      await enqueueLifecycleEventForReference(
+        c,
+        link.reference_id,
+        kind === 'refund' ? 'payment.refunded' : 'payment.chargeback',
+        `${kind}:${req.params.id}`,
+      );
+    }
+    return reversal;
+  });
 
   if (result.notFound) return res.status(404).json({ error: 'not_found' });
   if (result.noSale) return res.status(400).json({ error: 'no_sale_to_reverse' });
@@ -585,6 +741,7 @@ async function reverse(req, res, kind) {
     kind === 'refund' ? 'payment.refunded' : 'payment.chargeback',
     `${kind}:${req.params.id}`,
   );
+  void drainMarketplaceOutbox();
   const e = result.entry;
   res.json({
     ok: true, reversed: result.amount, currency: result.currency,

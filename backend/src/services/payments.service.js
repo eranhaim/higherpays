@@ -14,6 +14,12 @@
 const notifier = require('../notify');
 const { log } = require('../lib/log');
 const { recordLinkEvent } = require('./linkEvents');
+const { declineFields } = require('../providers/mantapay-reply');
+
+// A single-use link an approval may still claim. 'pending', 'done' and
+// 'refunded' already have their winner, and a second approval there is the
+// duplicate charge that review_reason exists for.
+const REOPENABLE_LINK_STATUSES = ['active', 'expired', 'cancelled'];
 
 /**
  * @param {import('pg').PoolClient} client  a client inside an open transaction
@@ -26,6 +32,10 @@ const { recordLinkEvent } = require('./linkEvents');
  * @param {string}      params.currency
  * @param {string|null} [params.linkReference]  our reference_id, for attribution
  * @param {string|null} [params.paymentMethod]
+ * @param {string|null} [params.declineCode]
+ * @param {string|null} [params.declineReason]
+ * @param {string|null} [params.declineCodeSource]
+ * @param {string|null} [params.declineReasonSource]
  * @param {object}      params.rawPayload       stored verbatim
  * @returns {Promise<{ paymentId: string|null, transactionId: string|null, linkId: string|null, newSale: boolean, reviewRequired?: boolean }>}
  */
@@ -70,6 +80,12 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   const surcharge = Number(link.checkout_fee || 0);
   const feeValue = fee != null ? fee : 0;
   const feeIsEstimate = fee == null;
+  const decline = declineFields(status, {
+    code: params.declineCode,
+    reason: params.declineReason,
+    codeSource: params.declineCodeSource,
+    reasonSource: params.declineReasonSource,
+  });
 
   let reviewReason = null;
   if (status === 'approved' && link.type === 'single_use') {
@@ -107,8 +123,10 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   // 3) The provider's record of the attempt.
   const tx = (await client.query(
     `INSERT INTO transactions
-       (workspace_id, payment_id, type, status, gross, fee, fee_is_estimate, surcharge, net, currency, provider_transaction_id, occurred_at, raw_payload)
-     VALUES ($1,$2,'payment',$3,$4,$5,$6,$7,$8,$9,$10,now(),$11)
+       (workspace_id, payment_id, type, status, gross, fee, fee_is_estimate, surcharge, net, currency,
+        provider_transaction_id, provider_decline_code, provider_decline_reason,
+        provider_decline_code_source, provider_decline_reason_source, occurred_at, raw_payload)
+     VALUES ($1,$2,'payment',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now(),$15)
      ON CONFLICT (workspace_id, provider_transaction_id) DO UPDATE
        SET status = CASE
          WHEN transactions.status = 'approved' OR EXCLUDED.status = 'approved' THEN 'approved'
@@ -118,10 +136,57 @@ async function recordPaymentOutcome(client, workspaceId, params) {
            fee = CASE WHEN EXCLUDED.fee_is_estimate THEN transactions.fee ELSE EXCLUDED.fee END,
            fee_is_estimate = transactions.fee_is_estimate AND EXCLUDED.fee_is_estimate,
            net = CASE WHEN EXCLUDED.fee_is_estimate THEN transactions.net ELSE EXCLUDED.net END,
+           provider_decline_code = CASE
+             WHEN EXCLUDED.status <> 'declined' THEN transactions.provider_decline_code
+             WHEN EXCLUDED.provider_decline_code_source = 'mantapay_webhook_signed'
+               THEN EXCLUDED.provider_decline_code
+             WHEN transactions.provider_decline_code_source = 'mantapay_webhook_signed'
+               THEN transactions.provider_decline_code
+             ELSE COALESCE(EXCLUDED.provider_decline_code, transactions.provider_decline_code)
+           END,
+           provider_decline_code_source = CASE
+             WHEN EXCLUDED.status <> 'declined' THEN transactions.provider_decline_code_source
+             WHEN EXCLUDED.provider_decline_code_source = 'mantapay_webhook_signed'
+               AND EXCLUDED.provider_decline_code IS NOT NULL
+               THEN EXCLUDED.provider_decline_code_source
+             WHEN transactions.provider_decline_code_source = 'mantapay_webhook_signed'
+               THEN transactions.provider_decline_code_source
+             WHEN EXCLUDED.provider_decline_code IS NOT NULL THEN EXCLUDED.provider_decline_code_source
+             ELSE transactions.provider_decline_code_source
+           END,
+           provider_decline_reason = CASE
+             WHEN EXCLUDED.status <> 'declined' THEN transactions.provider_decline_reason
+             WHEN EXCLUDED.provider_decline_reason_source = 'mantapay_webhook'
+               AND EXCLUDED.provider_decline_reason IS NOT NULL
+               THEN EXCLUDED.provider_decline_reason
+             -- A derived reason only says the provider gave none, so any later
+             -- provider text replaces it.
+             WHEN transactions.provider_decline_reason_source = 'derived_no_provider_text'
+               AND EXCLUDED.provider_decline_reason_source IS DISTINCT FROM 'derived_no_provider_text'
+               AND EXCLUDED.provider_decline_reason IS NOT NULL
+               THEN EXCLUDED.provider_decline_reason
+             ELSE COALESCE(transactions.provider_decline_reason, EXCLUDED.provider_decline_reason)
+           END,
+           provider_decline_reason_source = CASE
+             WHEN EXCLUDED.status <> 'declined' THEN transactions.provider_decline_reason_source
+             WHEN EXCLUDED.provider_decline_reason_source = 'mantapay_webhook'
+               AND EXCLUDED.provider_decline_reason IS NOT NULL
+               THEN EXCLUDED.provider_decline_reason_source
+             WHEN transactions.provider_decline_reason_source = 'derived_no_provider_text'
+               AND EXCLUDED.provider_decline_reason_source IS DISTINCT FROM 'derived_no_provider_text'
+               AND EXCLUDED.provider_decline_reason IS NOT NULL
+               THEN EXCLUDED.provider_decline_reason_source
+             WHEN transactions.provider_decline_reason IS NOT NULL
+               THEN transactions.provider_decline_reason_source
+             WHEN EXCLUDED.provider_decline_reason IS NOT NULL
+               THEN EXCLUDED.provider_decline_reason_source
+             ELSE NULL
+           END,
            raw_payload = EXCLUDED.raw_payload
      RETURNING id, status`,
     [workspaceId, payment.id, status, grossValue, feeValue, feeIsEstimate, surcharge,
-     grossValue - feeValue, currency, providerTransactionId, rawPayload])).rows[0];
+     grossValue - feeValue, currency, providerTransactionId, decline.code, decline.reason,
+     decline.codeSource, decline.reasonSource, rawPayload])).rows[0];
 
   await recordLinkEvent(client, {
     workspaceId,
@@ -135,10 +200,27 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   // 4) A paid single-use link waits for the agent to complete the details.
   //    A reusable link stays open; a declined attempt leaves either untouched
   //    so the customer can try again.
+  //
+  //    'expired' and 'cancelled' are in the list because MantaPay approves an
+  //    order days after the link closed. The money arrived, so the link owes
+  //    its details whatever we had written it off as.
   if (payment.status === 'paid' && !payment.review_reason
-      && link.type === 'single_use' && link.status === 'active') {
+      && link.type === 'single_use' && REOPENABLE_LINK_STATUSES.includes(link.status)) {
     await client.query(
       "UPDATE payment_links SET status = 'pending', paid_at = now() WHERE id = $1", [link.id]);
+  }
+
+  // 4b) A single-use order has one outcome. MantaPay re-identifies an attempt
+  //     when it approves an order it had declined, so the decline survives
+  //     under its old id and reads as money the agency never received. Mark
+  //     the attempts this approval beat; the provider's evidence stays.
+  if (payment.status === 'paid' && !payment.review_reason && link.type === 'single_use') {
+    await client.query(
+      `UPDATE payments SET status = 'superseded'
+        WHERE payment_link_id = $1 AND id <> $2
+          AND status IN ('pending', 'failed')
+          AND archived_at IS NULL`,
+      [link.id, payment.id]);
   }
 
   // 5) Post the sale to the ledger once.
@@ -168,13 +250,17 @@ async function recordPaymentOutcome(client, workspaceId, params) {
         event: status === 'approved' ? 'payment.paid' : 'payment.failed',
         title: payment.review_reason ? 'Duplicate charge needs review'
           : status === 'approved' ? 'Payment received' : 'Payment declined',
-        body: account ? `${account.account_label}: ${account.name}` : null,
+        body: [
+          account ? `${account.account_label}: ${account.name}` : null,
+          payment.review_reason ? 'Paid twice on a single-use link. The second charge is not counted in sales. Refund it in MantaPay.' : null,
+        ].filter(Boolean).join('. ') || null,
         accountId: link.account_id,
         agentId: link.created_by_agent_id,
         amount: grossValue,
         currency,
         entityType: 'payment',
         entityId: payment.id,
+        eventKey: `${status === 'approved' ? 'payment.paid' : 'payment.failed'}:${payment.id}`,
       });
     });
   }
@@ -293,6 +379,7 @@ async function recordPaymentReversal(client, workspaceId, {
     currency: p.currency,
     entityType: 'payment',
     entityId: p.id,
+    eventKey: `payment.${kind === 'refund' ? 'refunded' : 'chargeback'}:${p.id}`,
   }));
   return { entry, amount: Number(p.amount), currency: p.currency, paymentId: p.id };
 }

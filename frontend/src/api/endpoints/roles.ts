@@ -2,12 +2,11 @@ import { api } from '../http';
 import { workspacePath } from '../workspacePath';
 import type { Permission } from '../../rbac/permissions';
 
+/** A custom role: a named permission set of this workspace. */
 export interface RoleDefinition {
   key: string;
   name: string;
   permissions: Permission[];
-  isSystem: boolean;
-  permissionsFixed: boolean;
   memberCount: number;
 }
 

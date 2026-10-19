@@ -13,14 +13,14 @@ test('a single-use link carries its HigherPays order in the public URL and has a
     .send({ accountId: account.id, type: 'single_use', amount: 25, currency: 'EUR' }).expect(201);
   assert.equal(res.body.status, 'active');
   assert.match(res.body.referenceId, /^HP-[2-9A-HJKMNP-TV-Z]{4}-[2-9A-HJKMNP-TV-Z]{4}-[2-9A-HJKMNP-TV-Z]{4}$/);
-  assert.equal(new URL(res.body.checkoutUrl).pathname.endsWith(`/api/pay/${res.body.referenceId}`), true);
+  assert.equal(new URL(res.body.checkoutUrl).pathname, `/pay/${res.body.referenceId}`);
   const config = require('../../src/config');
   const minutes = (new Date(res.body.expiresAt) - Date.now()) / 60000;
   assert.ok(minutes > config.linkTtlMinutes - 1 && minutes <= config.linkTtlMinutes,
     `expires in ~${config.linkTtlMinutes}m, got ${minutes}`);
 });
 
-test('link attempts and summaries use all matching rows without replacing lifecycle status', async () => {
+test('the link list reports the provider outcome and summaries use all matching rows without replacing lifecycle status', async () => {
   const t = await createTenant(app, { checkoutFee: 2 });
   const account = await createAccount(app, t);
   const create = (type, amount) => request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
@@ -41,10 +41,10 @@ test('link attempts and summaries use all matching rows without replacing lifecy
     .set(t.authHeaders).expect(200)).body;
   assert.equal(list.items.length, 1);
   assert.equal(list.items[0].status, 'active');
-  assert.equal(list.items[0].latestProviderAttempt.status, 'approved');
-  assert.equal(list.items[0].latestProviderAttempt.replyCode, '000');
-  assert.equal(list.items[0].latestProviderAttempt.replyDescription, 'Approved');
-  assert.ok(transactionIds.includes(list.items[0].latestProviderAttempt.transactionId));
+  assert.equal(list.items[0].providerOutcome.status, 'approved');
+  assert.equal(list.items[0].providerOutcome.replyCode, '000');
+  assert.equal(list.items[0].providerOutcome.replyDescription, 'Approved');
+  assert.ok(transactionIds.includes(list.items[0].providerOutcome.transactionId));
 
   const summary = (await request(app).get(`/workspaces/${t.workspaceId}/links/summary`)
     .set(t.authHeaders).expect(200)).body;
@@ -175,10 +175,31 @@ test('link operations keep an idempotent timeline, notes, archives, and price ba
     .set(t.authHeaders).expect(200)).body.items;
   assert.equal(withArchived.some((link) => link.id === first.id), true);
 
+  // The summary reports money, not inventory, so an archived link leaves it
+  // even when the list beside it is asked to show archived rows.
   const summary = (await request(app).get(`/workspaces/${t.workspaceId}/links/summary?showArchived=true`)
     .set(t.authHeaders).expect(200)).body;
-  assert.deepEqual(summary.priceBands.map((band) => band.count), [1, 1, 1, 1, 1]);
+  assert.deepEqual(summary.priceBands.map((band) => band.count), [0, 1, 1, 1, 1]);
 
   await request(app).post(`/workspaces/${t.workspaceId}/links/${first.id}/reactivate`)
     .set(t.authHeaders).expect(200);
+  const restored = (await request(app).get(`/workspaces/${t.workspaceId}/links/summary`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.deepEqual(restored.priceBands.map((band) => band.count), [1, 1, 1, 1, 1]);
+});
+
+// The Links page builds its range the same way the Payments page does, so the
+// same malformed bound reached the same timestamptz cast.
+test('a link date filter that is not a date is refused rather than crashing', async () => {
+  const t = await createTenant(app);
+  const base = `/workspaces/${t.workspaceId}/links`;
+
+  for (const path of [base, `${base}/summary`]) {
+    const refused = await request(app)
+      .get(`${path}?to=${encodeURIComponent('2026-10-13T20:59:59.999ZT23:59:59.999')}`)
+      .set(t.authHeaders).expect(400);
+    assert.deepEqual(refused.body.fields, ['to']);
+  }
+
+  await request(app).get(`${base}?from=2026-10-01T00:00:00.000Z`).set(t.authHeaders).expect(200);
 });

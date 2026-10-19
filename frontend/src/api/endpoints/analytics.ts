@@ -4,12 +4,18 @@ import { workspacePath } from '../workspacePath';
 /** Response from `GET /workspaces/:wid/analytics`. Money is reversal-adjusted. */
 export interface AnalyticsReport {
   range: { from: string; to: string; days: number };
+  /** Every money figure in the report is in this currency. */
+  currency: string;
   scope: 'agency' | 'agent' | 'account';
-  timeseries: Array<{ d: string; gross: number; net: number }>;
+  timeseries: Array<{ d: string; gross?: number; net: number }>;
   // The agency-side figures below are omitted for a scoped caller (an agent or
   // an account owner): how the agency's cut is divided is not theirs to see.
+  // Gross and every fee figure go with them — a scoped caller reads net only,
+  // because gross beside net gives away the platform fee by subtraction. For
+  // them every money figure here, `aov` and `revenuePerLink` included, is on a
+  // net basis.
   headline: {
-    gross: number;
+    gross?: number;
     net: number;
     platformFee?: number;
     accountPayout?: number;
@@ -23,7 +29,7 @@ export interface AnalyticsReport {
   reversals: {
     count: number;
     valueReversed: number;
-    feeCost: number;
+    feeCost?: number;
     ratePct: number;
     rateValuePct: number;
     byBearer?: { account: number; agency: number };
@@ -58,7 +64,7 @@ export interface AnalyticsReport {
     categories: Array<{ category: string; revenue: number }>;
     newVsReturning: { newRev: number; retRev: number };
   };
-  /** 7 rows (Sunday first) × 24 hours of gross revenue. */
+  /** 7 rows (Sunday first) × 24 hours of revenue, on the caller's basis. */
   heatmap: number[][];
 }
 
@@ -69,6 +75,8 @@ export interface AnalyticsQuery {
   /** Agency roles may scope the report to one agent or one account. */
   agentId?: string;
   accountId?: string;
+  /** The one currency to report in. */
+  currency?: string;
 }
 
 export const analyticsApi = {
@@ -76,6 +84,7 @@ export const analyticsApi = {
     const qs = new URLSearchParams({ from: query.from, to: query.to });
     if (query.agentId) qs.set('agentId', query.agentId);
     if (query.accountId) qs.set('accountId', query.accountId);
+    if (query.currency) qs.set('currency', query.currency);
     return api.get<AnalyticsReport>(workspacePath(`/analytics?${qs.toString()}`));
   },
 };

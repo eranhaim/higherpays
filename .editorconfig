@@ -1,0 +1,8 @@
+# An editor defaulting to the Windows ANSI codepage once saved
+# frontend/src/pages/Payments/index.tsx as CP1255, mangling every em dash and
+# ellipsis on the Payments screen. Pin the charset so that cannot recur.
+# utf-8 means no BOM. Line endings are .gitattributes' job, not this file's.
+root = true
+
+[*]
+charset = utf-8

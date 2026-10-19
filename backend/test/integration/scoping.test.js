@@ -8,6 +8,8 @@ const {
   createTenant, createAccount, createAgent, addMember, assignAgent, createCategory,
 } = require('../helpers/tenant');
 const { paySale } = require('../helpers/webhook');
+const { ROLE_PERMISSIONS } = require('../../src/auth/permissions');
+const { pool } = require('../../src/db');
 
 async function fixture() {
   const t = await createTenant(app);
@@ -41,6 +43,22 @@ test('an agent cannot create a link for an unassigned account, and sees only lin
   assert.equal(list[0].agentId, agent.id);
 });
 
+// An agent granted data.view_all resolves to a workspace data scope. Taking the
+// owning agent out of that scope left their links with no agent at all, so they
+// dropped out of their own list and out of the commission they earned.
+test('an agent who also holds data.view_all is still attributed on the links they create', async () => {
+  const { t, mine, agent } = await fixture();
+  await request(app).patch(`/workspaces/${t.workspaceId}/team/${agent.userId}`).set(t.authHeaders)
+    .send({ permissions: [...ROLE_PERMISSIONS.agent, 'data.view_all'] }).expect(200);
+
+  const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(agent.headers)
+    .send({ accountId: mine.id, type: 'single_use', amount: 20, currency: 'EUR' }).expect(201)).body;
+  assert.equal(link.agentId, agent.id);
+
+  const stored = (await pool.query('SELECT created_by_agent_id FROM payment_links WHERE id = $1', [link.id])).rows[0];
+  assert.equal(stored.created_by_agent_id, agent.id);
+});
+
 test('an account owner sees their own analytics and none of the agency figures; the admin sees them', async () => {
   const { t, mine, other, agent } = await fixture();
   await paySale(app, t, mine, 50, { headers: agent.headers });
@@ -48,7 +66,11 @@ test('an account owner sees their own analytics and none of the agency figures; 
 
   const own = (await request(app).get(`/workspaces/${t.workspaceId}/analytics`).set(mine.ownerHeaders).expect(200)).body;
   assert.equal(own.scope, 'account');
-  assert.equal(own.headline.gross, 50);
+  // Net revenue is the only revenue figure a creator gets. Gross used to sit
+  // beside it here, which handed over the platform fee by subtraction.
+  assert.equal(own.headline.gross, undefined);
+  assert.ok(own.headline.net > 0 && own.headline.net < 50, 'net is the after-fee figure for the 50 sale');
+  assert.equal(own.headline.platformFee, undefined);
   assert.equal(own.headline.agencyKeep, undefined);
   assert.deepEqual(own.agents, []);
 
@@ -59,15 +81,15 @@ test('an account owner sees their own analytics and none of the agency figures; 
   assert.equal(admin.agents.length, 1);
 });
 
-test('an analyst reads across the workspace but cannot read the fee breakdown or change anything', async () => {
+test('a member reads across the workspace but cannot read the fee breakdown or change anything', async () => {
   const { t, mine } = await fixture();
-  const analyst = await addMember(app, t, 'analyst');
-  const list = (await request(app).get(`/workspaces/${t.workspaceId}/accounts`).set(analyst.headers).expect(200)).body.accounts;
+  const member = await addMember(app, t, 'member');
+  const list = (await request(app).get(`/workspaces/${t.workspaceId}/accounts`).set(member.headers).expect(200)).body.accounts;
   assert.equal(list.length, 2);
   assert.ok(list[0].revenueSplitPct !== undefined);
-  await request(app).get(`/workspaces/${t.workspaceId}/fees`).set(analyst.headers).expect(403);
+  await request(app).get(`/workspaces/${t.workspaceId}/fees`).set(member.headers).expect(403);
   await request(app).get(`/workspaces/${t.workspaceId}/fees`).set(t.authHeaders).expect(200);
-  await request(app).patch(`/workspaces/${t.workspaceId}/accounts/${mine.id}`).set(analyst.headers).send({ name: 'X' }).expect(403);
+  await request(app).patch(`/workspaces/${t.workspaceId}/accounts/${mine.id}`).set(member.headers).send({ name: 'X' }).expect(403);
 });
 
 test('a payment notifies the people it concerns, not the whole workspace', async () => {

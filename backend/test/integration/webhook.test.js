@@ -248,10 +248,19 @@ test('concurrent approvals of one single-use link post exactly one sale', async 
   const platformSummary = (await request(app).get(`/workspaces/${t.workspaceId}/payments/summary`)
     .set({ ...platform.headers, 'X-Workspace-Id': t.workspaceId }).expect(200)).body;
   assert.equal(platformSummary.checkoutFeeRevenue, 2);
+  // One sale, so one successful payment. The duplicate is an approved charge
+  // held for review and never posted to the ledger, so it is an attempt on the
+  // payments screen but not revenue here. Counting it as a second successful
+  // payment beside a single payment's worth of money is what used to make this
+  // screen disagree with Analytics, which counts the ledger.
   const linksSummary = (await request(app).get(`/workspaces/${t.workspaceId}/links/summary`)
     .set(t.authHeaders).expect(200)).body;
-  assert.equal(linksSummary.successfulPayments, 2);
+  assert.equal(linksSummary.successfulPayments, 1);
   assert.equal(linksSummary.grossSales, 25);
+  const analytics = (await request(app).get(`/workspaces/${t.workspaceId}/analytics`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(analytics.headline.paidCount, linksSummary.successfulPayments);
+  assert.equal(analytics.headline.gross, linksSummary.grossSales);
 });
 
 test('a signed chargeback webhook uses the idempotent reversal path', async () => {
@@ -278,4 +287,52 @@ test('a signed chargeback webhook uses the idempotent reversal path', async () =
       JOIN transactions tx ON tx.id = re.transaction_id
      WHERE tx.provider_transaction_id = $1 AND re.entry_type = 'chargeback'`,
     [sale.transId])).rows[0].count, 1);
+});
+
+// 14 Oct: MantaPay confirmed three orders the bank had approved and handed
+// back NEW transaction ids for them. The decline is keyed on the old id, so it
+// stays behind as its own payment row; the agency reads it as money it never
+// received. An order has one outcome.
+test('a declined order later approved under a new transaction id ends up paid, exactly once', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const endpoint = await endpointFor(t.workspaceId);
+  const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+    .send({ accountId: account.id, type: 'single_use', amount: 777, currency: 'EUR' }).expect(201)).body;
+
+  await postWebhook(app, endpoint, buildPaidPayload({
+    reference: link.referenceId, transId: '153674', amount: 777, replyCode: '5000',
+  })).expect(200);
+  const declined = (await pool.query(
+    'SELECT status FROM payments WHERE payment_link_id = $1 AND provider_payment_id = $2',
+    [link.id, '153674'])).rows[0];
+  assert.equal(declined.status, 'failed');
+
+  // The bank approved it. MantaPay reports the approval under a new id.
+  const approval = buildPaidPayload({ reference: link.referenceId, transId: '127349', amount: 777 });
+  const paid = (await postWebhook(app, endpoint, approval).expect(200)).body;
+
+  const rows = (await pool.query(
+    'SELECT provider_payment_id, status FROM payments WHERE payment_link_id = $1 ORDER BY occurred_at',
+    [link.id])).rows;
+  assert.deepEqual(rows, [
+    { provider_payment_id: '153674', status: 'superseded' },
+    { provider_payment_id: '127349', status: 'paid' },
+  ]);
+
+  const sales = (await pool.query(
+    `SELECT count(*)::int AS c FROM revenue_entries re
+       JOIN transactions tx ON tx.id = re.transaction_id
+       JOIN payments p ON p.id = tx.payment_id
+      WHERE p.payment_link_id = $1 AND re.entry_type = 'sale'`, [link.id])).rows[0].c;
+  assert.equal(sales, 1, 'exactly one sale for one order');
+
+  // MantaPay retries its notifications. The second delivery must change nothing.
+  await postWebhook(app, endpoint, approval).expect(200);
+  const again = (await pool.query(
+    'SELECT count(*)::int AS c FROM payments WHERE payment_link_id = $1', [link.id])).rows[0].c;
+  assert.equal(again, 2);
+  assert.equal(
+    (await pool.query('SELECT status FROM payments WHERE id = $1', [paid.paymentId])).rows[0].status,
+    'paid');
 });

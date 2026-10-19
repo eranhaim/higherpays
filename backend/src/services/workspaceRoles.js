@@ -1,17 +1,16 @@
 'use strict';
 
 const crypto = require('crypto');
-const { ROLE_PERMISSIONS, validatePermissions } = require('../auth/permissions');
+const { ROLE_PERMISSIONS } = require('../auth/permissions');
 
 const SYSTEM_ROLE_NAMES = {
   workspace_owner: 'Owner',
   workspace_admin: 'Admin',
-  analyst: 'Analyst',
+  member: 'Member',
   agent: 'Agent',
   account_owner: 'Creator',
 };
 
-const FIXED_PERMISSION_ROLES = new Set(['workspace_owner', 'agent', 'account_owner']);
 const PROFILE_ROLES = new Set(['agent', 'account_owner']);
 
 function defaultRoleRows() {
@@ -33,19 +32,13 @@ async function ensureWorkspaceRoles(client, workspaceId) {
   }
 }
 
-function newRoleKey() {
-  return `custom_${crypto.randomBytes(8).toString('hex')}`;
-}
-
-function validateRolePermissions(permissions, editorPermissions) {
-  return validatePermissions(permissions, editorPermissions);
+function newCustomRoleKey() {
+  return `custom_${crypto.randomBytes(5).toString('hex')}`;
 }
 
 module.exports = {
+  newCustomRoleKey,
   SYSTEM_ROLE_NAMES,
-  FIXED_PERMISSION_ROLES,
   PROFILE_ROLES,
   ensureWorkspaceRoles,
-  newRoleKey,
-  validateRolePermissions,
 };

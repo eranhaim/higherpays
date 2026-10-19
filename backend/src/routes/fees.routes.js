@@ -6,6 +6,7 @@ const express = require('express');
 const { query } = require('../db');
 const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
+const currencies = require('../services/currencies.service');
 
 const router = express.Router({ mergeParams: true });
 const { wid } = require('../lib/scope');
@@ -22,6 +23,8 @@ function range(req) {
 // GET /?from&to
 router.get('/', requirePermission('fees.view'), asyncHandler(async (req, res) => {
   const { F, T } = range(req);
+  // Fees are in one currency; summing across currencies would be meaningless.
+  const currency = await currencies.resolveReportingCurrency({ query }, wid(req), req.query.currency);
   const t = (await query(
     `SELECT
        COUNT(*) FILTER (WHERE re.entry_type='sale')                          AS sales,
@@ -39,13 +42,14 @@ router.get('/', requirePermission('fees.view'), asyncHandler(async (req, res) =>
      FROM revenue_entries re
      JOIN transactions t ON t.id = re.transaction_id
      JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
-    WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2`, [F, T, wid(req)])).rows[0];
+    WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND t.currency = $4`, [F, T, wid(req), currency])).rows[0];
   const card = (await query('SELECT * FROM effective_platform_fee($1, now())', [wid(req)])).rows[0] || {};
 
   const gross = n(t.gross);
   const pct = (v) => (gross > 0 ? r4(n(v) / gross * 100) : 0);
   res.json({
     range: { from: F, to: T },
+    currency,
     sales: n(t.sales),
     gross: r2(gross),
     providerFees: {
@@ -77,6 +81,7 @@ router.get('/', requirePermission('fees.view'), asyncHandler(async (req, res) =>
 router.get('/transactions', requirePermission('fees.view'), asyncHandler(async (req, res) => {
   const { F, T } = range(req);
   const limit = Math.min(1000, Number(req.query.limit) || 200);
+  const currency = await currencies.resolveReportingCurrency({ query }, wid(req), req.query.currency);
   const rows = (await query(
     `SELECT t.occurred_at, t.provider_transaction_id, t.currency,
             a.name AS account, u.full_name AS agent,
@@ -88,8 +93,8 @@ router.get('/transactions', requirePermission('fees.view'), asyncHandler(async (
        JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
        LEFT JOIN accounts a ON a.id = re.account_id
        LEFT JOIN agents ag ON ag.id = re.agent_id LEFT JOIN users u ON u.id = ag.user_id
-      WHERE re.workspace_id = $4 AND t.occurred_at >= $1 AND t.occurred_at <= $2
-      ORDER BY t.occurred_at DESC LIMIT $3`, [F, T, limit, wid(req)])).rows;
+      WHERE re.workspace_id = $4 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND t.currency = $5
+      ORDER BY t.occurred_at DESC LIMIT $3`, [F, T, limit, wid(req), currency])).rows;
   res.json({
     transactions: rows.map((x) => ({
       date: x.occurred_at, reference: x.provider_transaction_id, currency: x.currency,

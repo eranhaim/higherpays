@@ -9,9 +9,13 @@ const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { requirePlatformAdmin } = require('../middleware');
 const { signImpersonationToken } = require('../auth/tokens');
+const { revokeUserSessions } = require('../auth/sessions');
 const { ensureWorkspaceRoles } = require('../services/workspaceRoles');
+const { ROLE_PERMISSIONS } = require('../auth/permissions');
 const { isStr, badRequest } = require('../util/validate');
 const { sendEmail } = require('../util/email');
+const { validatePasswordStrength, PASSWORD_RULE } = require('../auth/passwords');
+const { grantWorkspaceRole } = require('../services/people');
 const { status: vocab } = require('../schema/entities');
 
 const hashToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
@@ -163,9 +167,10 @@ const publicSettlementFee = (s) => ({
 // everywhere. Both go through here.
 async function grantPlatformAdminsAccess(c, workspaceId) {
   await c.query(
-    `INSERT INTO workspace_users (workspace_id, user_id, role, platform_granted)
-     SELECT $1, id, 'workspace_admin', true FROM users WHERE is_platform_admin
-     ON CONFLICT (workspace_id, user_id) DO NOTHING`, [workspaceId]);
+    `INSERT INTO workspace_users (workspace_id, user_id, role, permissions, platform_granted)
+     SELECT $1, id, 'workspace_admin', $2, true FROM users WHERE is_platform_admin
+     ON CONFLICT (workspace_id, user_id) DO NOTHING`,
+    [workspaceId, [...ROLE_PERMISSIONS.workspace_admin]]);
 }
 
 router.get('/me', (req, res) => res.json({ isPlatformAdmin: true }));
@@ -209,15 +214,19 @@ router.get('/overview', asyncHandler(async (req, res) => {
            (SELECT count(*) FROM agents) AS agents,
            (SELECT count(*) FROM users) AS users`)).rows[0];
   const money = (await query(`
-    SELECT COALESCE(SUM(re.gross) FILTER (WHERE re.entry_type='sale'),0) AS gross,
+    SELECT t.currency,
+           COALESCE(SUM(re.gross) FILTER (WHERE re.entry_type='sale'),0) AS gross,
            COALESCE(SUM(re.psp_fee),0) AS psp_fees,
            COALESCE(SUM(re.platform_fee),0) AS platform_fees,
            COALESCE(SUM(re.platform_margin),0) AS higherpays_margin,
            COUNT(*) FILTER (WHERE re.entry_type='sale') AS sales
       FROM revenue_entries re
       JOIN transactions t ON t.id = re.transaction_id
-      JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL`)).rows[0];
-  res.json({ counts, money, supportedCurrencies: config.supportedCurrencies });
+      JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
+     GROUP BY t.currency ORDER BY t.currency`)).rows;
+  // One row per currency: agencies trade in different currencies, and a total
+  // across them would be meaningless.
+  res.json({ counts, moneyByCurrency: money, supportedCurrencies: config.supportedCurrencies });
 }));
 
 // GET /platform/workspaces — every agency with its rate and live counters.
@@ -229,7 +238,8 @@ router.get('/workspaces', asyncHandler(async (req, res) => {
            (SELECT count(*) FROM workspace_users wu WHERE wu.workspace_id = w.id AND wu.status='active') AS members,
            (SELECT count(*) FROM payments p WHERE p.workspace_id = w.id AND p.status='paid' AND p.archived_at IS NULL) AS paid_payments,
            (SELECT COALESCE(SUM(amount),0) FROM payments p
-             WHERE p.workspace_id = w.id AND p.status='paid' AND p.review_reason IS NULL AND p.archived_at IS NULL) AS gross_volume,
+             WHERE p.workspace_id = w.id AND p.status='paid' AND p.review_reason IS NULL AND p.archived_at IS NULL
+               AND p.currency = w.currency) AS gross_volume,
            (SELECT max(created_at) FROM audit_log a WHERE a.workspace_id = w.id) AS last_activity,
            f.blended_rate_pct, f.psp_rate_pct, f.settlement_pct, f.margin_rate_pct,
            f.psp_fixed_fee, f.checkout_fee
@@ -437,7 +447,8 @@ router.patch('/workspaces/:id/status', asyncHandler(async (req, res) => {
 
 // POST /platform/agencies — onboard a new agency in one step: workspace,
 // rate card, settlement fees, default split, and an invite for its first
-// admin (who sets their own password via the link).
+// admin. The admin sets their own password through the invite link, or the
+// operator sets it here when email delivery is not available.
 router.post('/agencies', asyncHandler(async (req, res) => {
   const b = req.body || {};
   const currency = (b.currency || 'EUR').toUpperCase();
@@ -450,6 +461,10 @@ router.post('/agencies', asyncHandler(async (req, res) => {
   if (!pct(settlementPct)) return badRequest(res, 'settlementPct must be 0..100', ['settlementPct']);
   const checkoutFeeError = checkoutFeeValidation(checkoutFee);
   if (checkoutFeeError) return badRequest(res, checkoutFeeError, ['checkoutFee']);
+
+  const setsPasswordNow = b.adminPassword != null;
+  const passwordError = setsPasswordNow ? validatePasswordStrength(b.adminPassword) : null;
+  if (passwordError) return badRequest(res, PASSWORD_RULE, ['adminPassword']);
 
   const token = crypto.randomBytes(32).toString('base64url');
   const out = await withTransaction(async (c) => {
@@ -472,14 +487,22 @@ router.post('/agencies', asyncHandler(async (req, res) => {
       `INSERT INTO revenue_rules (workspace_id, account_split_pct, agency_split_pct, agent_pct, effective_from, created_by_user_id)
        VALUES ($1,0,100,0,'-infinity',$2)`, [ws.id, uid(req)]);
     await grantPlatformAdminsAccess(c, ws.id);
-    await c.query(
-      'INSERT INTO invites (workspace_id, email, role, token_hash, invited_by_user_id, expires_at) VALUES ($1,$2,$3,$4,$5,$6)',
-      [ws.id, b.adminEmail, 'workspace_owner', hashToken(token), uid(req), new Date(Date.now() + 7 * 86400 * 1000)]);
+    if (setsPasswordNow) {
+      await grantWorkspaceRole(c, ws.id, { email: b.adminEmail, fullName: isStr(b.adminName, 120) ? b.adminName.trim() : b.adminEmail, password: b.adminPassword }, 'workspace_owner');
+    } else {
+      await c.query(
+        `INSERT INTO invites (workspace_id, email, role, permissions, token_hash, invited_by_user_id, expires_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [ws.id, b.adminEmail, 'workspace_owner', [...ROLE_PERMISSIONS.workspace_owner],
+          hashToken(token), uid(req), new Date(Date.now() + 7 * 86400 * 1000)]);
+    }
     return ws;
   });
 
-  const link = `${config.appPublicBase}/accept-invite?token=${token}`;
-  await sendEmail({ to: b.adminEmail, subject: `You're invited to run ${b.name} on HigherPays`, body: `Set up your login: ${link}` });
+  if (!setsPasswordNow) {
+    const link = `${config.appPublicBase}/accept-invite?token=${token}`;
+    await sendEmail({ to: b.adminEmail, subject: `You're invited to run ${b.name} on HigherPays`, body: `Set up your login: ${link}` });
+  }
   await audit({ workspaceId: out.id, actorUserId: uid(req), action: 'platform.agency.onboard', entityType: 'workspace', entityId: out.id, metadata: { name: b.name, adminEmail: b.adminEmail } });
   res.status(201).json({
     workspaceId: out.id,
@@ -524,9 +547,10 @@ router.patch('/users/:id/platform-admin', asyncHandler(async (req, res) => {
     if (!u) return null;
     if (on) {
       await c.query(
-        `INSERT INTO workspace_users (workspace_id, user_id, role, platform_granted)
-         SELECT id, $1, 'workspace_admin', true FROM workspaces
-         ON CONFLICT (workspace_id, user_id) DO NOTHING`, [u.id]);
+        `INSERT INTO workspace_users (workspace_id, user_id, role, permissions, platform_granted)
+         SELECT id, $1, 'workspace_admin', $2, true FROM workspaces
+         ON CONFLICT (workspace_id, user_id) DO NOTHING`,
+        [u.id, [...ROLE_PERMISSIONS.workspace_admin]]);
     } else {
       await c.query(
         'DELETE FROM workspace_users WHERE user_id=$1 AND platform_granted=true',
@@ -536,6 +560,7 @@ router.patch('/users/:id/platform-admin', asyncHandler(async (req, res) => {
   });
   if (user?.error) return res.status(409).json({ error: user.error });
   if (!user) return res.status(404).json({ error: 'not_found' });
+  await revokeUserSessions(user.id);
   await audit({ actorUserId: uid(req), action: 'platform.admin.grant', entityType: 'user', entityId: user.id, metadata: { isPlatformAdmin: on } });
   res.json({ id: user.id, email: user.email, isPlatformAdmin: user.is_platform_admin });
 }));
@@ -559,7 +584,7 @@ router.get('/fees', asyncHandler(async (req, res) => {
   const to = req.query.to ? new Date(req.query.to) : new Date();
   const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 86400000);
   const rows = (await query(
-    `SELECT w.id AS workspace_id, w.name AS agency,
+    `SELECT w.id AS workspace_id, w.name AS agency, COALESCE(t.currency, w.currency) AS currency,
             COUNT(re.id) FILTER (WHERE re.entry_type='sale')                    AS sales,
             COALESCE(SUM(re.gross) FILTER (WHERE re.entry_type='sale'),0)       AS gross,
             COALESCE(SUM(re.fee_mdr),0) AS mdr, COALESCE(SUM(re.fee_fixed),0) AS fixed,
@@ -573,7 +598,7 @@ router.get('/fees', asyncHandler(async (req, res) => {
        LEFT JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
        LEFT JOIN LATERAL effective_platform_fee(w.id, now()) p ON true
       WHERE (t.id IS NOT NULL AND pay.id IS NOT NULL) OR re.id IS NULL
-      GROUP BY w.id, w.name, p.fee_model, p.mdr_pct, p.settlement_pct, p.psp_fixed_fee, p.margin_rate_pct, p.psp_rate_pct
+      GROUP BY w.id, w.name, COALESCE(t.currency, w.currency), p.fee_model, p.mdr_pct, p.settlement_pct, p.psp_fixed_fee, p.margin_rate_pct, p.psp_rate_pct
       ORDER BY gross DESC`, [from.toISOString(), to.toISOString()])).rows;
 
   const agencies = rows.map((x) => {
@@ -581,7 +606,7 @@ router.get('/fees', asyncHandler(async (req, res) => {
     const providerTotal = n(x.mdr) + n(x.fixed) + n(x.settlement);
     const ourRevenue = n(x.hp_margin) + n(x.surcharge);
     return {
-      workspaceId: x.workspace_id, agency: x.agency, sales: n(x.sales), gross: r2(gross),
+      workspaceId: x.workspace_id, agency: x.agency, currency: x.currency, sales: n(x.sales), gross: r2(gross),
       providerFees: { mdr: r2(x.mdr), fixed: r2(x.fixed), settlement: r2(x.settlement), reversalFees: r2(x.reversal_fees), total: r2(providerTotal), percentOfGross: gross ? r2(providerTotal / gross * 100) : 0 },
       higherPays: { margin: r2(x.hp_margin), surcharge: r2(x.surcharge), total: r2(ourRevenue), percentOfGross: gross ? r2(ourRevenue / gross * 100) : 0 },
       totalDeducted: r2(x.total_deducted),
@@ -591,11 +616,16 @@ router.get('/fees', asyncHandler(async (req, res) => {
   res.json({
     range: { from: from.toISOString(), to: to.toISOString() },
     agencies,
-    totals: {
-      gross: r2(agencies.reduce((s, a) => s + a.gross, 0)),
-      providerFees: r2(agencies.reduce((s, a) => s + a.providerFees.total, 0)),
-      higherPaysRevenue: r2(agencies.reduce((s, a) => s + a.higherPays.total, 0)),
-    },
+    // One total per currency, never one across currencies.
+    totals: [...new Set(agencies.map((a) => a.currency))].sort().map((currency) => {
+      const rows = agencies.filter((a) => a.currency === currency);
+      return {
+        currency,
+        gross: r2(rows.reduce((s, a) => s + a.gross, 0)),
+        providerFees: r2(rows.reduce((s, a) => s + a.providerFees.total, 0)),
+        higherPaysRevenue: r2(rows.reduce((s, a) => s + a.higherPays.total, 0)),
+      };
+    }),
   });
 }));
 

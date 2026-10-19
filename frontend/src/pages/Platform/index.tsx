@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   PageHeader, Pill, DataTable, Money, DateCell, EmptyState, LoadingCard, ErrorCard, StatCard, StatGrid,
   Select, type Column,
 } from '../../components/ui';
-import { platformApi, type PlatformWorkspace, type OnboardAgencyInput, type PlatformFeeRate, type PlatformUser } from '../../api/endpoints';
+import { platformApi, type PlatformWorkspace, type OnboardAgencyInput, type PlatformUser } from '../../api/endpoints';
 import Modal from '../../components/Modal';
+import { useCurrentSession } from '../../hooks/useCurrentSession';
+import { useSessionStore } from '../../store/session';
 import { toast } from '../../lib/toast';
 import { usePlatformData } from './usePlatformData';
 
@@ -24,19 +26,21 @@ function parseAmount(text: string): number {
 
 /**
  * The operator console: every agency, not one of them. Access comes from
- * `users.is_platform_admin`, a tier above workspace roles — so this page sits
+ * `users.is_platform_admin`, a tier above workspace roles Γאפ so this page sits
  * outside the workspace layout and is gated on its own check.
  */
 export default function PlatformPage() {
   const {
     isPlatformAdmin, requiresTwoFactor, overview, workspaces, supportedCurrencies, isLoading, isError,
-    onboardAgency, setStatus, setCurrency, setPlatformFee,
+    onboardAgency, setStatus,
   } = usePlatformData();
   const [onboardOpen, setOnboardOpen] = useState(false);
-  const [editingFee, setEditingFee] = useState<PlatformWorkspace | null>(null);
   const [suspending, setSuspending] = useState<PlatformWorkspace | null>(null);
   const [isBusy, setIsBusy] = useState(false);
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const setActiveWorkspaceId = useSessionStore((s) => s.setActiveWorkspaceId);
+  const { workspaces: memberships } = useCurrentSession();
   const users = useQuery({ queryKey: ['platform-users'], queryFn: () => platformApi.listUsers(), enabled: isPlatformAdmin && !requiresTwoFactor });
   const platformAdmin = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => platformApi.setPlatformAdmin(id, enabled),
@@ -56,6 +60,21 @@ export default function PlatformPage() {
     }
   };
 
+  // `/settings` is workspace-scoped, so the row's agency has to become the
+  // active one first. This table also lists suspended and archived agencies,
+  // which `/auth/me` leaves out: selecting one would send its id as
+  // X-Workspace-Id while the console labelled itself from another agency.
+  const openWorkspaceSettings = (w: PlatformWorkspace) => {
+    if (!memberships.some((m) => m.id === w.id)) {
+      toast(`${w.name} has to be active before its settings can be opened.`);
+      return;
+    }
+    setActiveWorkspaceId(w.id);
+    // Every cached query is scoped to the agency that was active until now.
+    queryClient.clear();
+    navigate('/settings?tab=workspace');
+  };
+
   const columns: Column<PlatformWorkspace>[] = [
     { key: 'name', header: 'Agency', render: (w) => <span className="cname">{w.name}</span> },
     { key: 'status', header: 'Status', render: (w) => <Pill tone={w.status === 'active' ? 'ok' : 'muted'}>{w.status}</Pill> },
@@ -70,10 +89,10 @@ export default function PlatformPage() {
       key: 'actions', header: 'Actions', hideHeader: true, align: 'right',
       render: (w) => (
         <div className="cell-actions">
-          <button className="btn ghost small" onClick={() => setEditingFee(w)}>Rates</button>
+          <button className="btn small" onClick={() => openWorkspaceSettings(w)}>Edit settings</button>
           {w.status === 'active'
-            ? <button className="btn ghost small" onClick={() => setSuspending(w)}>Suspend</button>
-            : <button className="btn ghost small" disabled={isBusy} onClick={() => changeStatus(w, 'active')}>Reactivate</button>}
+            ? <button className="btn danger small" onClick={() => setSuspending(w)}>Suspend</button>
+            : <button className="btn small" disabled={isBusy} onClick={() => changeStatus(w, 'active')}>Reactivate</button>}
         </div>
       ),
     },
@@ -81,7 +100,7 @@ export default function PlatformPage() {
   const userColumns: Column<PlatformUser>[] = [
     { key: 'person', header: 'User', render: (u) => <div><span className="cname">{u.fullName}</span><span className="cemail">{u.email}</span></div> },
     { key: 'access', header: 'Access', render: (u) => <>{u.isPlatformAdmin && <Pill tone="info">Platform admin</Pill>} {!u.isPlatformAdmin && <Pill>Agency user</Pill>}</> },
-    { key: 'workspaces', header: 'Agencies', render: (u) => <span className="sub">{u.memberships.map((m) => `${m.workspaceName} · ${m.role}`).join(' · ') || 'No agency access'}</span> },
+    { key: 'workspaces', header: 'Agencies', render: (u) => <span className="sub">{u.memberships.map((m) => `${m.workspaceName} ┬╖ ${m.role}`).join(' ┬╖ ') || 'No agency access'}</span> },
     { key: 'login', header: 'Last sign-in', render: (u) => u.lastLoginAt ? <DateCell ts={u.lastLoginAt} /> : <span className="sub">Never</span> },
     {
       key: 'actions', header: 'Actions', hideHeader: true, align: 'right',
@@ -129,18 +148,22 @@ export default function PlatformPage() {
 
       <StatGrid>
         <StatCard isUnknown={!overview} label="Agencies" value={overview?.counts.workspaces_active ?? 0} sub={`${overview?.counts.workspaces ?? 0} in total`} />
-        <StatCard isUnknown={!overview} label="Gross processed" value={<Money amount={overview?.money.gross ?? 0} direction="in" />} sub={`${overview?.money.sales ?? 0} sales`} />
-        <StatCard isUnknown={!overview} label="Platform fees" value={<Money amount={overview?.money.platform_fees ?? 0} />} sub="Charged to agencies" />
-        <StatCard isUnknown={!overview} label="HigherPays margin" value={<Money amount={overview?.money.higherpays_margin ?? 0} direction="in" emphasis />} sub="After PSP costs" />
+        {overview?.moneyByCurrency.map((m) => (
+          <Fragment key={m.currency}>
+            <StatCard label={`Gross processed ┬╖ ${m.currency}`} value={<Money amount={m.gross} currency={m.currency} direction="in" />} sub={`${m.sales} sales`} />
+            <StatCard label={`Platform fees ┬╖ ${m.currency}`} value={<Money amount={m.platform_fees} currency={m.currency} />} sub="Charged to agencies" />
+            <StatCard label={`HigherPays margin ┬╖ ${m.currency}`} value={<Money amount={m.higherpays_margin} currency={m.currency} direction="in" emphasis />} sub="After PSP costs" />
+          </Fragment>
+        ))}
       </StatGrid>
 
-      {isLoading ? <LoadingCard label="Loading agencies…" />
+      {isLoading ? <LoadingCard label="Loading agenciesΓאª" />
         : isError ? <ErrorCard message="Couldn't load the agency list." />
           : <DataTable columns={columns} rows={workspaces} rowKey={(w) => w.id} emptyTitle="No agencies yet." emptyHint="Add the first one from the header." />}
 
       <div className="section">
         <div className="sechead">All users</div>
-        <p className="sub">Platform-wide access. For agency-specific roles and invitations, open that agency’s People & access page.</p>
+        <p className="sub">Platform-wide access. For agency-specific roles and invitations, open that agencyΓאשs People & access page.</p>
         <DataTable columns={userColumns} rows={users.data ?? []} rowKey={(u) => u.id}
           isLoading={users.isLoading} emptyTitle="No users yet." />
       </div>
@@ -152,22 +175,10 @@ export default function PlatformPage() {
           onSubmit={async (input) => {
             const created = await onboardAgency(input);
             setOnboardOpen(false);
-            toast(`${input.name} created. Invite sent to ${input.adminEmail}.`);
+            toast(input.adminPassword
+              ? `${input.name} created. ${input.adminEmail} can sign in now.`
+              : `${input.name} created. Invite sent to ${input.adminEmail}.`);
             return created;
-          }}
-        />
-      )}
-
-      {editingFee && (
-        <RatesModal
-          workspace={editingFee}
-          currencies={supportedCurrencies}
-          onClose={() => setEditingFee(null)}
-          onSubmit={async (input, currency) => {
-            if (currency !== editingFee.currency) await setCurrency(editingFee.id, currency);
-            await setPlatformFee(editingFee.id, input);
-            setEditingFee(null);
-            toast(`Rates updated for ${editingFee.name}.`);
           }}
         />
       )}
@@ -177,7 +188,7 @@ export default function PlatformPage() {
         {suspending && (
           <div className="modal-actions">
             <button className="btn ghost" onClick={() => setSuspending(null)}>Keep active</button>
-            <button className="btn danger" disabled={isBusy} onClick={() => changeStatus(suspending, 'suspended')}>{isBusy ? 'Suspending…' : 'Suspend'}</button>
+            <button className="btn danger" disabled={isBusy} onClick={() => changeStatus(suspending, 'suspended')}>{isBusy ? 'SuspendingΓאª' : 'Suspend'}</button>
           </div>
         )}
       </Modal>
@@ -195,6 +206,7 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
   const [currency, setCurrency] = useState(currencies[0] ?? CURRENCIES[0]);
   const [merchantId, setMerchantId] = useState('');
   const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
   const [pspRate, setPspRate] = useState('8');
   const [margin, setMargin] = useState('5');
   const [fixedFee, setFixedFee] = useState('0.50');
@@ -211,12 +223,13 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
   const submit = async () => {
     if (!name.trim()) { toast('Agency name is required.'); return; }
     if (!adminEmail.includes('@')) { toast('A valid admin email is required.'); return; }
-    if (Object.values(pct).some(Number.isNaN)) { toast('Percentages must be 0–100.'); return; }
+    if (Object.values(pct).some(Number.isNaN)) { toast('Percentages must be 0Γאף100.'); return; }
     if (Object.values(fees).some(Number.isNaN)) { toast('Fees must be amounts of 0 or more.'); return; }
     setIsSaving(true);
     try {
       await onSubmit({
         name: name.trim(), currency, merchantId: merchantId.trim() || undefined, adminEmail: adminEmail.trim(),
+        ...(adminPassword ? { adminPassword } : {}),
         pspRatePct: pct.psp, settlementPct: pct.settlement, marginRatePct: pct.margin,
         pspFixedFee: fees.fixed, checkoutFee: fees.checkout,
       });
@@ -244,7 +257,7 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
   );
 
   return (
-    <Modal open onClose={onClose} title="Add agency" subtitle="Creates the workspace with its rate card and sends its first admin an invite to set their password.">
+    <Modal open onClose={onClose} title="Add agency" subtitle="Creates the workspace with its rate card. Its first admin gets an invite to set a password, or you set one here.">
       <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
         <div className="form-row">
           <div className="field">
@@ -265,6 +278,11 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
             <input id="agency-mid" type="text" maxLength={64} placeholder="Optional" value={merchantId} onChange={(e) => setMerchantId(e.target.value)} />
           </div>
         </div>
+        <div className="field">
+          <label htmlFor="agency-admin-password">First admin's password</label>
+          <input id="agency-admin-password" type="password" autoComplete="new-password" placeholder="Optional" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
+          <p className="sub">Leave empty to email an invite. Set one when email is not available: 12+ characters with upper case, lower case and a number.</p>
+        </div>
 
         <div className="sechead">Rate card</div>
         <div className="form-row">
@@ -274,147 +292,11 @@ function OnboardAgencyModal({ currencies, onClose, onSubmit }: {
           {amountField('agency-fixed', 'Transaction fee', fixedFee, setFixedFee)}
           {amountField('agency-checkout', 'Checkout fee (paid by the customer)', checkoutFee, setCheckoutFee)}
         </div>
-        <p className="sub">Blended rate the agency sees: {blended === null ? '—' : `${blended}%`}.</p>
+        <p className="sub">Blended rate the agency sees: {blended === null ? 'Γאפ' : `${blended}%`}.</p>
 
         <div className="modal-actions">
           <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn" disabled={isSaving}>{isSaving ? 'Creating…' : 'Create agency'}</button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-/** A new versioned rate row for one agency. */
-function RatesModal({ workspace, currencies, onClose, onSubmit }: {
-  workspace: PlatformWorkspace;
-  currencies: string[];
-  onClose: () => void;
-  onSubmit: (input: PlatformFeeRate, currency: string) => Promise<void>;
-}) {
-  const detail = useQuery({
-    queryKey: ['platform-workspace', workspace.id],
-    queryFn: () => platformApi.getWorkspace(workspace.id),
-  });
-  const current = detail.data?.feeHistory[0];
-
-  if (detail.isLoading) {
-    return (
-      <Modal open onClose={onClose} title={`Rates for ${workspace.name}`}>
-        <p className="sub">Loading current rates…</p>
-      </Modal>
-    );
-  }
-  if (!current) {
-    return (
-      <Modal open onClose={onClose} title={`Rates for ${workspace.name}`}>
-        <p className="sub">This agency has no rate card yet.</p>
-      </Modal>
-    );
-  }
-
-  return (
-    <RatesForm
-      key={current.effectiveFrom}
-      workspace={{
-        ...workspace,
-        pspRatePct: current.pspRatePct,
-        settlementPct: current.settlementPct ?? 0,
-        marginRatePct: current.marginRatePct,
-        pspFixedFee: current.pspFixedFee,
-        checkoutFee: current.checkoutFee,
-      }}
-      currencies={currencies}
-      currencyChangeAllowed={detail.data?.currencyChangeAllowed ?? false}
-      onClose={onClose}
-      onSubmit={onSubmit}
-    />
-  );
-}
-
-function RatesForm({ workspace, currencies, currencyChangeAllowed, onClose, onSubmit }: {
-  workspace: PlatformWorkspace;
-  currencies: string[];
-  currencyChangeAllowed: boolean;
-  onClose: () => void;
-  onSubmit: (input: PlatformFeeRate, currency: string) => Promise<void>;
-}) {
-  const [currency, setCurrency] = useState(workspace.currency);
-  const [pspRate, setPspRate] = useState(String(workspace.pspRatePct));
-  const [settlementPct, setSettlementPct] = useState(String(workspace.settlementPct));
-  const [margin, setMargin] = useState(String(workspace.marginRatePct));
-  const [fixedFee, setFixedFee] = useState(String(workspace.pspFixedFee));
-  const [checkoutFee, setCheckoutFee] = useState(String(workspace.checkoutFee));
-  const [isSaving, setIsSaving] = useState(false);
-  const psp = parsePct(pspRate);
-  const settlement = parsePct(settlementPct);
-  const mrg = parsePct(margin);
-  const fixed = parseAmount(fixedFee);
-  const checkout = parseAmount(checkoutFee);
-  const valid = !Number.isNaN(psp) && !Number.isNaN(settlement) && !Number.isNaN(mrg)
-    && !Number.isNaN(fixed) && !Number.isNaN(checkout);
-
-  const submit = async () => {
-    if (!valid) { toast('Enter valid rates and fees.'); return; }
-    setIsSaving(true);
-    try { await onSubmit({ pspRatePct: psp, settlementPct: settlement, marginRatePct: mrg, pspFixedFee: fixed, checkoutFee: checkout }, currency); }
-    catch (err) { toast(err instanceof Error ? err.message : 'Could not save the rates.'); }
-    finally { setIsSaving(false); }
-  };
-
-  return (
-    <Modal open onClose={onClose} title={`Rates for ${workspace.name}`}
-      subtitle={`Currently ${workspace.blendedRatePct}% blended. A new rate applies to sales from now on; the history is kept.`}>
-      <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
-        <Select id="rates-currency" label="Workspace currency" value={currency} onChange={setCurrency}
-          disabled={!currencyChangeAllowed}>
-          {currencies.map((item) => <option key={item} value={item}>{item}</option>)}
-        </Select>
-        <p className="sub">
-          {currencyChangeAllowed
-            ? 'Currency can change only before the workspace has links or any money history.'
-            : 'Currency is locked because this workspace already has links or money history. Historical workspaces cannot switch currency.'}
-        </p>
-        <div className="form-row">
-          <div className="field">
-            <label htmlFor="rates-psp">MDR rate</label>
-            <div className="pct-input">
-              <input id="rates-psp" type="number" min={0} max={100} step={0.01} value={pspRate} onChange={(e) => setPspRate(e.target.value)} />
-              <span className="sub">%</span>
-            </div>
-          </div>
-          <div className="field">
-            <label htmlFor="rates-settlement">Settlement fee</label>
-            <div className="pct-input">
-              <input id="rates-settlement" type="number" min={0} max={100} step={0.01} value={settlementPct} onChange={(e) => setSettlementPct(e.target.value)} />
-              <span className="sub">%</span>
-            </div>
-          </div>
-          <div className="field">
-            <label htmlFor="rates-margin">HigherPays margin</label>
-            <div className="pct-input">
-              <input id="rates-margin" type="number" min={0} max={100} step={0.01} value={margin} onChange={(e) => setMargin(e.target.value)} />
-              <span className="sub">%</span>
-            </div>
-          </div>
-        </div>
-        <div className="form-row">
-          <div className="field">
-            <label htmlFor="rates-fixed">Transaction fee</label>
-            <input id="rates-fixed" type="number" min={0} step={0.01} value={fixedFee} onChange={(e) => setFixedFee(e.target.value)} />
-          </div>
-          <div className="field">
-            <label htmlFor="rates-checkout">Checkout fee</label>
-            <input id="rates-checkout" type="number" min={0} step={0.01} value={checkoutFee} onChange={(e) => setCheckoutFee(e.target.value)} />
-          </div>
-        </div>
-        <p className="sub">
-          New blended rate: {valid ? `${psp + settlement + mrg}%` : '—'}. The checkout fee is added to what the customer pays
-          and does not appear in the agency's own figures.
-        </p>
-        <div className="modal-actions">
-          <button type="button" className="btn ghost" onClick={onClose}>Cancel</button>
-          <button type="submit" className="btn" disabled={isSaving || !valid}>{isSaving ? 'Saving…' : 'Save rates'}</button>
+          <button type="submit" className="btn" disabled={isSaving}>{isSaving ? 'CreatingΓאª' : 'Create agency'}</button>
         </div>
       </form>
     </Modal>

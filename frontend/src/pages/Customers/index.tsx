@@ -6,7 +6,7 @@ import { useCurrentSession } from '../../hooks/useCurrentSession';
 import Modal from '../../components/Modal';
 import { toast } from '../../lib/toast';
 import {
-  PageHeader, Money, DateCell, DataTable, FilterBar, DetailRow, Pill, Select, ViewPicker,
+  PageHeader, Money, DateCell, DataTable, FilterBar, CurrencyPicker, DetailRow, Pill, Select, ViewPicker, RowViewButton,
   type Column, type SortState,
 } from '../../components/ui';
 import { useViewLayout, orderBy } from '../../hooks/useViewLayout';
@@ -90,7 +90,7 @@ export default function CustomersPage() {
         </>
       ),
     },
-    { key: 'spend', header: 'Total spend', sortKey: 'spend', render: (c) => <Money amount={c.totalSpend} direction="in" /> },
+    { key: 'spend', header: 'Total spend', sortKey: 'spend', render: (c) => <Money amount={c.totalSpend} currency={c.currency ?? undefined} direction="in" /> },
     { key: 'last', header: 'Last purchase', sortKey: 'last', render: (c) => <DateCell ts={c.lastPurchaseAt} /> },
     {
       key: 'segment', header: 'Segment', sortKey: 'segment', render: (c) => <SegmentTag segment={c.segment} />,
@@ -106,6 +106,12 @@ export default function CustomersPage() {
 
   const columnsView = useViewLayout('customers.columns', columns.map((c) => ({ key: c.key, label: c.header })));
   const shownColumns: Column<Customer>[] = [
+    // The explicit way into a customer's detail, matching Payments and Links.
+    // Clicking the row still works, but it is a shortcut, not the only way in.
+    {
+      key: 'view', header: 'View', hideHeader: true, width: 44,
+      render: (c: Customer) => <RowViewButton onClick={() => setDetailId(c.id)} label={`View ${c.name}`} />,
+    },
     ...orderBy(columns, columnsView.visibleKeys),
     // The actions cell is a control, not data: it is never hidden or moved.
     ...(canManage ? [{
@@ -124,6 +130,7 @@ export default function CustomersPage() {
         title="Customers"
         actions={
           <>
+            <ViewPicker label="Customise view" sections={[{ view: columnsView }]} />
             {can('customers.export') && (
               <button className="btn ghost" onClick={runExport} disabled={isExporting}>{isExporting ? 'Exporting…' : 'Export CSV'}</button>
             )}
@@ -135,10 +142,10 @@ export default function CustomersPage() {
       {isError && <div className="warnbar" role="alert">Couldn't load customers. Reload or try again.</div>}
 
       <FilterBar>
+        <CurrencyPicker />
         <input type="search" className="search-input" aria-label="Search customers"
           placeholder="Search name, Telegram, email or phone" value={search} onChange={(e) => setSearch(e.target.value)} />
         <button className="btn ghost" onClick={() => { setSegment(''); setSearch(''); }}>Clear filters</button>
-        <ViewPicker label="Edit columns" view={columnsView} />
       </FilterBar>
 
       <DataTable
@@ -175,9 +182,9 @@ export default function CustomersPage() {
             <DetailRow label="Email">{detail.data.email ?? '—'}</DetailRow>
             <DetailRow label="Phone">{detail.data.phone ?? '—'}</DetailRow>
             <DetailRow label="Segment"><SegmentTag segment={detail.data.segment} /></DetailRow>
-            <DetailRow label="Total spend"><Money amount={detail.data.totalSpend} direction="in" emphasis /></DetailRow>
+            <DetailRow label="Total spend"><Money amount={detail.data.totalSpend} currency={detail.data.currency ?? undefined} direction="in" emphasis /></DetailRow>
             <DetailRow label="Customer since"><DateCell ts={detail.data.createdAt} /></DetailRow>
-            <div className="sechead">Payments</div>
+            <h3 className="sechead">Payments</h3>
             {detail.data.payments.length === 0 ? <p className="sub">No payments yet.</p> : (
               <div className="tablewrap">
                 <table>

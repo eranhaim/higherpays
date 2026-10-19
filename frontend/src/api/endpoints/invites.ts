@@ -3,7 +3,7 @@ import { workspacePath } from '../workspacePath';
 
 /** Agents and account owners are created directly, login included. */
 export type InvitableRole = string;
-export const INVITABLE_ROLES: InvitableRole[] = ['workspace_admin', 'analyst'];
+export const INVITABLE_ROLES: InvitableRole[] = ['workspace_admin', 'member'];
 
 export interface Invite {
   id: string;

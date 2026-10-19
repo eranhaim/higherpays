@@ -67,6 +67,9 @@ credentials stored in AWS Systems Manager Parameter Store under
 the deployment environment when connecting locally. Do not run seed or
 destructive development work against production.
 
+Weekly production backup and Google Drive setup are documented in
+[`deploy/backup-google-drive.md`](deploy/backup-google-drive.md).
+
 ## Tests
 
 ```bash
