@@ -5,6 +5,7 @@ import {
 } from '../../api/endpoints';
 import { HttpError } from '../../api/http';
 import { useCan } from '../../hooks/usePermission';
+import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useUnsavedChanges } from '../../hooks/useUnsavedChanges';
 import { toast } from '../../lib/toast';
 import Modal from '../../components/Modal';
@@ -26,6 +27,8 @@ function toggleEvent(events: NotificationEvent[], event: NotificationEvent, on: 
 export function NotificationsPane() {
   const can = useCan();
   const editable = can('settings.edit');
+  const { user } = useCurrentSession();
+  const isPlatformAdmin = Boolean(user?.isPlatformAdmin);
   const [removing, setRemoving] = useState<NotificationChannel | null>(null);
   const {
     preferences, channels,
@@ -83,104 +86,108 @@ export function NotificationsPane() {
         onSave={(events) => savePreferences.mutateAsync(events)}
       />
 
-      <div className="card">
-        <div className="sechead">Telegram notifications</div>
-        <p className="sub">
-          Send a message to a Telegram chat every time a payment happens. Add the HigherPays bot to
-          your group, then paste the chat ID below.
-        </p>
+      {isPlatformAdmin && (
+        <>
+          <div className="card">
+            <div className="sechead">Telegram notifications</div>
+            <p className="sub">
+              Send a message to a Telegram chat every time a payment happens. Add the HigherPays bot to
+              your group, then paste the chat ID below.
+            </p>
 
-        {channels.data.channels.length === 0 ? (
-          <EmptyState title="No chats connected yet." />
-        ) : (
-          <div className="tablewrap">
-            <table>
-              <thead>
-                <tr>
-                  <th scope="col">Chat</th>
-                  <th scope="col">Events</th>
-                  <th scope="col">Status</th>
-                  <th scope="col"><span className="sr-only">Actions</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {channels.data.channels.map((c) => (
-                  <tr key={c.id}>
-                    <td>
-                      <div className="cname">{c.label || c.target}</div>
-                      <div className="cemail">{c.target}</div>
-                    </td>
-                    <td>
-                      {editable ? (
-                        <div className="controls">
-                          {channels.data.availableEvents.map((e) => (
-                            <label key={e} className="check-row inline">
-                              <input
-                                type="checkbox"
-                                checked={c.events.includes(e)}
-                                disabled={setChannelEvents.isPending}
-                                onChange={(ev) => toggleChannelEvent(c, e, ev.target.checked)}
-                              />
-                              <span>{NOTIFICATION_EVENT_LABELS[e]}</span>
-                            </label>
+            {channels.data.channels.length === 0 ? (
+              <EmptyState title="No chats connected yet." />
+            ) : (
+              <div className="tablewrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th scope="col">Chat</th>
+                      <th scope="col">Events</th>
+                      <th scope="col">Status</th>
+                      <th scope="col"><span className="sr-only">Actions</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {channels.data.channels.map((c) => (
+                      <tr key={c.id}>
+                        <td>
+                          <div className="cname">{c.label || c.target}</div>
+                          <div className="cemail">{c.target}</div>
+                        </td>
+                        <td>
+                          {editable ? (
+                            <div className="controls">
+                              {channels.data.availableEvents.map((e) => (
+                                <label key={e} className="check-row inline">
+                                  <input
+                                    type="checkbox"
+                                    checked={c.events.includes(e)}
+                                    disabled={setChannelEvents.isPending}
+                                    onChange={(ev) => toggleChannelEvent(c, e, ev.target.checked)}
+                                  />
+                                  <span>{NOTIFICATION_EVENT_LABELS[e]}</span>
+                                </label>
+                              ))}
+                            </div>
+                          ) : c.events.map((e, i) => (
+                            <Fragment key={e}>
+                              {i > 0 && ' '}
+                              <span className="seg">{NOTIFICATION_EVENT_LABELS[e]}</span>
+                            </Fragment>
                           ))}
-                        </div>
-                      ) : c.events.map((e, i) => (
-                        <Fragment key={e}>
-                          {i > 0 && ' '}
-                          <span className="seg">{NOTIFICATION_EVENT_LABELS[e]}</span>
-                        </Fragment>
-                      ))}
-                    </td>
-                    <td>
-                      {c.lastError ? (
-                        <>
-                          <Pill tone="no">Error</Pill>
-                          <div className="cemail" title={c.lastError}>{c.lastError}</div>
-                        </>
-                      ) : c.active ? <Pill tone="ok">Active</Pill> : <Pill>Paused</Pill>}
-                    </td>
-                    <td>
-                      {editable && (
-                        <div className="controls">
-                          <button className="btn ghost small" disabled={testChannel.isPending} onClick={() => test(c)}>Test</button>
-                          <button className="btn ghost small" disabled={setChannelActive.isPending} onClick={() => setActive(c, !c.active)}>
-                            {c.active ? 'Pause' : 'Resume'}
-                          </button>
-                          <button className="btn ghost small" onClick={() => setRemoving(c)}>Remove</button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                        </td>
+                        <td>
+                          {c.lastError ? (
+                            <>
+                              <Pill tone="no">Error</Pill>
+                              <div className="cemail" title={c.lastError}>{c.lastError}</div>
+                            </>
+                          ) : c.active ? <Pill tone="ok">Active</Pill> : <Pill>Paused</Pill>}
+                        </td>
+                        <td>
+                          {editable && (
+                            <div className="controls">
+                              <button className="btn ghost small" disabled={testChannel.isPending} onClick={() => test(c)}>Test</button>
+                              <button className="btn ghost small" disabled={setChannelActive.isPending} onClick={() => setActive(c, !c.active)}>
+                                {c.active ? 'Pause' : 'Resume'}
+                              </button>
+                              <button className="btn ghost small" onClick={() => setRemoving(c)}>Remove</button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
-        {editable && (
-          <AddChannelForm
-            availableEvents={channels.data.availableEvents}
-            onCreate={(input) => createChannel.mutateAsync(input)}
-          />
-        )}
-      </div>
-
-      <Modal
-        open={removing !== null}
-        onClose={() => setRemoving(null)}
-        title={removing ? `Remove ${removing.label || removing.target}?` : ''}
-        subtitle="Notifications to this chat stop immediately. To restore it you have to paste the chat ID again."
-      >
-        {removing && (
-          <div className="modal-actions">
-            <button className="btn ghost" onClick={() => setRemoving(null)}>Keep</button>
-            <button className="btn danger" disabled={deleteChannel.isPending} onClick={() => confirmRemove(removing)}>
-              {deleteChannel.isPending ? 'Removing…' : 'Remove chat'}
-            </button>
+            {editable && (
+              <AddChannelForm
+                availableEvents={channels.data.availableEvents}
+                onCreate={(input) => createChannel.mutateAsync(input)}
+              />
+            )}
           </div>
-        )}
-      </Modal>
+
+          <Modal
+            open={removing !== null}
+            onClose={() => setRemoving(null)}
+            title={removing ? `Remove ${removing.label || removing.target}?` : ''}
+            subtitle="Notifications to this chat stop immediately. To restore it you have to paste the chat ID again."
+          >
+            {removing && (
+              <div className="modal-actions">
+                <button className="btn ghost" onClick={() => setRemoving(null)}>Keep</button>
+                <button className="btn danger" disabled={deleteChannel.isPending} onClick={() => confirmRemove(removing)}>
+                  {deleteChannel.isPending ? 'Removing…' : 'Remove chat'}
+                </button>
+              </div>
+            )}
+          </Modal>
+        </>
+      )}
     </div>
   );
 }
