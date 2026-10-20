@@ -72,6 +72,7 @@ const publicLink = (l) => ({
   archivedAt: l.archived_at, createdAt: l.created_at,
   accountId: l.account_id, account: l.account,
   agentId: l.created_by_agent_id, agent: l.agent,
+  approvedCount: l.approved_count != null ? l.approved_count : undefined,
   providerOutcome: l.provider_status ? {
     status: l.provider_status,
     replyCode: l.provider_reply_code,
@@ -170,7 +171,10 @@ router.get('/', requirePermission('links.view'), asyncHandler(async (req, res) =
           WHERE pl.workspace_id = $1
        )
        SELECT pl.*, pl.effective_status AS status,
-              a.name AS account, u.full_name AS agent
+              a.name AS account, u.full_name AS agent,
+              (SELECT COUNT(*)::int FROM payments p
+                 JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment' AND t.status = 'approved'
+                WHERE p.payment_link_id = pl.id AND p.archived_at IS NULL) AS approved_count
          FROM effective pl
          JOIN accounts a ON a.id = pl.account_id
          LEFT JOIN agents ag ON ag.id = pl.created_by_agent_id

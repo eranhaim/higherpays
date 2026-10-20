@@ -283,7 +283,9 @@ export default function LinksPage() {
     },
     {
       key: 'status', header: 'Status', sortKey: 'status',
-      render: (l) => <Pill tone={STATUS_TONE[l.status]}>{LINK_STATUS_LABELS[l.status]}</Pill>,
+      render: (l) => l.type === 'reusable'
+        ? <span>{l.approvedCount ?? 0} {(l.approvedCount ?? 0) === 1 ? 'payment' : 'payments'}</span>
+        : <Pill tone={STATUS_TONE[l.status]}>{LINK_STATUS_LABELS[l.status]}</Pill>,
     },
     { key: 'created', header: 'Created', sortKey: 'created', render: (l) => <DateCell ts={l.createdAt} /> },
   ];

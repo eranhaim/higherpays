@@ -57,6 +57,8 @@ export interface PaymentLink {
   account: string;
   agentId: string | null;
   agent: string | null;
+  /** Number of approved payments on this link (present on list responses). */
+  approvedCount?: number;
   providerOutcome: ProviderOutcome | null;
 }
 
