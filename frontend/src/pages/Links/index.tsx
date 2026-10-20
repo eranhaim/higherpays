@@ -60,8 +60,9 @@ const EVENT_LABELS: Record<LinkEventType, string> = {
 
 export default function LinksPage() {
   const can = useCan();
-  const { user, labels, isImpersonating } = useCurrentSession();
+  const { user, role, labels, isImpersonating } = useCurrentSession();
   const isPlatformAdmin = Boolean(user?.isPlatformAdmin) && !isImpersonating;
+  const isWorkspaceAdmin = role === 'workspace_owner' || role === 'workspace_admin';
   const { rateCard } = useRateCard();
   const { currency: reportingCurrency, currencies: knownCurrencies } = useReportingCurrency();
   const allowedCurrencies = knownCurrencies.filter((c) => c.enabled);
@@ -617,7 +618,7 @@ export default function LinksPage() {
                 <span className="fee-val">{fees ? formatLinkMoney(fees.net) : '—'}</span>
               </div>
             </>
-          ) : (
+          ) : isWorkspaceAdmin ? (
             <>
               <div className="fee-line">
                 <span>Customer pays</span>
@@ -634,6 +635,25 @@ export default function LinksPage() {
               <div className="fee-net">
                 <span>Net profit</span>
                 <span className="fee-val">{fees ? formatLinkMoney(fees.amount - fees.amount * fees.blendedPct / 100 - fees.fixed) : '—'}</span>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="fee-line">
+                <span>Customer pays</span>
+                <b className="fee-val">{fees ? formatLinkMoney(fees.amount) : '—'}</b>
+              </div>
+              <div className="fee-line">
+                <span>Platform fees</span>
+                <b className="fee-val">{fees ? formatLinkMoney(fees.blendedFee) : '—'}</b>
+              </div>
+              <div className="fee-line">
+                <span>Transaction fee</span>
+                <b className="fee-val">{fees ? formatLinkMoney(fees.fixed) : '—'}</b>
+              </div>
+              <div className="fee-net">
+                <span>Net profit</span>
+                <span className="fee-val">{fees ? formatLinkMoney(fees.net) : '—'}</span>
               </div>
             </>
           )}
