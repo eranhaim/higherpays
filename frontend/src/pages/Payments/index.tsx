@@ -111,7 +111,7 @@ type ReversalKind = 'refund' | 'chargeback';
 
 export default function PaymentsPage() {
   const can = useCan();
-  const { labels, user, activeWorkspaceId, isImpersonating } = useCurrentSession();
+  const { labels, user, role, activeWorkspaceId, isImpersonating } = useCurrentSession();
   const { rateCard } = useRateCard();
   const declineFee = rateCard.declineFee ?? 0;
   const canScope = can('data.view_all');
@@ -168,6 +168,7 @@ export default function PaymentsPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [enableTwoFactorOpen, setEnableTwoFactorOpen] = useState(false);
   const canViewFlow = Boolean(user?.isPlatformAdmin) && !isImpersonating;
+  const canViewFees = role === 'workspace_admin' || canViewFlow;
   const flowNeedsTwoFactor = canViewFlow && !user?.twoFactorEnabled;
   const flow = useQuery<PaymentFlow>({
     queryKey: ['payment-flow', activeWorkspaceId, flowPayment?.id],
@@ -185,7 +186,13 @@ export default function PaymentsPage() {
         ? <StatCard isUnknown={statsUnknown} label="Gross revenue" value={<Money amount={summary?.grossContent ?? 0} currency={summary?.currency} direction="in" />} sub="Before fees" />
         : <StatCard isUnknown={statsUnknown} label="Net revenue" value={<Money amount={summary?.afterFees ?? 0} currency={summary?.currency} direction="in" />} sub="Revenue after all fees — your pay is based on this" />,
     },
-    ...(canViewFlow ? [{
+    ...(canViewFees ? [{
+      key: 'netRevenue', label: 'Net revenue',
+      card: <StatCard isUnknown={statsUnknown} label="Net revenue"
+        value={<Money amount={(summary?.grossContent ?? 0) - (summary?.platformFees ?? 0)} currency={summary?.currency} direction="in" emphasis />}
+        sub={summary?.feesEstimated ? 'Revenue after estimated platform fees' : 'Revenue after platform fees'} />,
+    }] : []),
+    ...(canViewFees ? [{
       key: 'fees', label: 'Platform fees',
       card: <StatCard isUnknown={statsUnknown} label="Platform fees" value={<Money amount={summary?.platformFees ?? 0} currency={summary?.currency} direction="out" />}
         sub={`${rateCard.blended.toFixed(1)}%${summary?.feesEstimated ? ' · estimated' : ''}`} />,
