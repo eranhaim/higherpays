@@ -4,7 +4,7 @@ import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import {
   paymentsApi, accountsApi, agentsApi,
   type Payment, type ListPaymentsQuery, type Account, type Agent, type PaymentFilterOptions,
-  type ReassignInput, type PaymentsSummary,
+  type ReassignInput, type PaymentsSummary, type ReserveSummary,
 } from '../../api/endpoints';
 
 /** What the export dialog collects. Range bounds are ISO instants, '' for open. */
@@ -18,6 +18,7 @@ export interface ExportInput {
 export interface UsePaymentsDataResult {
   payments: Payment[];
   summary: PaymentsSummary | null;
+  reserveSummary: ReserveSummary | null;
   accounts: Account[];
   agents: Agent[];
   filterOptions: PaymentFilterOptions | null;
@@ -55,6 +56,12 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     queryKey: ['payments-summary', activeWorkspaceId, filters, currency],
     queryFn: () => paymentsApi.summary(filters, currency),
     enabled,
+  });
+  const reserve = useQuery({
+    queryKey: ['payments-reserve', activeWorkspaceId, currency],
+    queryFn: () => paymentsApi.reserveSummary(currency),
+    enabled: enabled && canScope,
+    staleTime: 60_000,
   });
   const filterOptions = useQuery({
     queryKey: ['payment-filter-options', activeWorkspaceId],
@@ -101,6 +108,7 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
   return {
     payments: payments.data?.pages.flatMap((p) => p.items) ?? [],
     summary: summary.data ?? null,
+    reserveSummary: reserve.data ?? null,
     accounts: accounts.data ?? [],
     agents: agents.data ?? [],
     filterOptions: filterOptions.data ?? null,

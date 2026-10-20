@@ -156,7 +156,7 @@ export default function PaymentsPage() {
   ]);
 
   const {
-    payments, summary, accounts, filterOptions,
+    payments, summary, reserveSummary, accounts, filterOptions,
     isLoading, isError, isSummaryLoading, isSummaryError, hasMore, isLoadingMore, loadMore, recordReversal, reassign, archivePayment, exportCsv,
   } = usePaymentsData(query, canScope);
 
@@ -206,6 +206,14 @@ export default function PaymentsPage() {
       key: 'checkoutFees', label: 'Checkout-fee revenue',
       card: <StatCard isUnknown={statsUnknown} label="Checkout-fee revenue"
         value={<Money amount={summary?.checkoutFeeRevenue ?? 0} currency={summary?.currency} direction="in" emphasis />} sub="HigherPays only" />,
+    }] : []),
+    ...(canScope && reserveSummary?.held != null ? [{
+      key: 'rollingReserve', label: 'Rolling reserve',
+      card: <StatCard isUnknown={statsUnknown} label="Rolling reserve"
+        value={<Money amount={reserveSummary.held} currency={reserveSummary.currency} />}
+        sub={reserveSummary.releasingSoon
+          ? `${formatMoney(reserveSummary.releasingSoon, reserveSummary.currency ?? '')} releasing in 30 days · Reserve: ${reserveSummary.reservePct}%`
+          : `Reserve: ${reserveSummary.reservePct}%`} />,
     }] : []),
     {
       key: 'approvalRate', label: 'Approval rate',

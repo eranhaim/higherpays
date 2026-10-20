@@ -170,6 +170,15 @@ export interface PaymentsSummary {
   currency: string;
 }
 
+/** Rolling reserve totals, workspace-wide. Empty when reserve is disabled or not visible. */
+export interface ReserveSummary {
+  reservePct?: number;
+  holdDays?: number;
+  held?: number;
+  releasingSoon?: number;
+  currency?: string;
+}
+
 export const PROVIDER_FEE_SOURCE_LABELS: Record<PaymentFlow['fees']['providerSource'], string> = {
   estimated: 'Estimated',
   actual: 'Actual',
@@ -281,6 +290,13 @@ export const paymentsApi = {
   },
 
   filters: () => api.get<PaymentFilterOptions>(workspacePath('/payments/filters')),
+
+  /** Rolling reserve totals for the workspace; empty object when disabled. */
+  reserveSummary(currency?: string) {
+    const qs = new URLSearchParams();
+    if (currency) qs.set('currency', currency);
+    return api.get<ReserveSummary>(workspacePath(`/payments/reserve-summary?${qs.toString()}`));
+  },
 
   /** The same filtered list, as a CSV download. */
   exportCsv(filters: ListPaymentsQuery = {}, options: ExportOptions = {}) {

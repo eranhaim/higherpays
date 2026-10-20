@@ -66,6 +66,8 @@ export interface RateCardInput {
   refundFee: number;
   chargebackFee: number;
   declineFee: number;
+  reservePct: number;
+  reserveReleaseDays: number;
   currency: string;
 }
 
@@ -124,13 +126,15 @@ export function usePlatformFees() {
       const reversalsChanged = !settlement
         || input.refundFee !== settlement.refundFee
         || input.chargebackFee !== settlement.chargebackFee
-        || input.declineFee !== settlement.declineFee;
+        || input.declineFee !== settlement.declineFee
+        || input.reservePct !== (settlement.reservePct ?? 0)
+        || input.reserveReleaseDays !== (settlement.reserveReleaseDays ?? 0);
       if (reversalsChanged) {
         await platformApi.setSettlementFee(id, {
           settlementFeePct: settlement?.settlementFeePct ?? 0,
           settlementFeeFlat: settlement?.settlementFeeFlat ?? 0,
-          reservePct: settlement?.reservePct ?? 0,
-          reserveReleaseDays: settlement?.reserveReleaseDays ?? 0,
+          reservePct: input.reservePct,
+          reserveReleaseDays: input.reserveReleaseDays,
           refundFee: input.refundFee, chargebackFee: input.chargebackFee, declineFee: input.declineFee,
         });
       }

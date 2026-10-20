@@ -268,6 +268,8 @@ function FeesCard({ rateCard, editable, detail, currencies, onSave }: {
     refund: String(settlement?.refundFee ?? rateCard.refundFee ?? 0),
     chargeback: String(settlement?.chargebackFee ?? rateCard.chargebackFee ?? 0),
     decline: String(settlement?.declineFee ?? rateCard.declineFee ?? 0),
+    reservePct: String(settlement?.reservePct ?? rateCard.reservePct ?? 0),
+    reserveDays: String(settlement?.reserveReleaseDays ?? rateCard.reserveReleaseDays ?? 0),
     currency: detail?.currency ?? '',
   };
   const [pspRate, setPspRate] = useState(saved.pspRate);
@@ -278,16 +280,21 @@ function FeesCard({ rateCard, editable, detail, currencies, onSave }: {
   const [refund, setRefund] = useState(saved.refund);
   const [chargeback, setChargeback] = useState(saved.chargeback);
   const [decline, setDecline] = useState(saved.decline);
+  const [reservePct, setReservePct] = useState(saved.reservePct);
+  const [reserveDays, setReserveDays] = useState(saved.reserveDays);
   const [currency, setCurrency] = useState(saved.currency);
   const [isSaving, setIsSaving] = useState(false);
 
-  const percentages = [pspRate, settlementPct, margin].map(Number);
+  const percentages = [pspRate, settlementPct, margin, reservePct].map(Number);
   const amounts = [fixed, checkout, refund, chargeback, decline].map(Number);
+  const reserveDaysNum = Number(reserveDays);
   const valid = amounts.every((v) => Number.isFinite(v) && v >= 0)
-    && percentages.every((v) => Number.isFinite(v) && v >= 0 && v <= 100);
+    && percentages.every((v) => Number.isFinite(v) && v >= 0 && v <= 100)
+    && Number.isFinite(reserveDaysNum) && reserveDaysNum >= 0 && Number.isInteger(reserveDaysNum);
   const dirty = pspRate !== saved.pspRate || settlementPct !== saved.settlementPct || margin !== saved.margin
     || fixed !== saved.fixed || checkout !== saved.checkout || refund !== saved.refund
-    || chargeback !== saved.chargeback || decline !== saved.decline || currency !== saved.currency;
+    || chargeback !== saved.chargeback || decline !== saved.decline || currency !== saved.currency
+    || reservePct !== saved.reservePct || reserveDays !== saved.reserveDays;
   useUnsavedChanges('platform-fees', editable && dirty);
   // Editing the three percentages changes the blended rate before it is saved,
   // so the row has to follow the form rather than the stored value. Rounded
@@ -300,17 +307,20 @@ function FeesCard({ rateCard, editable, detail, currencies, onSave }: {
   // sends them only to callers who see the whole workspace. Rendering a
   // withheld value as 0 would claim there is no chargeback fee, so the row is
   // dropped instead.
-  const reserve = rateCard.reservePct === undefined ? null
-    : rateCard.reservePct > 0 ? `${rateCard.reservePct}% · released after ${rateCard.reserveReleaseDays ?? 0} days` : 'none';
+  const reserveDisplay = !editable && rateCard.reservePct === undefined ? null
+    : !editable && rateCard.reservePct != null && rateCard.reservePct > 0
+      ? `${rateCard.reservePct}% · released after ${rateCard.reserveReleaseDays ?? 0} days`
+      : !editable ? 'none' : null;
 
   const save = async () => {
-    if (!valid) { toast('Percentages must be 0–100 and every fee an amount of 0 or more.'); return; }
+    if (!valid) { toast('Percentages must be 0–100, fees must be 0 or more, and hold days must be a whole number.'); return; }
     setIsSaving(true);
     try {
       await onSave({
         pspRatePct: Number(pspRate), settlementPct: Number(settlementPct), marginRatePct: Number(margin),
         fixedFee: Number(fixed), checkoutFee: Number(checkout),
         refundFee: Number(refund), chargebackFee: Number(chargeback), declineFee: Number(decline),
+        reservePct: Number(reservePct), reserveReleaseDays: Number(reserveDays),
         currency,
       });
       toast('Fees saved.');
@@ -396,10 +406,26 @@ function FeesCard({ rateCard, editable, detail, currencies, onSave }: {
         feeRow('fee-chargeback', 'Chargeback fee', 'Charged when a customer disputes a payment.', chargeback, setChargeback, rateCard.chargebackFee ?? 0)}
       {(editable || rateCard.declineFee !== undefined) &&
         feeRow('fee-decline', 'Decline fee', 'Charged on declined attempts.', decline, setDecline, rateCard.declineFee ?? 0)}
-      {reserve !== null && (
+      {editable ? (
+        <>
+          {pctRow('fee-reserve', 'Rolling reserve', 'Share of each payment held back to cover chargebacks. 0 disables.', reservePct, setReservePct)}
+          <div className="setrow">
+            <div>
+              <div className="k"><label htmlFor="fee-reserve-days">Reserve hold period</label></div>
+              <div className="d">Days each payment's reserve is held before release.</div>
+            </div>
+            <div className="controls">
+              <div className="pct-input">
+                <input id="fee-reserve-days" type="number" min={0} max={730} step={1} value={reserveDays} onChange={(e) => setReserveDays(e.target.value)} />
+                <span className="sub">days</span>
+              </div>
+            </div>
+          </div>
+        </>
+      ) : reserveDisplay !== null && (
         <div className="setrow">
           <div><div className="k">Rolling reserve</div><div className="d">Share of each payment held back and released later.</div></div>
-          <span className="mono-val">{reserve}</span>
+          <span className="mono-val">{reserveDisplay}</span>
         </div>
       )}
       {editable && (

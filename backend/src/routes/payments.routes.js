@@ -252,6 +252,55 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
   });
 }));
 
+// GET /reserve-summary — rolling reserve totals for the workspace.
+// Not filtered by the payment list's filters: the reserve is a workspace-wide
+// position, not a per-query figure. Only sent to callers who see the full
+// workspace (data.view_all).
+router.get('/reserve-summary', requirePermission('payments.view'), asyncHandler(async (req, res) => {
+  if (!hasPermission(req.access, 'data.view_all')) return res.json({});
+  const wsId = wid(req);
+  const currency = await currencies.resolveReportingCurrency(
+    { query: (...a) => query(...a) }, wsId, req.query.currency);
+  const row = (await query(
+    `WITH cfg AS (
+       SELECT reserve_pct, reserve_release_days
+         FROM effective_settlement_fees($1, now())
+     ),
+     paid AS (
+       SELECT t.gross, t.occurred_at
+         FROM transactions t
+         JOIN payments p ON p.id = t.payment_id
+        WHERE t.workspace_id = $1 AND t.type = 'payment' AND t.status = 'approved'
+          AND t.currency = $2 AND p.archived_at IS NULL
+          AND p.review_reason IS NULL
+     ),
+     released AS (
+       SELECT COALESCE(SUM(amount), 0) AS total
+         FROM reserve_releases
+        WHERE workspace_id = $1 AND currency = $2
+     )
+     SELECT cfg.reserve_pct,
+            cfg.reserve_release_days,
+            COALESCE(SUM(paid.gross * cfg.reserve_pct / 100)
+              FILTER (WHERE paid.occurred_at + (cfg.reserve_release_days || ' days')::interval > now()), 0)
+              - released.total AS held,
+            COALESCE(SUM(paid.gross * cfg.reserve_pct / 100)
+              FILTER (WHERE paid.occurred_at + (cfg.reserve_release_days || ' days')::interval > now()
+                        AND paid.occurred_at + (cfg.reserve_release_days || ' days')::interval <= now() + interval '30 days'), 0) AS releasing_soon
+       FROM paid, cfg, released
+      GROUP BY cfg.reserve_pct, cfg.reserve_release_days, released.total`,
+    [wsId, currency])).rows[0];
+  if (!row || Number(row.reserve_pct) === 0) return res.json({});
+  const held = Math.max(Number(row.held), 0);
+  res.json({
+    reservePct: Number(row.reserve_pct),
+    holdDays: Number(row.reserve_release_days),
+    held,
+    releasingSoon: Number(row.releasing_soon),
+    currency,
+  });
+}));
+
 // GET /filters — only values that appear in payments visible to this caller.
 // Keeping these options on the payments scope prevents a dropdown from
 // revealing a customer, creator, or category from another caller's data.
