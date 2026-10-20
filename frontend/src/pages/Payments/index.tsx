@@ -168,7 +168,7 @@ export default function PaymentsPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [enableTwoFactorOpen, setEnableTwoFactorOpen] = useState(false);
   const canViewFlow = Boolean(user?.isPlatformAdmin) && !isImpersonating;
-  const canViewFees = role === 'workspace_admin' || canViewFlow;
+  const canViewFees = role === 'workspace_admin' || role === 'workspace_owner' || canViewFlow;
   const flowNeedsTwoFactor = canViewFlow && !user?.twoFactorEnabled;
   const flow = useQuery<PaymentFlow>({
     queryKey: ['payment-flow', activeWorkspaceId, flowPayment?.id],
