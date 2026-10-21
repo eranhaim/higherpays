@@ -25,6 +25,13 @@ import {
 } from '../../api/endpoints';
 import { usePaymentsData, type ExportInput } from './usePaymentsData';
 
+/** Strip "MantaPay" from provider text so non-admin users never see the name. */
+function sanitizeProviderText(text: string): string {
+  const stripped = text.replace(/\bMantaPay\s*/gi, '');
+  if (!stripped) return text;
+  return stripped.charAt(0).toUpperCase() + stripped.slice(1);
+}
+
 // The provider reports actual per-transaction fees only through its Search API.
 // Until a sale has one, the fee and the net shown for it are the rate card's
 // expectation, so every surface that shows them says so.
@@ -62,7 +69,7 @@ function StatusPill({ payment }: { payment: Payment }) {
   return <Pill tone={payment.needsDetails ? 'warn' : STATUS_TONE[payment.status]}>{paymentStatusLabel(payment)}</Pill>;
 }
 
-function PaymentStatus({ payment }: { payment: Payment }) {
+function PaymentStatus({ payment, showProviderName }: { payment: Payment; showProviderName: boolean }) {
   if (payment.status === 'superseded') {
     return (
       <div>
@@ -72,7 +79,8 @@ function PaymentStatus({ payment }: { payment: Payment }) {
     );
   }
   if (payment.status !== 'failed') return <StatusPill payment={payment} />;
-  const reason = declineReasonLabel(payment.declineReason);
+  const raw = declineReasonLabel(payment.declineReason);
+  const reason = showProviderName ? raw : sanitizeProviderText(raw);
   const code = payment.declineCode ? ` (${payment.declineCode})` : '';
   return (
     <div>
@@ -168,6 +176,7 @@ export default function PaymentsPage() {
   const [exportOpen, setExportOpen] = useState(false);
   const [enableTwoFactorOpen, setEnableTwoFactorOpen] = useState(false);
   const canViewFlow = Boolean(user?.isPlatformAdmin) && !isImpersonating;
+  const showProviderName = canViewFlow;
   const canViewFees = role === 'workspace_admin' || role === 'workspace_owner' || canViewFlow;
   const flowNeedsTwoFactor = canViewFlow && !user?.twoFactorEnabled;
   const flow = useQuery<PaymentFlow>({
@@ -303,7 +312,7 @@ export default function PaymentsPage() {
       ),
     }] : []),
     {
-      key: 'status', header: 'Status', sortKey: 'status', render: (p) => <PaymentStatus payment={p} />,
+      key: 'status', header: 'Status', sortKey: 'status', render: (p) => <PaymentStatus payment={p} showProviderName={showProviderName} />,
     },
     {
       key: 'date', header: 'Date', sortKey: 'date', render: (p) => (
@@ -484,7 +493,7 @@ export default function PaymentsPage() {
         {detail && (
           <>
             <div className="modal-topline">
-              <PaymentStatus payment={detail} />
+              <PaymentStatus payment={detail} showProviderName={showProviderName} />
             </div>
             <DetailRow label="HigherPays Order">
               {detail.linkReference
@@ -497,7 +506,7 @@ export default function PaymentsPage() {
             )}
             {detail.status === 'failed' && (
               <>
-                <DetailRow label="Decline reason">{declineReasonLabel(detail.declineReason)}</DetailRow>
+                <DetailRow label="Decline reason">{showProviderName ? declineReasonLabel(detail.declineReason) : sanitizeProviderText(declineReasonLabel(detail.declineReason))}</DetailRow>
                 <DetailRow label="Decline code">{detail.declineCode ?? 'Unknown'}</DetailRow>
                 <DetailRow label="Decline code source">{declineSourceLabel(detail.declineCodeSource)}</DetailRow>
                 <DetailRow label="Decline reason source">{declineSourceLabel(detail.declineReasonSource)}</DetailRow>

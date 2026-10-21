@@ -359,10 +359,10 @@ router.get('/filters', requirePermission('payments.view'), asyncHandler(async (r
 // net it is the platform fee by subtraction. Net is the figure a scoped caller
 // is paid on, so it stays, and it is read off the ledger rather than
 // recalculated here.
-const exportColumns = (labels) => [
+const exportColumns = (labels, { showProviderName = false } = {}) => [
   { key: 'date', header: 'Date', value: (r) => new Date(r.occurred_at).toISOString() },
   { key: 'reference', header: 'HigherPays Order', value: (r) => r.link_reference },
-  { key: 'providerTransaction', header: 'MantaPay Transaction ID', value: (r) => r.provider_transaction_id },
+  { key: 'providerTransaction', header: showProviderName ? 'MantaPay Transaction ID' : 'Provider Transaction ID', value: (r) => r.provider_transaction_id },
   { key: 'status', header: 'Status', value: (r) => r.status },
   { key: 'gross', header: 'Gross Revenue', feesOnly: true, value: (r) => `${r.amount} ${r.currency}` },
   { key: 'fee', header: 'Platform Fee', feesOnly: true, value: (r) => r.platform_fee },
@@ -385,10 +385,12 @@ router.get('/export', requirePermission('payments.export'), asyncHandler(async (
   const workspace = (await query(
     'SELECT account_label, agent_label FROM workspaces WHERE id=$1',
     [wid(req)])).rows[0];
+  const showProviderName = !req.user.actorId && (await query(
+    'SELECT is_platform_admin FROM users WHERE id = $1', [req.user.id])).rows[0]?.is_platform_admin === true;
   const columnsForWorkspace = exportColumns({
     account: workspace.account_label,
     agent: workspace.agent_label,
-  });
+  }, { showProviderName });
   // No `columns` means every column the caller may see.
   const requested = typeof req.query.columns === 'string' && req.query.columns.trim()
     ? new Set(req.query.columns.split(',').map((k) => k.trim()))
