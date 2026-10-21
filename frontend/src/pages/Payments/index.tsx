@@ -203,16 +203,17 @@ export default function PaymentsPage() {
         value={<Money amount={summary?.netProfit ?? 0} currency={summary?.currency} direction="in" emphasis />}
         sub={summary?.feesEstimated ? 'Gross after estimated platform fees' : 'Gross after platform fees'} />,
     }] : []),
-    ...(canViewFlow && declineFee ? [{
+    ...(canViewFees && declineFee ? [{
       key: 'declineFees', label: 'Decline fees',
       card: <StatCard isUnknown={statsUnknown} label="Decline fees"
         value={<Money amount={(summary?.declinedCount ?? 0) * declineFee} currency={summary?.currency} direction="out" />}
         sub={`${summary?.declinedCount ?? 0} declined · ${declineFee.toFixed(2)} each`} />,
     }] : []),
-    ...(canViewFlow ? [{
-      key: 'checkoutFees', label: 'Checkout-fee revenue',
-      card: <StatCard isUnknown={statsUnknown} label="Checkout-fee revenue"
-        value={<Money amount={summary?.checkoutFeeRevenue ?? 0} currency={summary?.currency} direction="in" emphasis />} sub="HigherPays only" />,
+    ...(canViewFees ? [{
+      key: 'checkoutFees', label: 'Checkout fees',
+      card: <StatCard isUnknown={statsUnknown} label="Checkout fees"
+        value={<Money amount={summary?.checkoutFeeRevenue ?? 0} currency={summary?.currency} direction="out" />}
+        sub={`${rateCard.checkoutFee.toFixed(2)} per transaction · charged to customer`} />,
     }] : []),
     ...(canScope && reserveSummary?.held != null ? [{
       key: 'rollingReserve', label: 'Rolling reserve',
@@ -531,6 +532,9 @@ export default function PaymentsPage() {
                   direction={detail.reviewRequired ? undefined : 'in'} />
               )}
             </DetailRow>
+            {detail.checkoutFee != null && detail.checkoutFee > 0 && (
+              <DetailRow label="Checkout fee"><Money amount={detail.checkoutFee} currency={detail.currency} direction="out" /></DetailRow>
+            )}
             {detail.amount != null && detail.platformFee != null && (
               <>
                 <DetailRow label={detail.feeIsEstimate ? 'Platform fee · estimated' : 'Platform fee'}><Money amount={detail.platformFee} currency={detail.currency} direction="out" /></DetailRow>

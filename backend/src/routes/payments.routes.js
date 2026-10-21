@@ -68,6 +68,7 @@ function publicPayment(p, { seesFees, seesAgents }) {
     } : {}),
     ...(seesFees ? {
       amount: Number(p.amount),
+      checkoutFee: Number(p.surcharge || 0),
       platformFee: p.platform_fee == null ? null : Number(p.platform_fee),
       feeIsEstimate: p.fee_is_estimate !== false,
     } : {
@@ -240,6 +241,7 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
       netProfit: grossContent - platformFees,
       feesEstimated: out.row.estimated_fee_sales > 0,
       declinedCount: out.row.declined_count,
+      checkoutFeeRevenue: Number(out.row.checkout_fees),
     } : { afterFees }),
     approvedPayments: out.row.approved_payments,
     attempts: out.row.attempts,
@@ -247,7 +249,6 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
     detailsNeeded: out.row.details_needed,
     refundedCount: out.row.refunded_count,
     refundedAmount: Number(out.row.refunded_amount),
-    ...(out.platform ? { checkoutFeeRevenue: Number(out.row.checkout_fees) } : {}),
     currency: out.row.currency,
   });
 }));

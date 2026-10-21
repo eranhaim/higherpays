@@ -75,6 +75,8 @@ export interface Payment {
   linkType: LinkType | null;
   reviewRequired: boolean;
   reviewReason: 'duplicate_single_use_charge' | null;
+  /** The checkout fee charged to the customer, only sent to workspace-wide viewers. */
+  checkoutFee?: number;
   /** Present only on failed MantaPay attempts. */
   declineCode?: string | null;
   declineReason?: string | null;
