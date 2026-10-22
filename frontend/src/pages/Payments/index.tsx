@@ -218,7 +218,7 @@ export default function PaymentsPage() {
         value={<Money amount={(summary?.declinedCount ?? 0) * declineFee} currency={summary?.currency} direction="out" />}
         sub={`${summary?.declinedCount ?? 0} declined · ${declineFee.toFixed(2)} each`} />,
     }] : []),
-    ...(canViewFees ? [{
+    ...(canViewFlow ? [{
       key: 'checkoutFees', label: 'Checkout fees',
       card: <StatCard isUnknown={statsUnknown} label="Checkout fees"
         value={<Money amount={summary?.checkoutFeeRevenue ?? 0} currency={summary?.currency} direction="out" />}
@@ -541,10 +541,10 @@ export default function PaymentsPage() {
                   direction={detail.reviewRequired ? undefined : 'in'} />
               )}
             </DetailRow>
-            {detail.checkoutFee != null && detail.checkoutFee > 0 && (
+            {canViewFlow && detail.checkoutFee != null && detail.checkoutFee > 0 && (
               <DetailRow label="Checkout fee"><Money amount={detail.checkoutFee} currency={detail.currency} direction="out" /></DetailRow>
             )}
-            {detail.amount != null && detail.platformFee != null && (
+            {canViewFlow && detail.amount != null && detail.platformFee != null && (
               <>
                 <DetailRow label={detail.feeIsEstimate ? 'Platform fee · estimated' : 'Platform fee'}><Money amount={detail.platformFee} currency={detail.currency} direction="out" /></DetailRow>
                 <DetailRow label={detail.feeIsEstimate ? 'Net · estimated' : 'Net'}><Money amount={detail.amount - detail.platformFee} currency={detail.currency} direction="in" emphasis /></DetailRow>
