@@ -72,4 +72,17 @@ describe('session inactivity', () => {
     expect(onIdle).toHaveBeenCalledOnce();
     stop();
   });
+
+  it('reports real interactions but not activity after the session expires', () => {
+    const onIdle = vi.fn();
+    const onActivity = vi.fn();
+    const stop = startSessionIdleMonitor(onIdle, onActivity);
+    browser.dispatchEvent(new Event('pointerdown'));
+    expect(onActivity).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(SESSION_IDLE_MS);
+    browser.dispatchEvent(new Event('keydown'));
+    expect(onIdle).toHaveBeenCalledOnce();
+    expect(onActivity).toHaveBeenCalledOnce();
+    stop();
+  });
 });

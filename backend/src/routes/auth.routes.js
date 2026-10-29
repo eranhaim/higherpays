@@ -295,6 +295,20 @@ router.patch('/profile', requireAuth, rejectImpersonation, asyncHandler(async (r
 }));
 
 // POST /auth/refresh — rotate the refresh token, issue a new access token
+// A user interaction extends this session even if its access token has not
+// needed a refresh yet. Background page updates do not call this endpoint.
+router.post('/activity', requireAuth, asyncHandler(async (req, res) => {
+  if (req.user.sessionId && !req.user.actorId) {
+    await query(
+      `UPDATE refresh_tokens
+          SET expires_at = LEAST(now() + $2::double precision * interval '1 hour', absolute_expires_at)
+        WHERE family_id = $1 AND user_id = $3 AND revoked_at IS NULL
+          AND expires_at > now() AND absolute_expires_at > now()`,
+      [req.user.sessionId, config.sessionInactivityHours, req.user.id]);
+  }
+  res.status(204).end();
+}));
+
 router.post('/refresh', limitByIp, asyncHandler(async (req, res) => {
   const refreshToken = req.body?.refreshToken || cookieValue(req, REFRESH_COOKIE);
   if (!refreshToken) return res.status(400).json({ error: 'missing_token' });

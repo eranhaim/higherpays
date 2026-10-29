@@ -17,7 +17,7 @@ export function recordSessionActivity(now = Date.now()): void {
 }
 
 /** Sign out after six hours without interaction, including after a tab resumes. */
-export function startSessionIdleMonitor(onIdle: () => void): () => void {
+export function startSessionIdleMonitor(onIdle: () => void, onActivity: () => void = () => {}): () => void {
   let lastActivity = readActivity(Date.now()) ?? Date.now();
   let lastPointerWrite = 0;
   let timer: number | undefined;
@@ -38,6 +38,7 @@ export function startSessionIdleMonitor(onIdle: () => void): () => void {
   };
 
   const activity = (event: Event) => {
+    if (stopped) return;
     const now = Date.now();
     lastActivity = Math.max(lastActivity, readActivity(now) ?? 0);
     if (now - lastActivity >= SESSION_IDLE_MS) { check(); return; }
@@ -46,6 +47,7 @@ export function startSessionIdleMonitor(onIdle: () => void): () => void {
       recordSessionActivity(now);
       if (event.type === 'pointermove') lastPointerWrite = now;
     }
+    onActivity();
   };
 
   const onStorage = (event: StorageEvent) => {

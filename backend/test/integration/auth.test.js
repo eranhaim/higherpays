@@ -7,6 +7,7 @@ const { createTenant, tag, PASSWORD } = require('../helpers/tenant');
 const { hashPassword } = require('../../src/auth/passwords');
 const { hashRefreshToken } = require('../../src/auth/tokens');
 const { totp } = require('../../src/auth/totp');
+const config = require('../../src/config');
 
 test('POST /auth/login accepts correct credentials and lists the workspace with its labels', async () => {
   const t = await createTenant(app);
@@ -31,6 +32,25 @@ test('POST /auth/refresh rotates the refresh token and returns a new access toke
   assert.ok(res.body.accessToken);
   assert.notEqual(res.body.refreshToken, t.refreshToken);
   await request(app).get('/auth/me').set('Authorization', `Bearer ${res.body.accessToken}`).expect(200);
+});
+
+test('user activity extends the session idle window without passing its absolute limit', async () => {
+  const t = await createTenant(app);
+  const tokenHash = hashRefreshToken(t.refreshToken);
+  await pool.query("UPDATE refresh_tokens SET expires_at = now() + interval '1 minute' WHERE token_hash=$1", [tokenHash]);
+  await request(app).post('/auth/activity').set('Authorization', `Bearer ${t.accessToken}`).expect(204);
+  let row = (await pool.query(
+    'SELECT EXTRACT(EPOCH FROM (expires_at - now())) AS remaining FROM refresh_tokens WHERE token_hash=$1', [tokenHash])).rows[0];
+  assert.ok(Number(row.remaining) > config.sessionInactivityHours * 3600 - 10);
+
+  await pool.query(
+    `UPDATE refresh_tokens SET expires_at = now() + interval '1 minute',
+            absolute_expires_at = now() + ($2::double precision * interval '1 hour') WHERE token_hash=$1`,
+    [tokenHash, config.sessionInactivityHours / 2]);
+  await request(app).post('/auth/activity').set('Authorization', `Bearer ${t.accessToken}`).expect(204);
+  row = (await pool.query(
+    'SELECT expires_at = absolute_expires_at AS capped FROM refresh_tokens WHERE token_hash=$1', [tokenHash])).rows[0];
+  assert.equal(row.capped, true);
 });
 
 test('GET /auth/me requires a bearer token', async () => {

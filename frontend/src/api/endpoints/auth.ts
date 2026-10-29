@@ -36,6 +36,10 @@ export const authApi = {
       '/auth/refresh', refreshToken ? { refreshToken } : {}, { skipRefresh: true, skipWorkspace: true });
   },
 
+  activity() {
+    return api.post<void>('/auth/activity', {}, { skipWorkspace: true });
+  },
+
   logout(refreshToken: string | null) {
     return api.post<void>('/auth/logout', refreshToken ? { refreshToken } : {}, { skipWorkspace: true });
   },
