@@ -15,6 +15,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { AuthUser, AuthWorkspace } from '../api/types';
+import { recordSessionActivity } from '../lib/sessionIdle';
 
 interface AuthState {
   accessToken: string | null;
@@ -61,12 +62,14 @@ export const useAuthStore = create<AuthState>()(
       impersonationExpiresAt: null,
       originalWorkspaceId: null,
 
-      setSession: ({ accessToken, refreshToken, user, workspaces }) =>
+      setSession: ({ accessToken, refreshToken, user, workspaces }) => {
+        recordSessionActivity();
         set({
           accessToken, refreshToken, user, workspaces,
           originalSession: null, impersonationExpiresAt: null,
           originalWorkspaceId: null,
-        }),
+        });
+      },
 
       setTokens: (accessToken, refreshToken) =>
         set({ accessToken, refreshToken }),

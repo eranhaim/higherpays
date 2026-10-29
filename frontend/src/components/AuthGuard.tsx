@@ -5,12 +5,14 @@ import { authApi } from '../api/endpoints';
 import { useAuthStore, useIsAuthenticated } from '../store/auth';
 import { useSessionStore } from '../store/session';
 import { useWorkspaceUpdates } from '../hooks/useWorkspaceUpdates';
+import { useSessionIdle } from '../hooks/useSessionIdle';
 
 /**
  * Route guard. Sends unauthenticated visitors to `/login`. The original
  * location is preserved in router state so login can bounce them back.
  */
 export function AuthGuard() {
+  useSessionIdle();
   useWorkspaceUpdates();
   const isAuthenticated = useIsAuthenticated();
   const location = useLocation();
