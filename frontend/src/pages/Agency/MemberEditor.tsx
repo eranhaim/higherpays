@@ -106,9 +106,15 @@ export function MemberEditorModal({
       <div className="field">
         <label htmlFor="member-type">Membership type</label>
         <select
-          id="member-type" value={fixedRole ? fixedRole.value : role} disabled={fixedRole !== null}
+          id="member-type" value={member?.isPlatformAdmin ? 'platform_admin' : fixedRole ? fixedRole.value : role}
+          disabled={fixedRole !== null || isSaving || isElevating || Boolean(member?.isPlatformAdmin)}
           onChange={(event) => {
-            const next = event.target.value as PlainType;
+            const selected = event.target.value;
+            if (selected === 'platform_admin') {
+              void elevate(() => onSetPlatformAdmin(true));
+              return;
+            }
+            const next = selected as PlainType;
             setRole(next);
             setPermissions({ roleKey: null, permissions: onlyGrantable(ROLE_PERMISSIONS[next]) });
           }}
@@ -116,6 +122,7 @@ export function MemberEditorModal({
           {fixedRole ? <option value={fixedRole.value}>{fixedRole.label}</option> : null}
           <option value="member">Member</option>
           <option value="workspace_admin" disabled={!grantsAnything}>Admin</option>
+          {!creating && canSetPlatformAdmin && !fixedRole && <option value="platform_admin">Platform admin</option>}
         </select>
         {fixedRole && <p className="sub">This type comes from the person's profile. Changing it would strand their record, so it is fixed.</p>}
       </div>
@@ -131,7 +138,7 @@ export function MemberEditorModal({
         <input id="member-password-confirm" type="password" autoComplete="new-password" value={passwordConfirm} onChange={(event) => setPasswordConfirm(event.target.value)} />
       </div>
 
-      {!creating && (canTransferOwner || canSetPlatformAdmin) && (
+      {!creating && (canTransferOwner || (canSetPlatformAdmin && member.isPlatformAdmin)) && (
         <>
           <div className="sechead">Elevate</div>
           {canTransferOwner && (
@@ -143,18 +150,14 @@ export function MemberEditorModal({
               <button className="btn ghost small" disabled={isElevating} onClick={() => void elevate(onTransferOwner)}>Make owner</button>
             </div>
           )}
-          {canSetPlatformAdmin && (
+          {canSetPlatformAdmin && member.isPlatformAdmin && (
             <div className="settings-row">
               <div>
-                <div className="cname">{member.isPlatformAdmin ? 'HigherPays operator' : 'Make a HigherPays operator'}</div>
-                <div className="sub">An operator administers every agency on the platform, not just this one.</div>
+                <div className="cname">HigherPays platform admin</div>
+                <div className="sub">This account can administer every agency on the platform.</div>
               </div>
-              <button
-                className="btn ghost small" disabled={isElevating}
-                onClick={() => void elevate(() => onSetPlatformAdmin(!member.isPlatformAdmin))}
-              >
-                {member.isPlatformAdmin ? 'Remove operator' : 'Make operator'}
-              </button>
+              <button className="btn ghost small" disabled={isElevating}
+                onClick={() => void elevate(() => onSetPlatformAdmin(false))}>Remove platform admin</button>
             </div>
           )}
         </>
