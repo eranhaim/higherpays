@@ -49,6 +49,8 @@ export interface WorkspaceSettings {
   name: string;
   currency: string;
   status: string;
+  rollingReserveEnabled: boolean;
+  rollingReservePct: number;
   labels: WorkspaceLabels;
   minLinkAmount: number | null;
   maxLinkAmount: number | null;
@@ -65,6 +67,8 @@ export interface UpdateWorkspaceInput {
   agentLabel?: string;
   agentLabelPlural?: string;
   merchantId?: string | null;
+  rollingReserveEnabled?: boolean;
+  rollingReservePct?: number;
 }
 
 export interface LinkLimits {

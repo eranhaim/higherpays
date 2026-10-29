@@ -127,6 +127,8 @@ export default function PaymentsPage() {
   const canReverse = can('revenue.manage');
   const canArchive = can('archive.manage');
   const canExport = can('payments.export');
+  const canReleaseReserve = can('revenue.manage')
+    && (role === 'workspace_owner' || role === 'workspace_admin' || (user?.isPlatformAdmin && !isImpersonating));
 
   // Another page can point here at one payment ("complete the details for
   // this link"), so the search and the details-needed filter come from the URL.
@@ -164,7 +166,7 @@ export default function PaymentsPage() {
   ]);
 
   const {
-    payments, summary, reserveSummary, accounts, filterOptions,
+    payments, summary, reserveSummary, rollingReserveSummary, releaseRollingReserve, accounts, filterOptions,
     isLoading, isError, isSummaryLoading, isSummaryError, hasMore, isLoadingMore, loadMore, recordReversal, reassign, archivePayment, exportCsv,
   } = usePaymentsData(query, canScope);
 
@@ -198,8 +200,8 @@ export default function PaymentsPage() {
     ...(canViewFees ? [{
       key: 'netRevenue', label: 'Net revenue',
       card: <StatCard isUnknown={statsUnknown} label="Net revenue"
-        value={<Money amount={(summary?.grossContent ?? 0) - (summary?.platformFees ?? 0)} currency={summary?.currency} direction="in" emphasis />}
-        sub={summary?.feesEstimated ? 'Revenue after estimated platform fees' : 'Revenue after platform fees'} />,
+        value={<Money amount={summary?.netRevenue ?? 0} currency={summary?.currency} direction="in" emphasis />}
+        sub={summary?.feesEstimated ? 'After estimated fees and rolling reserve' : 'After all fees and rolling reserve'} />,
     }] : []),
     ...(canViewFees ? [{
       key: 'fees', label: 'Platform fees',
@@ -225,12 +227,32 @@ export default function PaymentsPage() {
         sub={`${rateCard.checkoutFee.toFixed(2)} per transaction · charged to customer`} />,
     }] : []),
     ...(canScope && reserveSummary?.held != null ? [{
-      key: 'rollingReserve', label: 'Rolling reserve',
-      card: <StatCard isUnknown={statsUnknown} label="Rolling reserve"
+      key: 'providerReserve', label: 'MantaPay reserve',
+      card: <StatCard isUnknown={statsUnknown} label="MantaPay reserve"
         value={<Money amount={reserveSummary.held} currency={reserveSummary.currency} />}
         sub={reserveSummary.releasingSoon
           ? `${formatMoney(reserveSummary.releasingSoon, reserveSummary.currency ?? '')} releasing in 30 days · Reserve: ${reserveSummary.reservePct}%`
           : `Reserve: ${reserveSummary.reservePct}%`} />,
+    }] : []),
+    ...(canScope && rollingReserveSummary && (rollingReserveSummary.enabled || rollingReserveSummary.currentHeld > 0 || rollingReserveSummary.reserved > 0 || rollingReserveSummary.released > 0) ? [{
+      key: 'rollingReserve', label: 'Agency rolling reserve',
+      card: <StatCard isUnknown={statsUnknown} label="Agency rolling reserve"
+        value={<Money amount={rollingReserveSummary.held} currency={rollingReserveSummary.currency} />}
+        sub={<>
+          <span>Held at range end · {formatMoney(rollingReserveSummary.reserved, rollingReserveSummary.currency)} added and {formatMoney(rollingReserveSummary.released, rollingReserveSummary.currency)} released in range · {rollingReserveSummary.reservePct}%</span>
+          {canReleaseReserve && rollingReserveSummary.currentHeld > 0 && (
+            <button className="btn" style={{ marginTop: 8 }} onClick={async () => {
+              const amount = rollingReserveSummary.currentHeld;
+              if (!window.confirm(`Release ${formatMoney(amount, rollingReserveSummary.currency)} to general revenue now?`)) return;
+              try {
+                const result = await releaseRollingReserve({ amount, currency: rollingReserveSummary.currency });
+                toast(`${formatMoney(Number((result as { amount: number }).amount), rollingReserveSummary.currency)} released to general revenue.`);
+              } catch (err) {
+                toast(err instanceof Error ? err.message : 'Could not release the rolling reserve.');
+              }
+            }}>Release available funds</button>
+          )}
+        </>} />,
     }] : []),
     {
       key: 'approvalRate', label: 'Approval rate',

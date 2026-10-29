@@ -230,6 +230,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
       "SELECT 1 FROM revenue_entries WHERE transaction_id = $1 AND entry_type = 'sale'", [tx.id])).rows[0];
     if (!already) {
       await client.query('SELECT fn_post_sale($1)', [tx.id]);
+      await client.query('SELECT fn_hold_rolling_reserve($1)', [tx.id]);
       newSale = true;
     }
   }
@@ -353,6 +354,7 @@ async function recordPaymentReversal(client, workspaceId, {
   const fn = kind === 'refund' ? 'fn_post_refund' : 'fn_post_chargeback';
   const status = kind === 'refund' ? 'refunded' : 'charged_back';
   await client.query(`SELECT * FROM ${fn}($1)`, [p.sale_tx_id]);
+  await client.query('SELECT fn_reverse_rolling_reserve($1)', [p.sale_tx_id]);
   // Aggregate all reversal entries (1 for normal links, N for multi-creator
   // marketplace orders).
   const entry = (await client.query(

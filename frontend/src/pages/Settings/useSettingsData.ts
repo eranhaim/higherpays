@@ -40,6 +40,8 @@ export function useGeneralSettings() {
       const auth = useAuthStore.getState();
       auth.setWorkspaces(auth.workspaces.map((w) => w.id === updated.id ? { ...w, name: updated.name, labels: updated.labels } : w));
       qc.invalidateQueries({ queryKey: ['workspace', activeWorkspaceId] });
+      qc.invalidateQueries({ queryKey: ['payments-summary', activeWorkspaceId] });
+      qc.invalidateQueries({ queryKey: ['agency-rolling-reserve', activeWorkspaceId] });
     },
   });
 

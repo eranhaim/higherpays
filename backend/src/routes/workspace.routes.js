@@ -21,6 +21,8 @@ const publicWorkspace = (w) => ({
   labels: { account: w.account_label, accounts: w.account_label_plural, agent: w.agent_label, agents: w.agent_label_plural },
   minLinkAmount: w.min_link_amount == null ? null : Number(w.min_link_amount),
   maxLinkAmount: w.max_link_amount == null ? null : Number(w.max_link_amount),
+  rollingReserveEnabled: !!w.rolling_reserve_enabled,
+  rollingReservePct: n(w.rolling_reserve_pct),
   // The agency's own MantaPay identity: the MID it sends on every link, and
   // the endpoint MantaPay must be told to notify.
   merchantId: w.merchant_id,
@@ -36,6 +38,15 @@ router.get('/', requirePermission('settings.view'), asyncHandler(async (req, res
 // PATCH /workspaces/:id  { name?, accountLabel?, …, merchantId? }
 router.patch('/', requirePermission('settings.edit'), asyncHandler(async (req, res) => {
   const body = req.body || {};
+  if ('rollingReserveEnabled' in body || 'rollingReservePct' in body) {
+    if (req.user?.actorId) return res.status(403).json({ error: 'impersonation_not_allowed' });
+    const role = req.access?.role;
+    const platform = !req.user?.actorId && (await query(
+      'SELECT is_platform_admin FROM users WHERE id=$1', [uid(req)])).rows[0]?.is_platform_admin === true;
+    if (!platform && !['workspace_owner', 'workspace_admin'].includes(role)) {
+      return res.status(403).json({ error: 'workspace_admin_required' });
+    }
+  }
   const sets = [], vals = [];
   if ('name' in body) {
     if (!isStr(body.name, 120)) return badRequest(res, 'name is required', ['name']);
@@ -54,10 +65,36 @@ router.patch('/', requirePermission('settings.edit'), asyncHandler(async (req, r
     if (!isStr(body[key], 40)) return badRequest(res, `${key} must be 1-40 characters`, [key]);
     vals.push(body[key].trim()); sets.push(`${col} = $${vals.length}`);
   }
+  if ('rollingReserveEnabled' in body) {
+    if (typeof body.rollingReserveEnabled !== 'boolean') {
+      return badRequest(res, 'rollingReserveEnabled must be true or false', ['rollingReserveEnabled']);
+    }
+    vals.push(body.rollingReserveEnabled); sets.push(`rolling_reserve_enabled = $${vals.length}`);
+  }
+  if ('rollingReservePct' in body) {
+    const pct = Number(body.rollingReservePct);
+    if (typeof body.rollingReservePct !== 'number' || !Number.isFinite(pct) || pct < 0 || pct > 100) {
+      return badRequest(res, 'rollingReservePct must be 0..100', ['rollingReservePct']);
+    }
+    vals.push(pct); sets.push(`rolling_reserve_pct = $${vals.length}`);
+  }
+  const enabled = 'rollingReserveEnabled' in body ? body.rollingReserveEnabled : null;
+  const rate = 'rollingReservePct' in body ? body.rollingReservePct : null;
+  const current = enabled === null || rate === null
+    ? (await query('SELECT rolling_reserve_enabled, rolling_reserve_pct FROM workspaces WHERE id=$1', [wid(req)])).rows[0]
+    : null;
+  const desiredEnabled = enabled === null ? current.rolling_reserve_enabled : enabled;
+  const desiredPct = rate === null ? n(current.rolling_reserve_pct) : rate;
+  if (desiredEnabled === true && desiredPct === 0) {
+    return badRequest(res, 'rollingReservePct must be above 0 when rolling reserve is enabled', ['rollingReservePct']);
+  }
   if (!sets.length) return badRequest(res, 'no updatable fields provided');
   vals.push(wid(req));
   const w = (await query(`UPDATE workspaces SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING *`, vals)).rows[0];
-  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'workspace.update', metadata: body });
+  await audit({
+    workspaceId: wid(req), actorUserId: uid(req), action: 'workspace.update',
+    metadata: Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'merchantId')),
+  });
   res.json(publicWorkspace(w));
 }));
 

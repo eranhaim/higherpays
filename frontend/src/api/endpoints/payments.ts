@@ -147,11 +147,13 @@ export interface PaymentFlow {
 export interface PaymentsSummary {
   /** Only sent to callers with workspace-wide data access. */
   grossContent?: number;
+  /** After payment fees and the reserve accruals in the selected range. */
+  netRevenue?: number;
   /** Sent to limited-scope users instead of gross: the net revenue after all fees. */
   afterFees?: number;
   /** Only sent to callers with workspace-wide data access. */
   platformFees?: number;
-  /** Only sent to callers with workspace-wide data access. */
+  /** Only sent to HigherPays platform administrators. */
   netProfit?: number;
   /**
    * Workspace-wide access only. True when any matching sale still carries an
@@ -179,6 +181,20 @@ export interface ReserveSummary {
   held?: number;
   releasingSoon?: number;
   currency?: string;
+}
+
+/** The agency-managed reserve, filtered to the selected payment date range. */
+export interface RollingReserveSummary {
+  enabled: boolean;
+  reservePct: number;
+  /** Balance as of the end of the selected date range. */
+  held: number;
+  /** Balance available to release now. */
+  currentHeld: number;
+  reserved: number;
+  released: number;
+  reversed: number;
+  currency: string;
 }
 
 export const PROVIDER_FEE_SOURCE_LABELS: Record<PaymentFlow['fees']['providerSource'], string> = {
@@ -298,6 +314,16 @@ export const paymentsApi = {
     const qs = new URLSearchParams();
     if (currency) qs.set('currency', currency);
     return api.get<ReserveSummary>(workspacePath(`/payments/reserve-summary?${qs.toString()}`));
+  },
+
+  rollingReserveSummary(filters: ListPaymentsQuery = {}, currency?: string) {
+    const qs = filterParams(filters);
+    if (currency) qs.set('currency', currency);
+    return api.get<RollingReserveSummary>(workspacePath(`/payments/rolling-reserve?${qs.toString()}`));
+  },
+
+  releaseRollingReserve(input: { amount?: number; currency: string; note?: string }) {
+    return api.post<{ amount: number; currency: string }>(workspacePath('/payments/rolling-reserve/release'), input);
   },
 
   /** The same filtered list, as a CSV download. */

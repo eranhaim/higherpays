@@ -4,7 +4,7 @@ import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import {
   paymentsApi, accountsApi, agentsApi,
   type Payment, type ListPaymentsQuery, type Account, type Agent, type PaymentFilterOptions,
-  type ReassignInput, type PaymentsSummary, type ReserveSummary,
+  type ReassignInput, type PaymentsSummary, type ReserveSummary, type RollingReserveSummary,
 } from '../../api/endpoints';
 
 /** What the export dialog collects. Range bounds are ISO instants, '' for open. */
@@ -19,6 +19,7 @@ export interface UsePaymentsDataResult {
   payments: Payment[];
   summary: PaymentsSummary | null;
   reserveSummary: ReserveSummary | null;
+  rollingReserveSummary: RollingReserveSummary | null;
   accounts: Account[];
   agents: Agent[];
   filterOptions: PaymentFilterOptions | null;
@@ -35,6 +36,7 @@ export interface UsePaymentsDataResult {
   reassign: (id: string, input: ReassignInput) => Promise<void>;
   archivePayment: (id: string) => Promise<void>;
   exportCsv: (input: ExportInput) => Promise<void>;
+  releaseRollingReserve: (input: { amount?: number; currency: string; note?: string }) => Promise<unknown>;
 }
 
 export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): UsePaymentsDataResult {
@@ -63,6 +65,11 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     enabled: enabled && canScope,
     staleTime: 60_000,
   });
+  const rollingReserve = useQuery({
+    queryKey: ['agency-rolling-reserve', activeWorkspaceId, filters.from, filters.to, currency],
+    queryFn: () => paymentsApi.rollingReserveSummary(filters, currency),
+    enabled: enabled && canScope,
+  });
   const filterOptions = useQuery({
     queryKey: ['payment-filter-options', activeWorkspaceId],
     queryFn: () => paymentsApi.filters(),
@@ -88,6 +95,7 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     queryClient.invalidateQueries({ queryKey: ['links-summary', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['customers', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['payouts-breakdown', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['agency-rolling-reserve', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['analytics', activeWorkspaceId] });
   };
 
@@ -104,11 +112,17 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     mutationFn: (id: string) => paymentsApi.archive(id),
     onSuccess: invalidate,
   });
+  const releaseRollingReserve = useMutation({
+    mutationFn: (input: { amount?: number; currency: string; note?: string }) => paymentsApi.releaseRollingReserve(input),
+    onSuccess: invalidate,
+  });
 
   return {
     payments: payments.data?.pages.flatMap((p) => p.items) ?? [],
     summary: summary.data ?? null,
     reserveSummary: reserve.data ?? null,
+    rollingReserveSummary: rollingReserve.data ?? null,
+    releaseRollingReserve: (input) => releaseRollingReserve.mutateAsync(input),
     accounts: accounts.data ?? [],
     agents: agents.data ?? [],
     filterOptions: filterOptions.data ?? null,

@@ -118,6 +118,8 @@ const Workspace = entity('workspaces', {
     name:              text().notNull(),
     currency:          char(3).notNull().default("'EUR'"),
     status:            enumOf(WORKSPACE_STATUS).notNull().default("'active'"),
+    rollingReserveEnabled: bool().notNull().default('false'),
+    rollingReservePct: percent().notNull().default('0'),
 
     merchantId:        text(),                 // the MID at MantaPay
     providerConfigRef: text(),                 // secret-store key name, never the secret
@@ -564,6 +566,31 @@ const RevenueEntry = entity('revenue_entries', {
   timestamps: 'created',
 });
 
+// Append-only agency-level reserve movements, distinct from the MantaPay
+// settlement reserve. Releases are allocated to the original hold so refunds
+// can unwind only the still-held amount.
+const RollingReserveEntry = entity('rolling_reserve_entries', {
+  fields: {
+    id: uuid().primaryKey(),
+    workspaceId: uuid().references('workspaces').notNull(),
+    transactionId: uuid().references('transactions').notNull(),
+    entryType: text().notNull(),
+    amount: numeric(16, 2).notNull(),
+    ratePct: percent(),
+    currency: char(3).notNull(),
+    releaseBatchId: uuid(),
+    note: text(),
+    createdByUserId: uuid().references('users', 'SET NULL'),
+  },
+  indexes: [
+    { columns: ['transactionId'], where: "entry_type = 'hold'", unique: true },
+    { columns: ['transactionId'], where: "entry_type = 'reversal'", unique: true },
+    ['workspaceId', 'currency', 'createdAt'],
+    ['transactionId', 'entryType'],
+  ],
+  timestamps: 'created',
+});
+
 // What one payee is owed for one period.
 const Payout = entity('payouts', {
   fields: {
@@ -766,7 +793,7 @@ module.exports = {
   // payment flow
   PaymentLink, PaymentLinkEvent, Payment, Transaction,
   // revenue
-  RevenueRule, RevenueEntry, Payout,
+  RevenueRule, RevenueEntry, RollingReserveEntry, Payout,
   // settlement
   SettlementFeeConfig, Settlement,
   // operations

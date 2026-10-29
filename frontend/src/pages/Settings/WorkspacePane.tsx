@@ -13,8 +13,9 @@ import { useGeneralSettings, usePlatformFees, useWorkspaceCurrencies, type RateC
 export function WorkspacePane() {
   const can = useCan();
   const editable = can('settings.edit');
-  const { activeWorkspaceId, user, isImpersonating } = useCurrentSession();
+  const { activeWorkspaceId, user, role, isImpersonating } = useCurrentSession();
   const isPlatformAdmin = Boolean(user?.isPlatformAdmin) && !isImpersonating;
+  const canManageRollingReserve = role === 'workspace_owner' || role === 'workspace_admin' || isPlatformAdmin;
   const { rateCard, isLoading: rateCardLoading, isError: rateCardError } = useRateCard();
   const { workspace, linkLimits, update, saveLinkLimits } = useGeneralSettings();
   const currencies = useWorkspaceCurrencies();
@@ -31,6 +32,8 @@ export function WorkspacePane() {
         editable={editable} workspace={workspace.data}
         currencies={currencies.query.data} onSaveCurrencies={(list) => currencies.save.mutateAsync(list)}
         onSave={(input) => update.mutateAsync(input)} />
+      <RollingReserveSettingsCard key={`rolling-reserve-${activeWorkspaceId}`} editable={editable && canManageRollingReserve} workspace={workspace.data}
+        onSave={(input) => update.mutateAsync(input)} />
       {isPlatformAdmin && (
         <FeesCard key={`fees-${activeWorkspaceId}-${platformFees.detail.data?.feeHistory[0]?.effectiveFrom ?? 'none'}`}
           rateCard={rateCard} editable={platformFees.canEdit && platformFees.detail.isSuccess}
@@ -45,6 +48,56 @@ export function WorkspacePane() {
         <MantaPayCard key={`mp-${activeWorkspaceId}`} editable={editable} workspace={workspace.data}
           onSave={(merchantId) => update.mutateAsync({ merchantId })} />
       )}
+    </div>
+  );
+}
+
+function RollingReserveSettingsCard({ editable, workspace, onSave }: {
+  editable: boolean;
+  workspace: WorkspaceSettings;
+  onSave: (input: { rollingReserveEnabled: boolean; rollingReservePct: number }) => Promise<unknown>;
+}) {
+  const [enabled, setEnabled] = useState(workspace.rollingReserveEnabled);
+  const [pct, setPct] = useState(String(workspace.rollingReservePct));
+  const [isSaving, setIsSaving] = useState(false);
+  const value = Number(pct);
+  const valid = Number.isFinite(value) && value >= 0 && value <= 100 && (!enabled || value > 0);
+  const dirty = enabled !== workspace.rollingReserveEnabled || value !== workspace.rollingReservePct;
+  useUnsavedChanges('rolling-reserve-settings', dirty);
+
+  const save = async () => {
+    if (!valid) return;
+    setIsSaving(true);
+    try {
+      await onSave({ rollingReserveEnabled: enabled, rollingReservePct: value });
+      toast('Rolling reserve settings saved.');
+    } catch (err) {
+      toast(errorDetail(err, 'Could not save rolling reserve settings.'));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="sechead">Agency rolling reserve</div>
+      <p className="sub">Hold back a percentage of each new payment’s gross from general revenue. The held balance is tracked separately and released by an agency admin or platform admin.</p>
+      <div className="setrow">
+        <div>
+          <div className="k">Reserve</div>
+          <div className="d">{editable ? 'Applies to new payments only; changing the rate does not reprice existing holds.' : 'Applies to new payments only.'}</div>
+        </div>
+        {editable
+          ? <label className="check-row"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled</label>
+          : <span className="mono-val">{enabled ? 'Enabled' : 'Off'}</span>}
+      </div>
+      <div className="setrow">
+        <div><div className="k">Gross held back</div><div className="d">Set 10% for Marco’s requested starting rate. The platform admin can adjust this for the selected agency.</div></div>
+        {editable
+          ? <div className="controls"><input aria-label="Rolling reserve percentage" type="number" min="0" max="100" step="0.1" value={pct} onChange={(e) => setPct(e.target.value)} /><span>%</span></div>
+          : <span className="mono-val">{workspace.rollingReservePct}%</span>}
+      </div>
+      {editable && <div className="actions-right"><button className="btn" onClick={save} disabled={isSaving || !dirty || !valid}>{isSaving ? 'Saving…' : 'Save reserve'}</button></div>}
     </div>
   );
 }
@@ -408,7 +461,7 @@ function FeesCard({ rateCard, editable, detail, currencies, onSave }: {
         feeRow('fee-decline', 'Decline fee', 'Charged on declined attempts.', decline, setDecline, rateCard.declineFee ?? 0)}
       {editable ? (
         <>
-          {pctRow('fee-reserve', 'Rolling reserve', 'Share of each payment held back to cover chargebacks. 0 disables.', reservePct, setReservePct)}
+          {pctRow('fee-reserve', 'MantaPay reserve', 'Share MantaPay holds under settlement terms to cover chargebacks. 0 disables.', reservePct, setReservePct)}
           <div className="setrow">
             <div>
               <div className="k"><label htmlFor="fee-reserve-days">Reserve hold period</label></div>
@@ -424,7 +477,7 @@ function FeesCard({ rateCard, editable, detail, currencies, onSave }: {
         </>
       ) : reserveDisplay !== null && (
         <div className="setrow">
-          <div><div className="k">Rolling reserve</div><div className="d">Share of each payment held back and released later.</div></div>
+          <div><div className="k">MantaPay reserve</div><div className="d">Share MantaPay holds under settlement terms.</div></div>
           <span className="mono-val">{reserveDisplay}</span>
         </div>
       )}
