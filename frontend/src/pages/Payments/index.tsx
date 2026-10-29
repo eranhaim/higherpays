@@ -227,8 +227,8 @@ export default function PaymentsPage() {
         sub={`${rateCard.checkoutFee.toFixed(2)} per transaction · charged to customer`} />,
     }] : []),
     ...(canScope && reserveSummary?.held != null ? [{
-      key: 'providerReserve', label: 'MantaPay reserve',
-      card: <StatCard isUnknown={statsUnknown} label="MantaPay reserve"
+      key: 'providerReserve', label: 'Rolling reserve',
+      card: <StatCard isUnknown={statsUnknown} label="Rolling reserve"
         value={<Money amount={reserveSummary.held} currency={reserveSummary.currency} />}
         sub={reserveSummary.releasingSoon
           ? `${formatMoney(reserveSummary.releasingSoon, reserveSummary.currency ?? '')} releasing in 30 days · Reserve: ${reserveSummary.reservePct}%`

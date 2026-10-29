@@ -99,11 +99,17 @@ export default function AgencyPage() {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'' | MemberType | 'invited'>('');
   const [stateFilter, setStateFilter] = useState<'' | RowState | 'all'>('');
-  const [sort, setSort] = useState<SortState>({ key: 'name', dir: 'asc' });
+  const [sort, setSort] = useState<SortState>({ key: 'sales', dir: 'desc' });
+  const effectiveSort: SortState = sort.key === 'sales' && !can('data.view_all')
+    ? { key: 'name', dir: 'asc' } : sort;
   const toggleSort = (key: string) =>
-    setSort((current) => (current.key === key
-      ? { key, dir: current.dir === 'asc' ? 'desc' : 'asc' }
-      : { key, dir: 'asc' }));
+    setSort((current) => {
+      const active = current.key === 'sales' && !can('data.view_all')
+        ? { key: 'name', dir: 'asc' } : current;
+      return active.key === key
+        ? { key, dir: active.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: key === 'sales' ? 'desc' : 'asc' };
+    });
 
   const salesRange = useMemo(() => rangeFor(period), [period]);
   const data = useAgencyData(salesRange, canManageCreators || canManageAgents);
@@ -213,12 +219,11 @@ export default function AgencyPage() {
     .filter((member) => !query
       || `${member.name} ${member.email} ${member.accountName ?? ''}`.toLowerCase().includes(query));
 
-  // The server returns the whole workspace at once, so the order is decided
-  // here. Invites lead: a pending one is work waiting on somebody.
+  // Sort members by the selected column and keep unaccepted invites below them.
   const rows: Row[] = [
-    ...inviteRows,
-    ...sortRows(matchingMembers, sort, SORT_VALUES)
+    ...sortRows(matchingMembers, effectiveSort, SORT_VALUES)
       .map((member): Row => ({ kind: 'member', key: member.userId, member })),
+    ...inviteRows,
   ];
 
   const memberColumn: Column<Row> = {
@@ -448,7 +453,7 @@ export default function AgencyPage() {
         rowClassName={(row) => row.kind === 'invite'
           ? 'memberrow memberrow-invited'
           : `memberrow memberrow-${memberType(row.member)}`}
-        sort={sort}
+        sort={effectiveSort}
         onSort={toggleSort}
         isLoading={isLoading}
         mobileSummary={(row, { expanded, toggle }) => (

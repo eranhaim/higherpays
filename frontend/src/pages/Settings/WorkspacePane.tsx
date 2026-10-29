@@ -461,7 +461,7 @@ function FeesCard({ rateCard, editable, detail, currencies, onSave }: {
         feeRow('fee-decline', 'Decline fee', 'Charged on declined attempts.', decline, setDecline, rateCard.declineFee ?? 0)}
       {editable ? (
         <>
-          {pctRow('fee-reserve', 'MantaPay reserve', 'Share MantaPay holds under settlement terms to cover chargebacks. 0 disables.', reservePct, setReservePct)}
+          {pctRow('fee-reserve', 'Rolling reserve', 'Share held under provider settlement terms to cover chargebacks. 0 disables.', reservePct, setReservePct)}
           <div className="setrow">
             <div>
               <div className="k"><label htmlFor="fee-reserve-days">Reserve hold period</label></div>
@@ -477,7 +477,7 @@ function FeesCard({ rateCard, editable, detail, currencies, onSave }: {
         </>
       ) : reserveDisplay !== null && (
         <div className="setrow">
-          <div><div className="k">MantaPay reserve</div><div className="d">Share MantaPay holds under settlement terms.</div></div>
+          <div><div className="k">Rolling reserve</div><div className="d">Share held under provider settlement terms.</div></div>
           <span className="mono-val">{reserveDisplay}</span>
         </div>
       )}
