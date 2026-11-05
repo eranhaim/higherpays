@@ -5,7 +5,7 @@
 //   - reconciler: POST /workspaces/:id/links/reconcile  (pull, when a webhook
 //                 was missed)
 //
-// Both are idempotent by (workspace_id, provider id) and both post the sale to
+// Both are idempotent by (workspace_id, order, provider id) and both post the sale to
 // the ledger exactly once, however many times the same event is re-observed.
 //
 // Does NOT open its own transaction: the caller passes a client from
@@ -108,7 +108,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
        (workspace_id, account_id, payment_link_id, agent_id,
         amount, currency, status, payment_method, provider_payment_id, review_reason, occurred_at)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())
-     ON CONFLICT (workspace_id, provider_payment_id) DO UPDATE
+     ON CONFLICT (workspace_id, payment_link_id, provider_payment_id) DO UPDATE
        SET status = CASE
          WHEN payments.status = 'refunded' THEN 'refunded'
          WHEN payments.status = 'paid' OR EXCLUDED.status = 'paid' THEN 'paid'
@@ -127,7 +127,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
         provider_transaction_id, provider_decline_code, provider_decline_reason,
         provider_decline_code_source, provider_decline_reason_source, occurred_at, raw_payload)
      VALUES ($1,$2,'payment',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now(),$15)
-     ON CONFLICT (workspace_id, provider_transaction_id) DO UPDATE
+     ON CONFLICT (workspace_id, payment_id, provider_transaction_id) DO UPDATE
        SET status = CASE
          WHEN transactions.status = 'approved' OR EXCLUDED.status = 'approved' THEN 'approved'
          WHEN transactions.status = 'declined' THEN 'declined'
@@ -332,7 +332,7 @@ async function recordPaymentReversal(client, workspaceId, {
   if (kind !== 'refund' && kind !== 'chargeback') {
     throw new Error(`recordPaymentReversal: unsupported kind "${kind}"`);
   }
-  const p = (await client.query(
+  const matches = (await client.query(
     `SELECT p.id, p.amount, p.currency, p.status, p.payment_link_id, p.account_id, p.agent_id,
             t.id AS sale_tx_id
        FROM payments p
@@ -342,7 +342,10 @@ async function recordPaymentReversal(client, workspaceId, {
         AND (($2::uuid IS NOT NULL AND p.id = $2::uuid)
           OR ($3::text IS NOT NULL AND t.provider_transaction_id = $3::text))
       FOR UPDATE OF p`,
-    [workspaceId, paymentId, originalProviderTransactionId])).rows[0];
+    [workspaceId, paymentId, originalProviderTransactionId])).rows;
+  // A reused provider number must never reverse a different order by accident.
+  if (matches.length > 1) throw Object.assign(new Error('ambiguous_provider_transaction_id'), { status: 422 });
+  const p = matches[0];
   if (!p) return { notFound: true };
   if (!p.sale_tx_id) return { noSale: true };
 

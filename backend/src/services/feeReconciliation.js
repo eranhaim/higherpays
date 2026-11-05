@@ -37,15 +37,17 @@ async function reconcileWorkspaceFees(workspaceId, from, to) {
       [workspaceId, transIds, orderIds],
     )).rows;
 
-    const byTransaction = new Map(rows.map((row) => [`id:${row.provider_transaction_id}`, row]));
-    const byOrder = new Map(rows.filter((row) => row.reference_id).map((row) => [`order:${row.reference_id}`, row]));
     const skipped = [];
     let updated = 0;
 
     for (const item of transactions) {
-      const row = byTransaction.get(`id:${item.transId}`) || byOrder.get(`order:${item.orderId}`);
+      // Never assign a fee by a reused transaction number, or to a different
+      // attempt on the same order. Missing order references must be unambiguous.
+      const candidates = rows.filter((row) => row.provider_transaction_id === item.transId
+        && (!item.orderId || row.reference_id === item.orderId));
+      const row = candidates.length === 1 ? candidates[0] : null;
       if (!row) {
-        skipped.push({ transId: item.transId, reason: 'not_matched' });
+        skipped.push({ transId: item.transId, reason: candidates.length ? 'ambiguous_match' : 'not_matched' });
         continue;
       }
       if (String(row.currency).toUpperCase() !== String(item.currency || '').toUpperCase()) {

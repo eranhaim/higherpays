@@ -91,6 +91,41 @@ test('a duplicate delivery is acknowledged, not re-processed', async () => {
   assert.equal(entries, 1);
 });
 
+test('a provider transaction id reused on another order stays separate and retries are idempotent', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const makeLink = async (amount) => (await request(app).post(`/workspaces/${t.workspaceId}/links`)
+    .set(t.authHeaders).send({ accountId: account.id, type: 'single_use', amount, currency: 'EUR' }).expect(201)).body;
+  const first = await makeLink(199);
+  const second = await makeLink(222);
+  const transId = newTransId();
+  const endpoint = await endpointFor(t.workspaceId);
+  const declined = buildPaidPayload({ reference: first.referenceId, transId, amount: 199, replyCode: '5051' });
+  const approved = buildPaidPayload({ reference: second.referenceId, transId, amount: 222 });
+  await postWebhook(app, endpoint, declined).expect(200);
+  await postWebhook(app, endpoint, approved).expect(200);
+  await postWebhook(app, endpoint, approved).expect(200);
+
+  const rows = (await pool.query(
+    `SELECT p.payment_link_id, p.status, p.amount, count(re.id)::int AS sales
+       FROM payments p JOIN transactions tx ON tx.payment_id=p.id
+       LEFT JOIN revenue_entries re ON re.transaction_id=tx.id AND re.entry_type='sale'
+      WHERE p.workspace_id=$1 AND p.provider_payment_id=$2
+      GROUP BY p.id ORDER BY p.amount`, [t.workspaceId, transId])).rows;
+  assert.deepEqual(rows.map((r) => [r.payment_link_id, r.status, Number(r.amount), r.sales]), [
+    [first.id, 'failed', 199, 0], [second.id, 'paid', 222, 1],
+  ]);
+  // Same status and id, but a different order, must not be dropped as a retry.
+  const third = await makeLink(50);
+  await postWebhook(app, endpoint, buildPaidPayload({ reference: third.referenceId, transId, amount: 50 })).expect(200);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM payments WHERE workspace_id=$1 AND provider_payment_id=$2',
+    [t.workspaceId, transId])).rows[0].n, 3);
+  const { withTransaction } = require('../../src/db');
+  await assert.rejects(withTransaction((client) => paymentsService.recordPaymentReversal(client, t.workspaceId, {
+    originalProviderTransactionId: transId, kind: 'chargeback',
+  })), /ambiguous_provider_transaction_id/);
+});
+
 test('a delivery that failed mid-processing is processed on the provider retry', async () => {
   const t = await createTenant(app);
   const account = await createAccount(app, t);
