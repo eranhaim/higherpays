@@ -166,7 +166,7 @@ export default function PaymentsPage() {
   ]);
 
   const {
-    payments, summary, reserveSummary, rollingReserveSummary, releaseRollingReserve, accounts, filterOptions,
+    payments, summary, providerReserve, rollingReserveSummary, releaseRollingReserve, accounts, filterOptions,
     isLoading, isError, isSummaryLoading, isSummaryError, hasMore, isLoadingMore, loadMore, recordReversal, reassign, archivePayment, exportCsv,
   } = usePaymentsData(query, canScope);
 
@@ -226,13 +226,13 @@ export default function PaymentsPage() {
         value={<Money amount={summary?.checkoutFeeRevenue ?? 0} currency={summary?.currency} direction="out" />}
         sub={`${rateCard.checkoutFee.toFixed(2)} per transaction · charged to customer`} />,
     }] : []),
-    ...(canScope && reserveSummary?.held != null ? [{
+    ...(canScope && providerReserve && (providerReserve.pct > 0 || providerReserve.held > 0) ? [{
       key: 'providerReserve', label: 'Rolling reserve',
       card: <StatCard isUnknown={statsUnknown} label="Rolling reserve"
-        value={<Money amount={reserveSummary.held} currency={reserveSummary.currency} />}
-        sub={reserveSummary.releasingSoon
-          ? `${formatMoney(reserveSummary.releasingSoon, reserveSummary.currency ?? '')} releasing in 30 days · Reserve: ${reserveSummary.reservePct}%`
-          : `Reserve: ${reserveSummary.reservePct}%`} />,
+        value={<Money amount={providerReserve.held} currency={providerReserve.currency} />}
+        sub={providerReserve.releasingSoon
+          ? `${formatMoney(providerReserve.releasingSoon, providerReserve.currency)} releasing in 30 days · Reserve: ${providerReserve.pct}%`
+          : `Reserve: ${providerReserve.pct}%`} />,
     }] : []),
     ...(canScope && rollingReserveSummary && (rollingReserveSummary.enabled || rollingReserveSummary.currentHeld > 0 || rollingReserveSummary.reserved > 0 || rollingReserveSummary.released > 0) ? [{
       key: 'rollingReserve', label: 'Agency rolling reserve',

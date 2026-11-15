@@ -1,8 +1,8 @@
 'use strict';
 // Settlement reports: import the provider's daily XLSX, reconcile it against
-// our ledger, and track the rolling reserve. The provider computes fees on a
-// daily batch and only the report shows decline fees, so our per-sale fees are
-// estimates; these imported rows are the truth.
+// our ledger. The provider computes fees on a daily batch and only the report
+// shows decline fees, so our per-sale fees are estimates; these imported rows
+// are the truth. The reserve they report is read by services/providerReserve.js.
 const express = require('express');
 const { query, withTransaction } = require('../db');
 const { requirePermission } = require('../middleware');
@@ -160,29 +160,6 @@ router.get('/', requirePermission('revenue.view'), asyncHandler(async (req, res)
       };
     }),
   });
-}));
-
-// GET /reserve — held vs released, per currency, using the negotiated release schedule
-router.get('/reserve', requirePermission('revenue.view'), asyncHandler(async (req, res) => {
-  const cfg = (await query('SELECT reserve_pct, reserve_release_days FROM effective_settlement_fees($1, now())', [wid(req)])).rows[0] || {};
-  const releaseDays = n(cfg.reserve_release_days);
-  const rows = (await query(
-    `SELECT currency, settlement_date, reserve, (settlement_date + ($2 || ' days')::interval)::date AS release_on
-       FROM settlements WHERE workspace_id = $1 AND reserve > 0 ORDER BY settlement_date`, [wid(req), String(releaseDays)])).rows;
-
-  const byCurrency = {};
-  for (const r of rows) {
-    const cur = r.currency;
-    byCurrency[cur] = byCurrency[cur] || { currency: cur, held: 0, released: 0, upcoming: [] };
-    const isReleased = releaseDays > 0 && r.release_on && new Date(r.release_on) <= new Date();
-    if (isReleased) byCurrency[cur].released += n(r.reserve);
-    else { byCurrency[cur].held += n(r.reserve); byCurrency[cur].upcoming.push({ releaseOn: r.release_on, amount: n(r.reserve) }); }
-  }
-  Object.values(byCurrency).forEach((v) => {
-    v.held = round2(v.held); v.released = round2(v.released);
-    v.upcoming = v.upcoming.sort((a, b) => String(a.releaseOn).localeCompare(String(b.releaseOn))).slice(0, 6);
-  });
-  res.json({ reservePct: n(cfg.reserve_pct), releaseDays, byCurrency: Object.values(byCurrency) });
 }));
 
 module.exports = router;

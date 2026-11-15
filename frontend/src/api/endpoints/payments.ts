@@ -174,13 +174,20 @@ export interface PaymentsSummary {
   currency: string;
 }
 
-/** Rolling reserve totals, workspace-wide. Empty when reserve is disabled or not visible. */
-export interface ReserveSummary {
-  reservePct?: number;
-  holdDays?: number;
-  held?: number;
-  releasingSoon?: number;
-  currency?: string;
+/**
+ * What MantaPay holds back under the settlement terms, workspace-wide.
+ * `releaseDays` 0 means no fixed schedule: held until a release is recorded.
+ */
+export interface ProviderReserve {
+  pct: number;
+  releaseDays: number;
+  /** Net of the releases a platform admin recorded. */
+  held: number;
+  released: number;
+  /** What the schedule releases in the next 30 days. */
+  releasingSoon: number;
+  source: 'settlements' | 'estimated';
+  currency: string;
 }
 
 /** The agency-managed reserve, filtered to the selected payment date range. */
@@ -309,11 +316,10 @@ export const paymentsApi = {
 
   filters: () => api.get<PaymentFilterOptions>(workspacePath('/payments/filters')),
 
-  /** Rolling reserve totals for the workspace; empty object when disabled. */
-  reserveSummary(currency?: string) {
+  providerReserve(currency?: string) {
     const qs = new URLSearchParams();
     if (currency) qs.set('currency', currency);
-    return api.get<ReserveSummary>(workspacePath(`/payments/reserve-summary?${qs.toString()}`));
+    return api.get<ProviderReserve>(workspacePath(`/payments/provider-reserve?${qs.toString()}`));
   },
 
   rollingReserveSummary(filters: ListPaymentsQuery = {}, currency?: string) {

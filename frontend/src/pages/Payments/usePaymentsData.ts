@@ -4,7 +4,7 @@ import { useReportingCurrency } from '../../hooks/useReportingCurrency';
 import {
   paymentsApi, accountsApi, agentsApi,
   type Payment, type ListPaymentsQuery, type Account, type Agent, type PaymentFilterOptions,
-  type ReassignInput, type PaymentsSummary, type ReserveSummary, type RollingReserveSummary,
+  type ReassignInput, type PaymentsSummary, type ProviderReserve, type RollingReserveSummary,
 } from '../../api/endpoints';
 
 /** What the export dialog collects. Range bounds are ISO instants, '' for open. */
@@ -18,7 +18,7 @@ export interface ExportInput {
 export interface UsePaymentsDataResult {
   payments: Payment[];
   summary: PaymentsSummary | null;
-  reserveSummary: ReserveSummary | null;
+  providerReserve: ProviderReserve | null;
   rollingReserveSummary: RollingReserveSummary | null;
   accounts: Account[];
   agents: Agent[];
@@ -59,9 +59,9 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     queryFn: () => paymentsApi.summary(filters, currency),
     enabled,
   });
-  const reserve = useQuery({
-    queryKey: ['payments-reserve', activeWorkspaceId, currency],
-    queryFn: () => paymentsApi.reserveSummary(currency),
+  const providerReserve = useQuery({
+    queryKey: ['provider-reserve', activeWorkspaceId, currency],
+    queryFn: () => paymentsApi.providerReserve(currency),
     enabled: enabled && canScope,
     staleTime: 60_000,
   });
@@ -95,6 +95,7 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     queryClient.invalidateQueries({ queryKey: ['links-summary', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['customers', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['payouts-breakdown', activeWorkspaceId] });
+    queryClient.invalidateQueries({ queryKey: ['provider-reserve', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['agency-rolling-reserve', activeWorkspaceId] });
     queryClient.invalidateQueries({ queryKey: ['analytics', activeWorkspaceId] });
   };
@@ -120,7 +121,7 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
   return {
     payments: payments.data?.pages.flatMap((p) => p.items) ?? [],
     summary: summary.data ?? null,
-    reserveSummary: reserve.data ?? null,
+    providerReserve: providerReserve.data ?? null,
     rollingReserveSummary: rollingReserve.data ?? null,
     releaseRollingReserve: (input) => releaseRollingReserve.mutateAsync(input),
     accounts: accounts.data ?? [],

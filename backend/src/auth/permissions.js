@@ -100,6 +100,8 @@ function validatePermissions(permissions, allowedPermissions = PERMISSIONS) {
 
 const FULL_ACCESS_ROLES = new Set(['workspace_owner', 'workspace_admin']);
 
+const isFullAccessRole = (role) => FULL_ACCESS_ROLES.has(role);
+
 // An owner or admin may grant any permission. Everyone else may only hand on
 // what their own seat holds, so nobody can lift a seat above their own level.
 function validateGrantablePermissions(access, permissions) {
@@ -126,5 +128,5 @@ function seatOutranksCaller(access, seat) {
 module.exports = {
   PERMISSIONS, PERMISSION_DEPENDENCIES, ROLE_PERMISSIONS,
   WORKSPACE_ROLE: status.WORKSPACE_ROLE, can, hasPermission, validatePermissions,
-    validateGrantablePermissions, seatOutranksCaller, canGrantRole,
+    validateGrantablePermissions, seatOutranksCaller, canGrantRole, isFullAccessRole,
   };

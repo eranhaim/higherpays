@@ -1,6 +1,7 @@
 'use strict';
 const { verifyAccessToken } = require('../auth/tokens');
-const { hasPermission } = require('../auth/permissions');
+const { hasPermission, isFullAccessRole } = require('../auth/permissions');
+const { isPlatformAdmin } = require('../auth/platformAdmin');
 const { query } = require('../db');
 const { asyncHandler } = require('../lib/http');
 const { log } = require('../lib/log');
@@ -132,9 +133,22 @@ const requireArchiveManager = asyncHandler(async (req, _res, next) => {
   if (!req.access) throw new HttpError(500, 'workspace_context_missing');
   if (hasPermission(req.access, 'archive.manage')) return next();
   if (req.user.actorId) throw new ForbiddenError('impersonation_archive_forbidden');
-  const row = (await query(
-    'SELECT is_platform_admin FROM users WHERE id = $1', [req.user.id])).rows[0];
-  if (!row?.is_platform_admin) throw new ForbiddenError('archive_manager_required');
+  if (!(await isPlatformAdmin(req.user.id))) throw new ForbiddenError('archive_manager_required');
+  next();
+});
+
+// The agency's money settings and reserve releases need an owner, an admin,
+// or a platform admin, each acting as themself rather than through
+// impersonation. Throws, so a handler can also apply it to only some fields.
+async function assertWorkspaceManager(req) {
+  if (req.user.actorId) throw new ForbiddenError('impersonation_not_allowed');
+  if (isFullAccessRole(req.access.role)) return;
+  if (await isPlatformAdmin(req.user.id)) return;
+  throw new ForbiddenError('workspace_admin_required');
+}
+
+const requireWorkspaceManager = asyncHandler(async (req, _res, next) => {
+  await assertWorkspaceManager(req);
   next();
 });
 
@@ -179,5 +193,5 @@ function errorHandler(err, req, res, next) {
 
 module.exports = {
   requireAuth, requireWorkspace, requirePlatformMfa, requirePermission, requireArchiveManager,
-  requirePlatformAdmin, errorHandler,
+  assertWorkspaceManager, requireWorkspaceManager, requirePlatformAdmin, errorHandler,
 };

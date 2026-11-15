@@ -5,13 +5,13 @@ const { requirePermission } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { cashPosition } = require('../services/cash');
+const { getProviderReserve } = require('../services/providerReserve');
 const { status: vocab } = require('../schema/entities');
 const currencies = require('../services/currencies.service');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
 const num = (v) => Number(v || 0);
-const round2 = (v) => Math.round(v * 100) / 100;
 
 function range(req, source) {
   const to = source.to ? new Date(source.to) : new Date();
@@ -97,34 +97,9 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
       ) agg ON agg.agent_id = ag.id
      WHERE ag.workspace_id = $3 ORDER BY owed DESC`, [F, T, wid(req), currency])).rows;
 
-  // Rolling reserve: the provider holds a % of settled volume. It is the
-  // agency's own money, released later, but until then the agency fronts it.
-  const cfg = (await query('SELECT reserve_pct, reserve_release_days FROM effective_settlement_fees($1, now())', [wid(req)])).rows[0] || {};
-  const pct = num(cfg.reserve_pct), days = num(cfg.reserve_release_days);
-  const settled = (await query(
-    `SELECT count(*) AS imported, COALESCE(SUM(reserve) FILTER (
-        WHERE reserve > 0 AND ($2 = 0 OR (settlement_date + ($2 || ' days')::interval)::date > now()::date)), 0) AS held
-       FROM settlements WHERE workspace_id = $1 AND currency = $3`, [wid(req), String(days), currency])).rows[0];
-  let reserve;
-  if (num(settled.imported) > 0) {
-    reserve = { pct, releaseDays: days, held: round2(num(settled.held)), source: 'settlements' };
-  } else {
-    const gross = (await query(
-      `SELECT GREATEST(COALESCE(SUM(re.gross),0),0) AS g
-         FROM revenue_entries re
-         JOIN transactions t ON t.id = re.transaction_id
-         JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
-        WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND t.currency = $4`,
-      [F, T, wid(req), currency])).rows[0].g;
-    reserve = { pct, releaseDays: days, held: round2(num(gross) * pct / 100), source: 'estimated' };
-  }
-
-  // Subtract any manual reserve releases recorded by the platform admin.
-  const released = num((await query(
-    'SELECT COALESCE(SUM(amount), 0) AS total FROM reserve_releases WHERE workspace_id = $1 AND currency = $2',
-    [wid(req), currency])).rows[0].total);
-  reserve.released = round2(released);
-  reserve.held = round2(Math.max(0, reserve.held - released));
+  // The reserve MantaPay still holds is the agency's own money, but until it
+  // is released the agency fronts it.
+  const reserve = await getProviderReserve({ query }, wid(req), currency);
 
   const received = num((await query(
     `SELECT COALESCE(SUM(re.distributable - re.chargeback_fee),0) AS received

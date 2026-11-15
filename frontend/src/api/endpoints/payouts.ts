@@ -1,5 +1,6 @@
 import { api } from '../http';
 import { workspacePath } from '../workspacePath';
+import type { ProviderReserve } from './payments';
 
 export interface PayoutBreakdown {
   range: { from: string; to: string };
@@ -14,7 +15,7 @@ export interface PayoutBreakdown {
   };
   perAccount: Array<{ id: string; name: string; payModel: 'share' | 'salary'; revenue: number; owed: number }>;
   perAgent: Array<{ id: string; name: string; owed: number; sales: number }>;
-  reserve: { pct: number; releaseDays: number; held: number; source: 'settlements' | 'estimated' };
+  reserve: ProviderReserve;
   /** Can the agency pay everyone today? `available` is receipts minus the reserve. */
   cash: { owed: number; received: number; heldInReserve: number; available: number; shortfallIfPaidNow: number };
 }

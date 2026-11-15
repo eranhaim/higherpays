@@ -3,18 +3,24 @@
 // reconciler, completed by the agent (customer + category), reversed here.
 const express = require('express');
 const { query, withTransaction } = require('../db');
-const { requirePermission, requireArchiveManager, requirePlatformAdmin } = require('../middleware');
+const {
+  requirePermission, requireArchiveManager, requirePlatformAdmin, requireWorkspaceManager,
+} = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { isStr, isOptStr, badRequest, invalidDateFilter, toCSV } = require('../util/validate');
 const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const { resolveDataScope, scopeParams } = require('../auth/dataScope');
 const { hasPermission } = require('../auth/permissions');
+const { isActingPlatformAdmin } = require('../auth/platformAdmin');
 const { resolveAttribution, repostSales } = require('../services/attribution');
 const paymentsService = require('../services/payments.service');
 const { recordLinkEvent } = require('../services/linkEvents');
 const config = require('../config');
 const currencies = require('../services/currencies.service');
+const { getProviderReserve } = require('../services/providerReserve');
+const { getRollingReserve, revenueAdjustment, releaseRollingReserve } = require('../services/rollingReserve');
+const { round2 } = require('../lib/money');
 const {
   enqueueLifecycleEventForReference,
   drainMarketplaceOutbox,
@@ -225,31 +231,21 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
       [...paymentFilterParams(req, scope, {
         canFilterFees: hasPermission(req.access, 'data.view_all'),
       }), currency])).rows[0];
-    const platform = !req.user.actorId && (await c.query(
-      'SELECT is_platform_admin FROM users WHERE id = $1', [req.user.id])).rows[0]?.is_platform_admin === true;
-    const reserveEvents = hasPermission(req.access, 'data.view_all') ? (await c.query(
-      `SELECT COALESCE(SUM(amount) FILTER (WHERE entry_type='hold'),0) AS held,
-              COALESCE(SUM(amount) FILTER (WHERE entry_type='release'),0) AS released,
-              COALESCE(SUM(amount) FILTER (WHERE entry_type='reversal'),0) AS reversed
-         FROM rolling_reserve_entries
-        WHERE workspace_id=$1 AND currency=$2
-          AND created_at >= COALESCE($3::timestamptz, '-infinity'::timestamptz)
-          AND created_at <= COALESCE($4::timestamptz, now())`,
-      [wid(req), currency, req.query.from || null, req.query.to || null])).rows[0] : null;
-    return { row, platform, reserveEvents };
+    const rollingReserve = hasPermission(req.access, 'data.view_all')
+      ? await getRollingReserve(c, wid(req), currency, { from: req.query.from, to: req.query.to })
+      : null;
+    return { row, rollingReserve };
   });
 
   const grossContent = Number(out.row.gross_content);
   const platformFees = Number(out.row.platform_fees);
   const afterFees = Number(out.row.after_fees);
   const seesFees = hasPermission(req.access, 'data.view_all');
-  const reserveAdjustment = -Number(out.reserveEvents?.held || 0)
-    + Number(out.reserveEvents?.released || 0) + Number(out.reserveEvents?.reversed || 0);
   res.json({
     ...(seesFees ? {
       grossContent,
       platformFees,
-      netRevenue: afterFees + reserveAdjustment,
+      netRevenue: round2(afterFees + revenueAdjustment(out.rollingReserve)),
       netProfit: grossContent - platformFees,
       feesEstimated: out.row.estimated_fee_sales > 0,
       declinedCount: out.row.declined_count,
@@ -265,152 +261,44 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
   });
 }));
 
-// GET /reserve-summary — rolling reserve totals for the workspace.
+// GET /provider-reserve — what MantaPay holds back under the settlement terms.
 // Not filtered by the payment list's filters: the reserve is a workspace-wide
-// position, not a per-query figure. Only sent to callers who see the full
-// workspace (data.view_all).
-router.get('/reserve-summary', requirePermission('payments.view'), asyncHandler(async (req, res) => {
+// position, not a per-query figure.
+router.get('/provider-reserve', requirePermission('payments.view'), asyncHandler(async (req, res) => {
   if (!hasPermission(req.access, 'data.view_all')) return res.json({});
-  const wsId = wid(req);
-  const currency = await currencies.resolveReportingCurrency(
-    { query: (...a) => query(...a) }, wsId, req.query.currency);
-  const row = (await query(
-    `WITH cfg AS (
-       SELECT reserve_pct, reserve_release_days
-         FROM effective_settlement_fees($1, now())
-     ),
-     paid AS (
-       SELECT t.gross, t.occurred_at
-         FROM transactions t
-         JOIN payments p ON p.id = t.payment_id
-        WHERE t.workspace_id = $1 AND t.type = 'payment' AND t.status = 'approved'
-          AND t.currency = $2 AND p.archived_at IS NULL
-          AND p.review_reason IS NULL
-     ),
-     released AS (
-       SELECT COALESCE(SUM(amount), 0) AS total
-         FROM reserve_releases
-        WHERE workspace_id = $1 AND currency = $2
-     )
-     SELECT cfg.reserve_pct,
-            cfg.reserve_release_days,
-            COALESCE(SUM(paid.gross * cfg.reserve_pct / 100)
-              FILTER (WHERE paid.occurred_at + (cfg.reserve_release_days || ' days')::interval > now()), 0)
-              - released.total AS held,
-            COALESCE(SUM(paid.gross * cfg.reserve_pct / 100)
-              FILTER (WHERE paid.occurred_at + (cfg.reserve_release_days || ' days')::interval > now()
-                        AND paid.occurred_at + (cfg.reserve_release_days || ' days')::interval <= now() + interval '30 days'), 0) AS releasing_soon
-       FROM paid, cfg, released
-      GROUP BY cfg.reserve_pct, cfg.reserve_release_days, released.total`,
-    [wsId, currency])).rows[0];
-  if (!row || Number(row.reserve_pct) === 0) return res.json({});
-  const held = Math.max(Number(row.held), 0);
-  res.json({
-    reservePct: Number(row.reserve_pct),
-    holdDays: Number(row.reserve_release_days),
-    held,
-    releasingSoon: Number(row.releasing_soon),
-    currency,
-  });
+  const currency = await currencies.resolveReportingCurrency({ query }, wid(req), req.query.currency);
+  res.json(await getProviderReserve({ query }, wid(req), currency));
 }));
 
-// Agency-managed reserve ledger. `held` is the closing balance for the
-// selected date range; `currentHeld` is the amount available to release now.
+// GET /rolling-reserve — the agency's own reserve ledger for the date range.
 router.get('/rolling-reserve', requirePermission('revenue.view'), asyncHandler(async (req, res) => {
   const invalidDate = invalidDateFilter(req.query);
   if (invalidDate) return badRequest(res, `${invalidDate} must be a date`, [invalidDate]);
   if (!hasPermission(req.access, 'data.view_all')) return res.json({});
-  const wsId = wid(req);
-  const currency = await currencies.resolveReportingCurrency({ query: (...a) => query(...a) }, wsId, req.query.currency);
-  const row = (await query(
-    `WITH cfg AS (
-       SELECT rolling_reserve_enabled, rolling_reserve_pct FROM workspaces WHERE id=$1
-     ), events AS (
-       SELECT COALESCE(SUM(amount) FILTER (WHERE entry_type='hold'),0) AS held,
-              COALESCE(SUM(amount) FILTER (WHERE entry_type='release'),0) AS released,
-              COALESCE(SUM(amount) FILTER (WHERE entry_type='reversal'),0) AS reversed
-         FROM rolling_reserve_entries
-        WHERE workspace_id=$1 AND currency=$2
-          AND created_at <= COALESCE($3::timestamptz, now())
-     ), period AS (
-       SELECT COALESCE(SUM(amount) FILTER (WHERE entry_type='hold'),0) AS reserved,
-              COALESCE(SUM(amount) FILTER (WHERE entry_type='release'),0) AS released,
-              COALESCE(SUM(amount) FILTER (WHERE entry_type='reversal'),0) AS reversed
-         FROM rolling_reserve_entries
-        WHERE workspace_id=$1 AND currency=$2
-          AND created_at >= COALESCE($4::timestamptz, '-infinity'::timestamptz)
-          AND created_at <= COALESCE($3::timestamptz, now())
-     ), current_balance AS (
-       SELECT COALESCE(SUM(CASE WHEN entry_type='hold' THEN amount ELSE -amount END),0) AS held
-         FROM rolling_reserve_entries WHERE workspace_id=$1 AND currency=$2
-     )
-     SELECT cfg.rolling_reserve_enabled, cfg.rolling_reserve_pct,
-            GREATEST(events.held-events.released-events.reversed,0) AS held,
-            period.reserved, period.released, period.reversed, GREATEST(current_balance.held,0) AS current_held
-       FROM cfg, events, period, current_balance`,
-    [wsId, currency, req.query.to || null, req.query.from || null])).rows[0];
-  res.json({
-    enabled: row.rolling_reserve_enabled,
-    reservePct: Number(row.rolling_reserve_pct),
-    held: Number(row.held),
-    currentHeld: Number(row.current_held),
-    reserved: Number(row.reserved),
-    released: Number(row.released),
-    reversed: Number(row.reversed),
-    currency,
-  });
+  const currency = await currencies.resolveReportingCurrency({ query }, wid(req), req.query.currency);
+  res.json(await getRollingReserve({ query }, wid(req), currency, { from: req.query.from, to: req.query.to }));
 }));
 
-// Release a partial amount or the full current balance. A workspace row lock
-// serializes concurrent releases and new holds before allocating oldest holds.
-router.post('/rolling-reserve/release', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
-  if (req.user?.actorId) return res.status(403).json({ error: 'impersonation_not_allowed' });
-  const role = req.access?.role;
-  const platform = !req.user?.actorId && (await query(
-    'SELECT is_platform_admin FROM users WHERE id=$1', [uid(req)])).rows[0]?.is_platform_admin === true;
-  if (!platform && !['workspace_owner', 'workspace_admin'].includes(role)) {
-    return res.status(403).json({ error: 'workspace_admin_required' });
-  }
-  const currency = await currencies.resolveReportingCurrency({ query: (...a) => query(...a) }, wid(req), req.body?.currency);
+// POST /rolling-reserve/release { currency, amount?, note? } — no amount
+// releases the whole balance.
+router.post('/rolling-reserve/release', requirePermission('revenue.manage'), requireWorkspaceManager, asyncHandler(async (req, res) => {
+  const currency = await currencies.resolveReportingCurrency({ query }, wid(req), req.body?.currency);
   const amount = req.body?.amount == null ? null : Number(req.body.amount);
-  if (amount != null && (!Number.isFinite(amount) || amount <= 0 || Math.round(amount * 100) !== amount * 100)) {
+  if (amount != null && (!Number.isFinite(amount) || amount <= 0 || round2(amount) !== amount)) {
     return badRequest(res, 'amount must be a positive value with at most two decimal places', ['amount']);
   }
-  if (req.body?.note != null && (typeof req.body.note !== 'string' || req.body.note.length > 240)) {
+  if (!isOptStr(req.body?.note, 240)) {
     return badRequest(res, 'note must be 240 characters or fewer', ['note']);
   }
-  const result = await withTransaction(async (c) => {
-    await c.query('SELECT id FROM workspaces WHERE id=$1 FOR UPDATE', [wid(req)]);
-    const balances = (await c.query(
-      `SELECT transaction_id,
-              SUM(CASE WHEN entry_type='hold' THEN amount ELSE -amount END) AS available
-         FROM rolling_reserve_entries
-        WHERE workspace_id=$1 AND currency=$2
-        GROUP BY transaction_id
-       HAVING SUM(CASE WHEN entry_type='hold' THEN amount ELSE -amount END) > 0
-        ORDER BY min(created_at), transaction_id`, [wid(req), currency])).rows;
-    const available = balances.reduce((sum, r) => sum + Number(r.available), 0);
-    const releaseAmount = Math.round((amount == null ? available : Math.min(amount, available)) * 100) / 100;
-    if (releaseAmount <= 0) return { empty: true, available: 0 };
-    let remaining = releaseAmount;
-    const batchId = (await c.query('SELECT gen_random_uuid() AS id')).rows[0].id;
-    for (const balance of balances) {
-      if (remaining <= 0) break;
-      const part = Math.round(Math.min(remaining, Number(balance.available)) * 100) / 100;
-      await c.query(
-        `INSERT INTO rolling_reserve_entries
-           (workspace_id, transaction_id, entry_type, amount, currency, release_batch_id, note, created_by_user_id)
-         VALUES ($1,$2,'release',$3,$4,$5,$6,$7)`,
-        [wid(req), balance.transaction_id, part, currency, batchId, req.body?.note?.trim() || null, uid(req)]);
-      remaining = Math.round((remaining - part) * 100) / 100;
-    }
-    return { empty: false, amount: releaseAmount, currency, releaseBatchId: batchId };
-  });
-  if (result.empty) return res.status(409).json({ error: 'no_reserve_available' });
+  const note = req.body?.note?.trim() || null;
+  const result = await withTransaction((c) => releaseRollingReserve(c, wid(req), {
+    currency, amount, note, userId: uid(req),
+  }));
+  if (!result) return res.status(409).json({ error: 'no_reserve_available' });
   await audit({
     workspaceId: wid(req), actorUserId: uid(req), action: 'revenue.reserve.release',
     entityType: 'rolling_reserve_release', entityId: result.releaseBatchId,
-    metadata: { amount: result.amount, currency: result.currency, note: req.body?.note?.trim() || null },
+    metadata: { amount: result.amount, currency: result.currency, note },
   });
   res.json(result);
 }));
@@ -498,8 +386,7 @@ router.get('/export', requirePermission('payments.export'), asyncHandler(async (
   const workspace = (await query(
     'SELECT account_label, agent_label FROM workspaces WHERE id=$1',
     [wid(req)])).rows[0];
-  const showProviderName = !req.user.actorId && (await query(
-    'SELECT is_platform_admin FROM users WHERE id = $1', [req.user.id])).rows[0]?.is_platform_admin === true;
+  const showProviderName = await isActingPlatformAdmin(req.user);
   const columnsForWorkspace = exportColumns({
     account: workspace.account_label,
     agent: workspace.agent_label,

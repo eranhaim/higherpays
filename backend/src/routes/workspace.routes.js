@@ -1,7 +1,8 @@
 'use strict';
 const express = require('express');
 const { query, withTransaction } = require('../db');
-const { requirePermission } = require('../middleware');
+const { requirePermission, assertWorkspaceManager } = require('../middleware');
+const { isPlatformAdmin } = require('../auth/platformAdmin');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
 const { isStr, badRequest } = require('../util/validate');
@@ -38,15 +39,8 @@ router.get('/', requirePermission('settings.view'), asyncHandler(async (req, res
 // PATCH /workspaces/:id  { name?, accountLabel?, …, merchantId? }
 router.patch('/', requirePermission('settings.edit'), asyncHandler(async (req, res) => {
   const body = req.body || {};
-  if ('rollingReserveEnabled' in body || 'rollingReservePct' in body) {
-    if (req.user?.actorId) return res.status(403).json({ error: 'impersonation_not_allowed' });
-    const role = req.access?.role;
-    const platform = !req.user?.actorId && (await query(
-      'SELECT is_platform_admin FROM users WHERE id=$1', [uid(req)])).rows[0]?.is_platform_admin === true;
-    if (!platform && !['workspace_owner', 'workspace_admin'].includes(role)) {
-      return res.status(403).json({ error: 'workspace_admin_required' });
-    }
-  }
+  const changesRollingReserve = 'rollingReserveEnabled' in body || 'rollingReservePct' in body;
+  if (changesRollingReserve) await assertWorkspaceManager(req);
   const sets = [], vals = [];
   if ('name' in body) {
     if (!isStr(body.name, 120)) return badRequest(res, 'name is required', ['name']);
@@ -54,8 +48,7 @@ router.patch('/', requirePermission('settings.edit'), asyncHandler(async (req, r
   }
   // Empty clears it, which falls the server back to MANTAPAY_MERCHANT_ID.
   if ('merchantId' in body) {
-    const operator = (await query('SELECT is_platform_admin FROM users WHERE id=$1', [uid(req)])).rows[0];
-    if (!operator?.is_platform_admin) return res.status(403).json({ error: 'platform_admin_required' });
+    if (!(await isPlatformAdmin(uid(req)))) return res.status(403).json({ error: 'platform_admin_required' });
     const mid = body.merchantId == null ? '' : String(body.merchantId).trim();
     if (mid.length > 64) return badRequest(res, 'merchantId is at most 64 characters', ['merchantId']);
     vals.push(mid || null); sets.push(`merchant_id = $${vals.length}`);
@@ -78,15 +71,14 @@ router.patch('/', requirePermission('settings.edit'), asyncHandler(async (req, r
     }
     vals.push(pct); sets.push(`rolling_reserve_pct = $${vals.length}`);
   }
-  const enabled = 'rollingReserveEnabled' in body ? body.rollingReserveEnabled : null;
-  const rate = 'rollingReservePct' in body ? body.rollingReservePct : null;
-  const current = enabled === null || rate === null
-    ? (await query('SELECT rolling_reserve_enabled, rolling_reserve_pct FROM workspaces WHERE id=$1', [wid(req)])).rows[0]
-    : null;
-  const desiredEnabled = enabled === null ? current.rolling_reserve_enabled : enabled;
-  const desiredPct = rate === null ? n(current.rolling_reserve_pct) : rate;
-  if (desiredEnabled === true && desiredPct === 0) {
-    return badRequest(res, 'rollingReservePct must be above 0 when rolling reserve is enabled', ['rollingReservePct']);
+  if (changesRollingReserve) {
+    const current = (await query(
+      'SELECT rolling_reserve_enabled, rolling_reserve_pct FROM workspaces WHERE id = $1', [wid(req)])).rows[0];
+    const enabled = 'rollingReserveEnabled' in body ? body.rollingReserveEnabled : current.rolling_reserve_enabled;
+    const pct = 'rollingReservePct' in body ? body.rollingReservePct : n(current.rolling_reserve_pct);
+    if (enabled && pct === 0) {
+      return badRequest(res, 'rollingReservePct must be above 0 when rolling reserve is enabled', ['rollingReservePct']);
+    }
   }
   if (!sets.length) return badRequest(res, 'no updatable fields provided');
   vals.push(wid(req));

@@ -362,7 +362,7 @@ function FeesCard({ rateCard, editable, detail, currencies, onSave }: {
   // dropped instead.
   const reserveDisplay = !editable && rateCard.reservePct === undefined ? null
     : !editable && rateCard.reservePct != null && rateCard.reservePct > 0
-      ? `${rateCard.reservePct}% · released after ${rateCard.reserveReleaseDays ?? 0} days`
+      ? `${rateCard.reservePct}% · ${rateCard.reserveReleaseDays ? `released after ${rateCard.reserveReleaseDays} days` : 'held until released'}`
       : !editable ? 'none' : null;
 
   const save = async () => {
@@ -465,7 +465,7 @@ function FeesCard({ rateCard, editable, detail, currencies, onSave }: {
           <div className="setrow">
             <div>
               <div className="k"><label htmlFor="fee-reserve-days">Reserve hold period</label></div>
-              <div className="d">Days each payment's reserve is held before release.</div>
+              <div className="d">Days each payment's reserve is held before release. 0 holds it until a release is recorded.</div>
             </div>
             <div className="controls">
               <div className="pct-input">
