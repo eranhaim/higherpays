@@ -131,6 +131,11 @@ export default function Layout() {
     setPendingPath(path);
   };
 
+  const navigateFromMenu = (e: MouseEvent, path: string) => {
+    setMobileNavOpen(false);
+    guardNavigation(e, path);
+  };
+
   const leaveWithoutSaving = () => {
     const path = pendingPath;
     setPendingPath(null);
@@ -204,15 +209,14 @@ export default function Layout() {
           </div>
         )}
 
-        <nav className={mobileNavOpen ? 'mobile-open' : undefined} onClick={(event) => {
-          if ((event.target as HTMLElement).closest('a')) setMobileNavOpen(false);
-        }}>
+        <nav className={mobileNavOpen ? 'mobile-open' : undefined}>
           <button type="button" className="mobile-nav-close" onClick={() => setMobileNavOpen(false)}>Close menu</button>
-          {NAV.map((g) => <NavSection key={g.label} group={g} onNavigate={guardNavigation} />)}
+          {NAV.map((g) => <NavSection key={g.label} group={g} onNavigate={navigateFromMenu} />)}
           {user?.isPlatformAdmin && !originalSession && (
             <div>
               <div className="nav-lbl">HigherPays</div>
-              <NavLink to="/platform" className={({ isActive }) => `navitem${isActive ? ' active' : ''}`}>
+              <NavLink to="/platform" className={({ isActive }) => `navitem${isActive ? ' active' : ''}`}
+                onClick={(e) => navigateFromMenu(e, '/platform')}>
                 <NavIcon name="settings" />
                 Platform
               </NavLink>

@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useReportingCurrency } from '../../hooks/useReportingCurrency';
+import { invalidateLedgerQueries } from '../../lib/queryClient';
 import {
   paymentsApi, accountsApi, agentsApi,
   type Payment, type ListPaymentsQuery, type Account, type Agent, type PaymentFilterOptions,
@@ -88,16 +89,7 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
   });
 
   const invalidate = () => {
-    queryClient.invalidateQueries({ queryKey: ['payments', activeWorkspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['payments-summary', activeWorkspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['payment-filter-options', activeWorkspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['links', activeWorkspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['links-summary', activeWorkspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['customers', activeWorkspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['payouts-breakdown', activeWorkspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['provider-reserve', activeWorkspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['agency-rolling-reserve', activeWorkspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['analytics', activeWorkspaceId] });
+    invalidateLedgerQueries(queryClient, activeWorkspaceId);
   };
 
   const reassign = useMutation({

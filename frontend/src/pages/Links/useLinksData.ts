@@ -1,6 +1,7 @@
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useCurrentSession } from '../../hooks/useCurrentSession';
 import { useReportingCurrency } from '../../hooks/useReportingCurrency';
+import { invalidateLedgerQueries } from '../../lib/queryClient';
 import {
   linksApi, accountsApi, workspacesApi, paymentsApi,
   type ListLinksQuery, type PaymentLink, type PaymentLinkDetail, type LinksSummary, type Account, type LinkLimits, type LinkType, type ReassignInput,
@@ -70,16 +71,7 @@ export function useLinksData(filters: ListLinksQuery = {}): UseLinksDataResult {
     staleTime: 5 * 60_000,
   });
 
-  const invalidateLinks = () => {
-    queryClient.invalidateQueries({ queryKey: ['links', activeWorkspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['links-summary', activeWorkspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['link', activeWorkspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['payments', activeWorkspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['payments-summary', activeWorkspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['customers', activeWorkspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['payouts-breakdown', activeWorkspaceId] });
-    queryClient.invalidateQueries({ queryKey: ['analytics', activeWorkspaceId] });
-  };
+  const invalidateLinks = () => invalidateLedgerQueries(queryClient, activeWorkspaceId);
 
   const create = useMutation({
     mutationFn: (input: CreateLinkFormInput) => linksApi.create(input),

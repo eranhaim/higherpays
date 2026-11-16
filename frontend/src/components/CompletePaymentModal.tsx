@@ -8,21 +8,12 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCurrentSession } from '../hooks/useCurrentSession';
+import { invalidateLedgerQueries } from '../lib/queryClient';
 import { categoriesApi, customersApi, paymentsApi, visibleAmount, type CompletePaymentInput, type Payment } from '../api/endpoints';
 import { formatMoney } from '../lib/format';
 import { toast } from '../lib/toast';
 import Modal from './Modal';
 import { Select } from './ui';
-
-/**
- * Completing a payment moves money into the ledger, so every list and figure
- * derived from it is stale afterwards.
- */
-const DEPENDENT_QUERIES = [
-  'payments', 'payments-summary', 'payment-filter-options',
-  'links', 'links-summary', 'link',
-  'customers', 'payouts-breakdown', 'analytics',
-];
 
 function useCompletePayment() {
   const { activeWorkspaceId } = useCurrentSession();
@@ -42,11 +33,7 @@ function useCompletePayment() {
   });
   const complete = useMutation({
     mutationFn: ({ id, input }: { id: string; input: CompletePaymentInput }) => paymentsApi.complete(id, input),
-    onSuccess: () => {
-      for (const key of DEPENDENT_QUERIES) {
-        queryClient.invalidateQueries({ queryKey: [key, activeWorkspaceId] });
-      }
-    },
+    onSuccess: () => invalidateLedgerQueries(queryClient, activeWorkspaceId),
   });
 
   return {
