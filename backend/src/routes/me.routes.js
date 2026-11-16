@@ -14,15 +14,13 @@ const { asyncHandler } = require('../lib/http');
 const { resolveDataScope } = require('../auth/dataScope');
 const currencies = require('../services/currencies.service');
 const { wid } = require('../lib/scope');
+const { toNumber, round2 } = require('../lib/money');
+const { reportRange } = require('../lib/reportRange');
 
 const router = express.Router({ mergeParams: true });
-const n = (v) => Number(v || 0);
-const r2 = (v) => Math.round(v * 100) / 100;
 
 router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async (req, res) => {
-  const to = req.query.to ? new Date(req.query.to) : new Date();
-  const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 86400000);
-  const F = from.toISOString(), T = to.toISOString();
+  const { from, to } = reportRange(req.query);
 
   const data = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
@@ -56,7 +54,7 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
          JOIN transactions t ON t.id = re.transaction_id
          JOIN payments p ON p.id = t.payment_id AND p.archived_at IS NULL
         WHERE ${scopeCol} = $1 AND t.occurred_at >= $2 AND t.occurred_at <= $3 AND t.currency = $4`,
-      [scopeVal, F, T, currency])).rows[0];
+      [scopeVal, from, to, currency])).rows[0];
 
     // Balances are all-time: what you are owed is what was never settled.
     const balance = (await c.query(
@@ -75,20 +73,20 @@ router.get('/earnings', requirePermission('analytics.view'), asyncHandler(async 
   const { isAccount, profile, period, balance, currency } = data;
   const onSalary = isAccount && profile.pay_model === 'salary';
   res.json({
-    range: { from: F, to: T },
+    range: { from, to },
     currency,
     role: isAccount ? 'account_owner' : 'agent',
     payModel: isAccount ? profile.pay_model : null,
     // A salaried creator is owed a fixed amount per payout period, not a cut
     // of net revenue, so their terms are the salary rather than a rate.
-    salaryAmount: onSalary ? r2(n(profile.salary_amount)) : null,
+    salaryAmount: onSalary ? round2(toNumber(profile.salary_amount)) : null,
     period: {
-      sales: n(period.sales),
-      netRevenue: r2(period.distributable),   // the base the rate is applied to
-      yourRatePct: n(profile.pct),
-      earned: r2(period.earned),
+      sales: toNumber(period.sales),
+      netRevenue: round2(period.distributable),   // the base the rate is applied to
+      yourRatePct: toNumber(profile.pct),
+      earned: round2(period.earned),
     },
-    balance: { owed: r2(balance.unpaid), paidToDate: r2(balance.paid) },
+    balance: { owed: round2(balance.unpaid), paidToDate: round2(balance.paid) },
   });
 }));
 

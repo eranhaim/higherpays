@@ -21,9 +21,9 @@ const { status: vocab } = require('../schema/entities');
 const hashToken = (t) => crypto.createHash('sha256').update(t).digest('hex');
 const router = express.Router();
 const { uid } = require('../lib/scope');
+const { toNumber, round2 } = require('../lib/money');
+const { reportRange } = require('../lib/reportRange');
 const pct = (v) => typeof v === 'number' && v >= 0 && v <= 100;
-const n = (v) => Number(v || 0);
-const r2 = (v) => Math.round(v * 100) / 100;
 const PROVIDER_MIN_LINK_AMOUNT = 3;
 
 function checkoutFeeValidation(checkoutFee, workspaceMinimum = null) {
@@ -151,15 +151,15 @@ router.post('/impersonation/start', asyncHandler(async (req, res) => {
 }));
 
 const publicFee = (f) => ({
-  feeModel: f.fee_model, pspRatePct: n(f.psp_rate_pct), mdrPct: f.mdr_pct == null ? null : n(f.mdr_pct),
-  settlementPct: f.settlement_pct == null ? null : n(f.settlement_pct), pspFixedFee: n(f.psp_fixed_fee),
-  marginRatePct: n(f.margin_rate_pct), checkoutFee: n(f.checkout_fee),
-  blendedRatePct: n(f.blended_rate_pct), effectiveFrom: f.effective_from,
+  feeModel: f.fee_model, pspRatePct: toNumber(f.psp_rate_pct), mdrPct: f.mdr_pct == null ? null : toNumber(f.mdr_pct),
+  settlementPct: f.settlement_pct == null ? null : toNumber(f.settlement_pct), pspFixedFee: toNumber(f.psp_fixed_fee),
+  marginRatePct: toNumber(f.margin_rate_pct), checkoutFee: toNumber(f.checkout_fee),
+  blendedRatePct: toNumber(f.blended_rate_pct), effectiveFrom: f.effective_from,
 });
 const publicSettlementFee = (s) => ({
-  chargebackFee: n(s.chargeback_fee), refundFee: n(s.refund_fee), declineFee: n(s.decline_fee),
-  settlementFeePct: n(s.settlement_fee_pct), settlementFeeFlat: n(s.settlement_fee_flat),
-  reservePct: n(s.reserve_pct), reserveReleaseDays: n(s.reserve_release_days), effectiveFrom: s.effective_from,
+  chargebackFee: toNumber(s.chargeback_fee), refundFee: toNumber(s.refund_fee), declineFee: toNumber(s.decline_fee),
+  settlementFeePct: toNumber(s.settlement_fee_pct), settlementFeeFlat: toNumber(s.settlement_fee_flat),
+  reservePct: toNumber(s.reserve_pct), reserveReleaseDays: toNumber(s.reserve_release_days), effectiveFrom: s.effective_from,
 });
 
 // A platform admin holds a workspace_users row in every workspace; creating a
@@ -249,11 +249,11 @@ router.get('/workspaces', asyncHandler(async (req, res) => {
   res.json({
     workspaces: rows.map((w) => ({
       id: w.id, name: w.name, currency: w.currency, status: w.status, merchantId: w.merchant_id, createdAt: w.created_at,
-      accounts: n(w.accounts), agents: n(w.agents), members: n(w.members),
-      paidPayments: n(w.paid_payments), grossVolume: n(w.gross_volume), lastActivity: w.last_activity,
-      blendedRatePct: n(w.blended_rate_pct), pspRatePct: n(w.psp_rate_pct),
-      settlementPct: w.settlement_pct == null ? 0 : n(w.settlement_pct),
-      marginRatePct: n(w.margin_rate_pct), pspFixedFee: n(w.psp_fixed_fee), checkoutFee: n(w.checkout_fee),
+      accounts: toNumber(w.accounts), agents: toNumber(w.agents), members: toNumber(w.members),
+      paidPayments: toNumber(w.paid_payments), grossVolume: toNumber(w.gross_volume), lastActivity: w.last_activity,
+      blendedRatePct: toNumber(w.blended_rate_pct), pspRatePct: toNumber(w.psp_rate_pct),
+      settlementPct: w.settlement_pct == null ? 0 : toNumber(w.settlement_pct),
+      marginRatePct: toNumber(w.margin_rate_pct), pspFixedFee: toNumber(w.psp_fixed_fee), checkoutFee: toNumber(w.checkout_fee),
     })),
   });
 }));
@@ -581,8 +581,7 @@ router.get('/activity', asyncHandler(async (req, res) => {
 
 // GET /platform/fees?from&to — itemised fees for every agency, side by side.
 router.get('/fees', asyncHandler(async (req, res) => {
-  const to = req.query.to ? new Date(req.query.to) : new Date();
-  const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 86400000);
+  const { from, to } = reportRange(req.query);
   const rows = (await query(
     `SELECT w.id AS workspace_id, w.name AS agency, COALESCE(t.currency, w.currency) AS currency,
             COUNT(re.id) FILTER (WHERE re.entry_type='sale')                    AS sales,
@@ -599,31 +598,31 @@ router.get('/fees', asyncHandler(async (req, res) => {
        LEFT JOIN LATERAL effective_platform_fee(w.id, now()) p ON true
       WHERE (t.id IS NOT NULL AND pay.id IS NOT NULL) OR re.id IS NULL
       GROUP BY w.id, w.name, COALESCE(t.currency, w.currency), p.fee_model, p.mdr_pct, p.settlement_pct, p.psp_fixed_fee, p.margin_rate_pct, p.psp_rate_pct
-      ORDER BY gross DESC`, [from.toISOString(), to.toISOString()])).rows;
+      ORDER BY gross DESC`, [from, to])).rows;
 
   const agencies = rows.map((x) => {
-    const gross = n(x.gross);
-    const providerTotal = n(x.mdr) + n(x.fixed) + n(x.settlement);
-    const ourRevenue = n(x.hp_margin) + n(x.surcharge);
+    const gross = toNumber(x.gross);
+    const providerTotal = toNumber(x.mdr) + toNumber(x.fixed) + toNumber(x.settlement);
+    const ourRevenue = toNumber(x.hp_margin) + toNumber(x.surcharge);
     return {
-      workspaceId: x.workspace_id, agency: x.agency, currency: x.currency, sales: n(x.sales), gross: r2(gross),
-      providerFees: { mdr: r2(x.mdr), fixed: r2(x.fixed), settlement: r2(x.settlement), reversalFees: r2(x.reversal_fees), total: r2(providerTotal), percentOfGross: gross ? r2(providerTotal / gross * 100) : 0 },
-      higherPays: { margin: r2(x.hp_margin), surcharge: r2(x.surcharge), total: r2(ourRevenue), percentOfGross: gross ? r2(ourRevenue / gross * 100) : 0 },
-      totalDeducted: r2(x.total_deducted),
-      rateCard: { feeModel: x.fee_model || 'flat', mdrPct: x.mdr_pct == null ? n(x.psp_rate_pct) : n(x.mdr_pct), settlementPct: n(x.settlement_pct), fixedFee: n(x.psp_fixed_fee), marginPct: n(x.margin_rate_pct) },
+      workspaceId: x.workspace_id, agency: x.agency, currency: x.currency, sales: toNumber(x.sales), gross: round2(gross),
+      providerFees: { mdr: round2(x.mdr), fixed: round2(x.fixed), settlement: round2(x.settlement), reversalFees: round2(x.reversal_fees), total: round2(providerTotal), percentOfGross: gross ? round2(providerTotal / gross * 100) : 0 },
+      higherPays: { margin: round2(x.hp_margin), surcharge: round2(x.surcharge), total: round2(ourRevenue), percentOfGross: gross ? round2(ourRevenue / gross * 100) : 0 },
+      totalDeducted: round2(x.total_deducted),
+      rateCard: { feeModel: x.fee_model || 'flat', mdrPct: x.mdr_pct == null ? toNumber(x.psp_rate_pct) : toNumber(x.mdr_pct), settlementPct: toNumber(x.settlement_pct), fixedFee: toNumber(x.psp_fixed_fee), marginPct: toNumber(x.margin_rate_pct) },
     };
   });
   res.json({
-    range: { from: from.toISOString(), to: to.toISOString() },
+    range: { from, to },
     agencies,
     // One total per currency, never one across currencies.
     totals: [...new Set(agencies.map((a) => a.currency))].sort().map((currency) => {
       const rows = agencies.filter((a) => a.currency === currency);
       return {
         currency,
-        gross: r2(rows.reduce((s, a) => s + a.gross, 0)),
-        providerFees: r2(rows.reduce((s, a) => s + a.providerFees.total, 0)),
-        higherPaysRevenue: r2(rows.reduce((s, a) => s + a.higherPays.total, 0)),
+        gross: round2(rows.reduce((s, a) => s + a.gross, 0)),
+        providerFees: round2(rows.reduce((s, a) => s + a.providerFees.total, 0)),
+        higherPaysRevenue: round2(rows.reduce((s, a) => s + a.higherPays.total, 0)),
       };
     }),
   });

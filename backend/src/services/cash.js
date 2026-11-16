@@ -6,7 +6,7 @@
 // reserve, `owed` is what accounts and agents are still due. The shortfall
 // is the cash the agency must front if it pays in full now.
 
-const round2 = (v) => Math.round(v * 100) / 100;
+const { round2 } = require('../lib/money');
 
 function cashPosition({ owed, received, held }) {
   const available = round2(received - held);

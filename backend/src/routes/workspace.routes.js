@@ -13,7 +13,7 @@ const currencies = require('../services/currencies.service');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
-const n = (v) => (v == null ? 0 : Number(v));
+const { toNumber } = require('../lib/money');
 
 const LABELS = { accountLabel: 'account_label', accountLabelPlural: 'account_label_plural', agentLabel: 'agent_label', agentLabelPlural: 'agent_label_plural' };
 
@@ -23,7 +23,7 @@ const publicWorkspace = (w) => ({
   minLinkAmount: w.min_link_amount == null ? null : Number(w.min_link_amount),
   maxLinkAmount: w.max_link_amount == null ? null : Number(w.max_link_amount),
   rollingReserveEnabled: !!w.rolling_reserve_enabled,
-  rollingReservePct: n(w.rolling_reserve_pct),
+  rollingReservePct: toNumber(w.rolling_reserve_pct),
   // The agency's own MantaPay identity: the MID it sends on every link, and
   // the endpoint MantaPay must be told to notify.
   merchantId: w.merchant_id,
@@ -75,7 +75,7 @@ router.patch('/', requirePermission('settings.edit'), asyncHandler(async (req, r
     const current = (await query(
       'SELECT rolling_reserve_enabled, rolling_reserve_pct FROM workspaces WHERE id = $1', [wid(req)])).rows[0];
     const enabled = 'rollingReserveEnabled' in body ? body.rollingReserveEnabled : current.rolling_reserve_enabled;
-    const pct = 'rollingReservePct' in body ? body.rollingReservePct : n(current.rolling_reserve_pct);
+    const pct = 'rollingReservePct' in body ? body.rollingReservePct : toNumber(current.rolling_reserve_pct);
     if (enabled && pct === 0) {
       return badRequest(res, 'rollingReservePct must be above 0 when rolling reserve is enabled', ['rollingReservePct']);
     }
@@ -139,19 +139,19 @@ router.get('/platform-fee', requirePermission('payments.view'), asyncHandler(asy
   // treasury and belongs to the roles that run the agency.
   const seesTreasury = hasPermission(req.access, 'data.view_all');
   res.json({
-    blendedRatePct: n(r.blended),
-    pspRatePct: n(r.psp_rate_pct),
-    settlementPct: n(r.settlement_pct),
-    marginRatePct: n(r.margin_rate_pct),
-    pspFixedFee: n(r.psp_fixed_fee),
-    checkoutFee: n(r.checkout_fee),
+    blendedRatePct: toNumber(r.blended),
+    pspRatePct: toNumber(r.psp_rate_pct),
+    settlementPct: toNumber(r.settlement_pct),
+    marginRatePct: toNumber(r.margin_rate_pct),
+    pspFixedFee: toNumber(r.psp_fixed_fee),
+    checkoutFee: toNumber(r.checkout_fee),
     providerRefundAvailable: !!config.mantapayRefundEnabled,
     ...(seesTreasury ? {
-      refundFee: n(r.refund_fee),
-      chargebackFee: n(r.chargeback_fee),
-      declineFee: n(r.decline_fee),
-      reservePct: n(r.reserve_pct),
-      reserveReleaseDays: n(r.reserve_release_days),
+      refundFee: toNumber(r.refund_fee),
+      chargebackFee: toNumber(r.chargeback_fee),
+      declineFee: toNumber(r.decline_fee),
+      reservePct: toNumber(r.reserve_pct),
+      reserveReleaseDays: toNumber(r.reserve_release_days),
     } : {}),
   });
 }));

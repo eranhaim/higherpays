@@ -20,16 +20,12 @@ const currencies = require('../services/currencies.service');
 
 const router = express.Router({ mergeParams: true });
 const { wid } = require('../lib/scope');
-const num = (v) => Number(v || 0);
-
-function range(req) {
-  const to = req.query.to ? new Date(req.query.to) : new Date();
-  const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 86400000);
-  return { from: from.toISOString(), to: to.toISOString(), days: Math.max(1, Math.round((to - from) / 86400000)) };
-}
+const { toNumber } = require('../lib/money');
+const { DAY_MS, reportRange } = require('../lib/reportRange');
 
 router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, res) => {
-  const { from, to, days } = range(req);
+  const { from, to } = reportRange(req.query);
+  const days = Math.max(1, Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS));
 
   const out = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
@@ -72,13 +68,13 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
         COALESCE(-SUM(re.agency_amount)  FILTER (WHERE re.entry_type IN ('chargeback','refund')),0) AS cb_agency_borne,
         COUNT(DISTINCT p.customer_id) FILTER (WHERE re.entry_type='sale')          AS buyers
       ${RE_FROM} ${RE_WHERE}`, P)).rows[0];
-    const revenue = num(h.revenue), agencyKeep = num(h.agency_keep), saleCount = num(h.sale_count);
+    const revenue = toNumber(h.revenue), agencyKeep = toNumber(h.agency_keep), saleCount = toNumber(h.sale_count);
 
     const ts = (await c.query(`
       SELECT to_char(date_trunc('day', t.occurred_at),'YYYY-MM-DD') AS d,
              COALESCE(SUM(re.gross),0) AS gross, COALESCE(SUM(re.distributable),0) AS net
       ${RE_FROM} ${RE_WHERE} GROUP BY 1 ORDER BY 1`, P)).rows
-      .map((r) => ({ d: r.d, net: num(r.net), ...(seesAgencyFigures ? { gross: num(r.gross) } : {}) }));
+      .map((r) => ({ d: r.d, net: toNumber(r.net), ...(seesAgencyFigures ? { gross: toNumber(r.gross) } : {}) }));
 
     // Link funnel: links issued in the window, and what happened to them.
     const linkWhere = `WHERE pl.workspace_id = $3 AND pl.created_at >= $1 AND pl.created_at <= $2 AND pl.archived_at IS NULL AND pl.currency = ${CUR}`;
@@ -90,8 +86,8 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
         COUNT(*) FILTER (WHERE pl.status = 'cancelled') AS cancelled,
         COUNT(*) FILTER (WHERE pl.status = 'expired' OR (pl.status = 'active' AND pl.expires_at < now())) AS expired
       FROM payment_links pl ${scopedLinkWhere}`, P)).rows[0];
-    const created = num(fn.created);
-    const failed = num((await c.query(`
+    const created = toNumber(fn.created);
+    const failed = toNumber((await c.query(`
       SELECT COUNT(*) AS c FROM payments p
        WHERE p.workspace_id = $3 AND p.status = 'failed' AND p.archived_at IS NULL AND p.currency = ${CUR}
          AND p.occurred_at >= $1 AND p.occurred_at <= $2
@@ -118,7 +114,7 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
     const perCust = (await c.query(`
       SELECT p.customer_id AS id, COALESCE(SUM(${REVENUE}),0) AS rev
       ${RE_FROM} ${RE_WHERE} AND re.entry_type='sale' AND p.customer_id IS NOT NULL
-      GROUP BY p.customer_id ORDER BY rev DESC`, P)).rows.map((r) => num(r.rev));
+      GROUP BY p.customer_id ORDER BY rev DESC`, P)).rows.map((r) => toNumber(r.rev));
     const totRev = perCust.reduce((a, b) => a + b, 0) || 1;
     const topShare = (share) => { const k = Math.max(1, Math.ceil(perCust.length * share)); return Math.round(perCust.slice(0, k).reduce((a, b) => a + b, 0) / totRev * 100); };
 
@@ -135,7 +131,7 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
       SELECT COALESCE(ca.name, 'Uncategorised') AS category, COALESCE(SUM(${REVENUE}),0) AS rev
       ${RE_FROM} LEFT JOIN categories ca ON ca.id = p.category_id
       ${RE_WHERE} AND re.entry_type='sale' GROUP BY ca.name ORDER BY rev DESC`, P)).rows
-      .map((r) => ({ category: r.category, revenue: num(r.rev) }));
+      .map((r) => ({ category: r.category, revenue: toNumber(r.rev) }));
     const nr = (await c.query(`
       WITH firsts AS (SELECT customer_id, MIN(occurred_at) AS first_ts FROM payments WHERE workspace_id = $3 AND status='paid' AND archived_at IS NULL GROUP BY customer_id)
       SELECT COALESCE(SUM(${REVENUE}) FILTER (WHERE f.first_ts >= $1),0) AS new_rev,
@@ -147,53 +143,53 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
       SELECT EXTRACT(DOW FROM t.occurred_at)::int AS dow, EXTRACT(HOUR FROM t.occurred_at)::int AS hr, COALESCE(SUM(${REVENUE}),0) AS rev
       ${RE_FROM} ${RE_WHERE} AND re.entry_type='sale' GROUP BY 1,2`, P)).rows;
     const heatmap = Array.from({ length: 7 }, () => Array(24).fill(0));
-    heatRows.forEach((r) => { heatmap[r.dow][r.hr] = num(r.rev); });
+    heatRows.forEach((r) => { heatmap[r.dow][r.hr] = toNumber(r.rev); });
 
     return {
       range: { from, to, days }, currency, scope: seesAgencyFigures ? 'agency' : scope.kind,
       timeseries: ts,
       headline: {
-        net: num(h.net),
+        net: toNumber(h.net),
         ...(seesAgencyFigures ? {
           gross: revenue,
-          platformFee: num(h.platform_fee),
-          accountPayout: num(h.account_payout), agentPayout: num(h.agent_payout), agencyKeep,
+          platformFee: toNumber(h.platform_fee),
+          accountPayout: toNumber(h.account_payout), agentPayout: toNumber(h.agent_payout), agencyKeep,
           takeRatePct: revenue ? +(agencyKeep / revenue * 100).toFixed(1) : 0,
         } : {}),
         aov: saleCount ? +(revenue / saleCount).toFixed(2) : 0,
-        paidCount: saleCount, uniqueBuyers: num(h.buyers),
+        paidCount: saleCount, uniqueBuyers: toNumber(h.buyers),
       },
       reversals: {
-        count: num(h.cb_count), valueReversed: num(h.cb_value),
-        ratePct: saleCount ? +(num(h.cb_count) / saleCount * 100).toFixed(2) : 0,
-        rateValuePct: revenue ? +(num(h.cb_value) / revenue * 100).toFixed(2) : 0,
+        count: toNumber(h.cb_count), valueReversed: toNumber(h.cb_value),
+        ratePct: saleCount ? +(toNumber(h.cb_count) / saleCount * 100).toFixed(2) : 0,
+        rateValuePct: revenue ? +(toNumber(h.cb_value) / revenue * 100).toFixed(2) : 0,
         // The chargeback fee is a fee line, so it stays with the agency roles.
         ...(seesAgencyFigures ? {
-          feeCost: num(h.cb_fee),
-          byBearer: { account: num(h.cb_account_borne), agency: num(h.cb_agency_borne) },
+          feeCost: toNumber(h.cb_fee),
+          byBearer: { account: toNumber(h.cb_account_borne), agency: toNumber(h.cb_agency_borne) },
         } : {}),
       },
       funnel: {
-        created, paid: num(fn.paid), failed, expired: num(fn.expired), cancelled: num(fn.cancelled),
-        conversionPct: created ? Math.round(num(fn.paid) / created * 100) : 0,
+        created, paid: toNumber(fn.paid), failed, expired: toNumber(fn.expired), cancelled: toNumber(fn.cancelled),
+        conversionPct: created ? Math.round(toNumber(fn.paid) / created * 100) : 0,
         revenuePerLink: created ? +(revenue / created).toFixed(2) : 0,
       },
       // Per-party tables compare people to each other, so they belong to the
       // roles that manage the workspace.
       agents: seesAgencyFigures ? agents.map((r) => {
-        const l = byAgent[r.agent_id]; const cCreated = l ? num(l.created) : 0; const cPaid = l ? num(l.paid) : 0;
-        return { name: r.name, revenue: num(r.revenue), agencyProfit: num(r.agency_profit), sales: num(r.sales),
+        const l = byAgent[r.agent_id]; const cCreated = l ? toNumber(l.created) : 0; const cPaid = l ? toNumber(l.paid) : 0;
+        return { name: r.name, revenue: toNumber(r.revenue), agencyProfit: toNumber(r.agency_profit), sales: toNumber(r.sales),
           conversionPct: cCreated ? Math.round(cPaid / cCreated * 100) : null,
-          aov: num(r.sales) ? num(r.revenue) / num(r.sales) : 0 };
+          aov: toNumber(r.sales) ? toNumber(r.revenue) / toNumber(r.sales) : 0 };
       }) : [],
       accounts: seesAgencyFigures ? accounts.map((r) => ({
-        name: r.name, revenue: num(r.revenue), accountPayout: num(r.account_payout), agencyProfit: num(r.agency_profit),
+        name: r.name, revenue: toNumber(r.revenue), accountPayout: toNumber(r.account_payout), agencyProfit: toNumber(r.agency_profit),
       })) : [],
       customers: {
-        repeatRatePct: num(repeat.any_c) ? Math.round(num(repeat.repeat_c) / num(repeat.any_c) * 100) : 0,
-        freq: +num(repeat.freq).toFixed(1),
+        repeatRatePct: toNumber(repeat.any_c) ? Math.round(toNumber(repeat.repeat_c) / toNumber(repeat.any_c) * 100) : 0,
+        freq: +toNumber(repeat.freq).toFixed(1),
         concentration: { top1: topShare(0.01), top5: topShare(0.05), top10: topShare(0.10) },
-        categories, newVsReturning: { newRev: num(nr.new_rev), retRev: num(nr.ret_rev) },
+        categories, newVsReturning: { newRev: toNumber(nr.new_rev), retRev: toNumber(nr.ret_rev) },
       },
       heatmap,
     };

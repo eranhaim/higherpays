@@ -15,8 +15,7 @@ const config = require('../config');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
-const n = (v) => Number(v || 0);
-const round2 = (v) => Math.round(v * 100) / 100;
+const { toNumber, round2 } = require('../lib/money');
 
 // A daily export is a few hundred KB; anything near the JSON body limit is not
 // a settlement report.
@@ -144,13 +143,13 @@ router.get('/', requirePermission('revenue.view'), asyncHandler(async (req, res)
     nextCursor,
     items: settlements.map((s) => {
       const o = ours.get(s.id) || {};
-      const reported = { volume: n(s.volume), sales: n(s.total_transactions), declined: n(s.declined), refunds: n(s.refunds), chargebacks: n(s.chargebacks), fees: n(s.total_fees) };
-      const mine = { volume: n(o.gross), sales: n(o.sales), declined: n(o.declined), refunds: n(o.refunds), chargebacks: n(o.chargebacks), fees: n(o.est_psp_fee) };
+      const reported = { volume: toNumber(s.volume), sales: toNumber(s.total_transactions), declined: toNumber(s.declined), refunds: toNumber(s.refunds), chargebacks: toNumber(s.chargebacks), fees: toNumber(s.total_fees) };
+      const mine = { volume: toNumber(o.gross), sales: toNumber(o.sales), declined: toNumber(o.declined), refunds: toNumber(o.refunds), chargebacks: toNumber(o.chargebacks), fees: toNumber(o.est_psp_fee) };
       return {
         id: s.id, currency: s.currency, periodStart: s.period_start, periodEnd: s.period_end,
         settlementDate: s.settlement_date, paid: s.paid,
-        volume: n(s.volume), totalFees: n(s.total_fees), net: n(s.net), reserve: n(s.reserve), debit: n(s.debit), credit: n(s.credit),
-        breakdown: { mdr: n(s.mdr), volumeFee: n(s.volume_fee), approvedCost: n(s.approved_cost), declineCost: n(s.decline_cost), refundCost: n(s.refund_cost), chargebackCost: n(s.chargeback_cost) },
+        volume: toNumber(s.volume), totalFees: toNumber(s.total_fees), net: toNumber(s.net), reserve: toNumber(s.reserve), debit: toNumber(s.debit), credit: toNumber(s.credit),
+        breakdown: { mdr: toNumber(s.mdr), volumeFee: toNumber(s.volume_fee), approvedCost: toNumber(s.approved_cost), declineCost: toNumber(s.decline_cost), refundCost: toNumber(s.refund_cost), chargebackCost: toNumber(s.chargeback_cost) },
         reportSettings: s.report_settings,
         reconciliation: {
           reported, ours: mine,

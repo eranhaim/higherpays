@@ -11,13 +11,8 @@ const currencies = require('../services/currencies.service');
 
 const router = express.Router({ mergeParams: true });
 const { wid, uid } = require('../lib/scope');
-const num = (v) => Number(v || 0);
-
-function range(req, source) {
-  const to = source.to ? new Date(source.to) : new Date();
-  const from = source.from ? new Date(source.from) : new Date(Date.now() - 30 * 86400000);
-  return { F: from.toISOString(), T: to.toISOString() };
-}
+const { toNumber } = require('../lib/money');
+const { reportRange } = require('../lib/reportRange');
 
 // GET /?limit&q&payeeType&status&from&to — payout history, newest first.
 router.get('/', requirePermission('revenue.view'), asyncHandler(async (req, res) => {
@@ -48,7 +43,7 @@ router.get('/', requirePermission('revenue.view'), asyncHandler(async (req, res)
   res.json({
     payouts: rows.map((r) => ({
       id: r.id, payeeType: r.payee_type, payee: r.payee, periodStart: r.period_start, periodEnd: r.period_end,
-      amount: num(r.net), currency: r.currency, status: r.status, createdAt: r.created_at,
+      amount: toNumber(r.net), currency: r.currency, status: r.status, createdAt: r.created_at,
     })),
   });
 }));
@@ -56,7 +51,7 @@ router.get('/', requirePermission('revenue.view'), asyncHandler(async (req, res)
 // GET /breakdown?from&to — accrued owed per account and per agent, the reserve
 // the provider holds, and whether the agency can pay everyone today.
 router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (req, res) => {
-  const { F, T } = range(req, req.query);
+  const { from, to } = reportRange(req.query);
   // Every figure here is in one currency; summing across currencies would be meaningless.
   const currency = await currencies.resolveReportingCurrency({ query }, wid(req), req.query.currency);
   const baseCurrency = await currencies.getBaseCurrency({ query }, wid(req));
@@ -83,7 +78,7 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
          WHERE p.workspace_id = $3 AND p.account_id = a.id
            AND p.period_start <= $2::date AND p.period_end >= $1::date LIMIT 1
       ) paid ON true
-     WHERE a.workspace_id = $3 ORDER BY owed DESC`, [F, T, wid(req), currency, baseCurrency])).rows;
+     WHERE a.workspace_id = $3 ORDER BY owed DESC`, [from, to, wid(req), currency, baseCurrency])).rows;
   const perAgent = (await query(`
     SELECT ag.id, u.full_name AS name, COALESCE(agg.owed,0) AS owed, COALESCE(agg.sales,0) AS sales
       FROM agents ag JOIN users u ON u.id = ag.user_id
@@ -95,20 +90,20 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
           JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
          WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND t.currency = $4 GROUP BY re.agent_id
       ) agg ON agg.agent_id = ag.id
-     WHERE ag.workspace_id = $3 ORDER BY owed DESC`, [F, T, wid(req), currency])).rows;
+     WHERE ag.workspace_id = $3 ORDER BY owed DESC`, [from, to, wid(req), currency])).rows;
 
   // The reserve MantaPay still holds is the agency's own money, but until it
   // is released the agency fronts it.
   const reserve = await getProviderReserve({ query }, wid(req), currency);
 
-  const received = num((await query(
+  const received = toNumber((await query(
     `SELECT COALESCE(SUM(re.distributable - re.chargeback_fee),0) AS received
        FROM revenue_entries re
        JOIN transactions t ON t.id = re.transaction_id
        JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
-      WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND t.currency = $4`, [F, T, wid(req), currency])).rows[0].received);
-  const accountsOwed = perAccount.reduce((s, r) => s + num(r.owed), 0);
-  const agentsOwed = perAgent.reduce((s, r) => s + num(r.owed), 0);
+      WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND t.currency = $4`, [from, to, wid(req), currency])).rows[0].received);
+  const accountsOwed = perAccount.reduce((s, r) => s + toNumber(r.owed), 0);
+  const agentsOwed = perAgent.reduce((s, r) => s + toNumber(r.owed), 0);
   const summary = (await query(
     `SELECT COALESCE(SUM(re.gross) FILTER (WHERE re.entry_type='sale'),0) AS gross_sales,
             COALESCE(SUM(re.distributable),0) AS distributable,
@@ -117,7 +112,7 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
        JOIN transactions t ON t.id = re.transaction_id
        JOIN payments pay ON pay.id = t.payment_id AND pay.archived_at IS NULL
       WHERE re.workspace_id = $3 AND t.occurred_at >= $1 AND t.occurred_at <= $2 AND t.currency = $4`,
-    [F, T, wid(req), currency])).rows[0];
+    [from, to, wid(req), currency])).rows[0];
   const paidToDate = (await query(
     `SELECT COALESCE(SUM(net),0) AS paid
        FROM payouts
@@ -125,19 +120,19 @@ router.get('/breakdown', requirePermission('revenue.view'), asyncHandler(async (
     [wid(req), currency])).rows[0].paid;
 
   res.json({
-    range: { from: F, to: T },
+    range: { from, to },
     currency,
     summary: {
-      grossSales: num(summary.gross_sales),
-      distributable: num(summary.distributable),
-      successfulSales: num(summary.successful_sales),
-      paidToDate: num(paidToDate),
+      grossSales: toNumber(summary.gross_sales),
+      distributable: toNumber(summary.distributable),
+      successfulSales: toNumber(summary.successful_sales),
+      paidToDate: toNumber(paidToDate),
       currentlyOwed: accountsOwed + agentsOwed,
     },
     perAccount: perAccount.map((r) => ({
-      id: r.id, name: r.name, payModel: r.pay_model, revenue: num(r.revenue), owed: num(r.owed),
+      id: r.id, name: r.name, payModel: r.pay_model, revenue: toNumber(r.revenue), owed: toNumber(r.owed),
     })),
-    perAgent: perAgent.map((r) => ({ id: r.id, name: r.name, owed: num(r.owed), sales: num(r.sales) })),
+    perAgent: perAgent.map((r) => ({ id: r.id, name: r.name, owed: toNumber(r.owed), sales: toNumber(r.sales) })),
     reserve,
     cash: cashPosition({ owed: accountsOwed + agentsOwed, received, held: reserve.held }),
   });
@@ -204,17 +199,17 @@ router.post('/run', requirePermission('revenue.manage'), asyncHandler(async (req
   const { payeeType, targetId = null } = req.body || {};
   const sql = PAYOUT_SQL[payeeType];
   if (!sql) return res.status(400).json({ error: 'invalid_payeeType' });
-  const { F, T } = range(req, req.body || {});
+  const { from, to } = reportRange(req.body);
 
   const runs = await withTransaction(async (c) => {
     await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`payout:${wid(req)}:${payeeType}`]);
     const cur = await currencies.resolveReportingCurrency(c, wid(req), req.body?.currency);
     const baseCurrency = await currencies.getBaseCurrency(c, wid(req));
-    const rows = (await c.query(sql.unpaid, [wid(req), F, T, targetId, cur])).rows;
+    const rows = (await c.query(sql.unpaid, [wid(req), from, to, targetId, cur])).rows;
     const out = [];
     for (const r of rows) {
-      const pay = (await c.query(sql.insert, [wid(req), r.rid, r.ps || F.slice(0, 10), r.pe || T.slice(0, 10), r.amount, cur])).rows[0];
-      const settled = await c.query(sql.settle, [pay.id, r.rid, F, T, wid(req), cur]);
+      const pay = (await c.query(sql.insert, [wid(req), r.rid, r.ps || from.slice(0, 10), r.pe || to.slice(0, 10), r.amount, cur])).rows[0];
+      const settled = await c.query(sql.settle, [pay.id, r.rid, from, to, wid(req), cur]);
       if (settled.rowCount === 0) throw new Error(`payout ${pay.id} settled no entries`);
       out.push({ recipientId: r.rid, amount: Number(r.amount), payoutId: pay.id });
     }
@@ -233,10 +228,10 @@ router.post('/run', requirePermission('revenue.manage'), asyncHandler(async (req
              SELECT 1 FROM payouts p
               WHERE p.workspace_id = $1 AND p.account_id = a.id
                 AND p.period_start <= $4::date AND p.period_end >= $3::date)`,
-        [wid(req), targetId, F, T])).rows;
+        [wid(req), targetId, from, to])).rows;
       for (const s of salaried) {
         const pay = (await c.query(sql.insert,
-          [wid(req), s.id, F.slice(0, 10), T.slice(0, 10), s.salary_amount, cur])).rows[0];
+          [wid(req), s.id, from.slice(0, 10), to.slice(0, 10), s.salary_amount, cur])).rows[0];
         out.push({ recipientId: s.id, amount: Number(s.salary_amount), payoutId: pay.id, salary: true });
       }
     }

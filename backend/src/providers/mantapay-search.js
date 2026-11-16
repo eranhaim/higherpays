@@ -21,6 +21,7 @@ const crypto = require('crypto');
 const auth = require('./mantapay-auth');
 const reply = require('./mantapay-reply');
 const { fetchWithTimeout } = require('./http');
+const { toNumber } = require('../lib/money');
 
 const SEARCH_PATH = '/v2/transactions.svc/Search';
 
@@ -52,19 +53,18 @@ function bodySignature(rawBody, salt) {
   return `bytes-SHA256, ${h}`;
 }
 
-const num = (v) => (v == null ? 0 : Number(v));
 
 /** Flatten one search result into the shape our ledger reconciles against. */
 function normaliseTransaction(t) {
   const f = t.TransactionFees || {};
   const fees = {
-    debit: num(f.DebitFee),                 // the processing fee for this transaction
-    transaction: num(f.TransactionFee),     // per-transaction fixed
-    handling: num(f.HandlingFee),
-    ratio: num(f.RatioFee),
-    chargeback: num(f.ChargebackFee),
-    chargebackDebit: num(f.DebitFeeChb),
-    clarification: num(f.ClarificationFee),
+    debit: toNumber(f.DebitFee),                 // the processing fee for this transaction
+    transaction: toNumber(f.TransactionFee),     // per-transaction fixed
+    handling: toNumber(f.HandlingFee),
+    ratio: toNumber(f.RatioFee),
+    chargeback: toNumber(f.ChargebackFee),
+    chargebackDebit: toNumber(f.DebitFeeChb),
+    clarification: toNumber(f.ClarificationFee),
   };
   fees.total = fees.debit + fees.transaction + fees.handling + fees.ratio
              + fees.chargeback + fees.chargebackDebit + fees.clarification;
@@ -73,9 +73,9 @@ function normaliseTransaction(t) {
     transId: t.ID != null ? String(t.ID) : null,
     orderId: t.OrderId != null ? String(t.OrderId) : null,   // OUR reference
     date: parseDotNetDate(t.InsertDate),
-    amount: num(t.Amount),
+    amount: toNumber(t.Amount),
     currency: t.CurrencyIso || null,
-    sourceAmount: num(t.SourceAmount),
+    sourceAmount: toNumber(t.SourceAmount),
     sourceCurrency: t.SourceCurrency || null,
     replyCode: reply.readReplyCode(t),
     replyDescription: reply.readReplyDescription(t),
