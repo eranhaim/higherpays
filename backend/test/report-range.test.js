@@ -16,5 +16,6 @@ test('given bounds are returned as ISO instants', () => {
 });
 
 test('a bound that is not a date is a 400, not a 500', () => {
-  assert.throws(() => reportRange({ from: 'yesterday' }), (err) => err.status === 400);
+  assert.throws(() => reportRange({ from: 'yesterday' }),
+    (err) => err.status === 400 && err.toJSON().detail === 'from must be a date');
 });

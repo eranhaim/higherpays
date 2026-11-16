@@ -1,11 +1,11 @@
 'use strict';
-const { BadRequestError } = require('./errors');
+const { dateError } = require('../util/validate');
 
 const DAY_MS = 86_400_000;
 
 function toDate(value, field) {
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) throw new BadRequestError(`${field} must be a date`, { fields: [field] });
+  if (Number.isNaN(date.getTime())) throw dateError(field);
   return date;
 }
 

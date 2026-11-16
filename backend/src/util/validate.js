@@ -1,4 +1,5 @@
 'use strict';
+const { BadRequestError } = require('../lib/errors');
 
 // Minimal validation helpers — enough to keep handlers clean without a library.
 const isStr = (v, max = 10000) => typeof v === 'string' && v.length > 0 && v.length <= max;
@@ -8,20 +9,24 @@ function badRequest(res, detail, fields) {
   return res.status(400).json({ error: 'validation_failed', detail, fields });
 }
 
+// The same body as badRequest, for code that throws instead of answering.
+function dateError(field) {
+  const detail = `${field} must be a date`;
+  return new BadRequestError(detail, { detail, fields: [field] });
+}
+
 /**
- * The name of the `from`/`to` filter that is not a date, or null when the
- * range is usable. Either bound may be absent: a half-open range is a filter,
- * not an error.
+ * Throws a 400 when the `from` or `to` filter is not a date. Either bound may
+ * be absent: a half-open range is a filter, not an error.
  *
  * A list endpoint casts these to timestamptz, and Postgres raises on a value
  * it cannot read rather than returning NULL — so an unreadable bound has to be
  * caught here or it becomes a 500.
  */
-function invalidDateFilter(query) {
+function assertDateFilter(query) {
   const isDate = (v) => v == null || v === '' || (typeof v === 'string' && !Number.isNaN(Date.parse(v)));
-  if (!isDate(query.from)) return 'from';
-  if (!isDate(query.to)) return 'to';
-  return null;
+  if (!isDate(query.from)) throw dateError('from');
+  if (!isDate(query.to)) throw dateError('to');
 }
 
 // CSV builder (RFC-4180-ish; quotes fields containing comma/quote/newline).
@@ -33,4 +38,4 @@ function toCSV(headers, rows) {
   return [headers.map(esc).join(','), ...rows.map((r) => r.map(esc).join(','))].join('\r\n');
 }
 
-module.exports = { isStr, isOptStr, badRequest, invalidDateFilter, toCSV };
+module.exports = { isStr, isOptStr, badRequest, dateError, assertDateFilter, toCSV };

@@ -8,7 +8,7 @@ const {
 } = require('../middleware');
 const { asyncHandler } = require('../lib/http');
 const { audit } = require('../util/audit');
-const { isStr, isOptStr, badRequest, invalidDateFilter, toCSV } = require('../util/validate');
+const { isStr, isOptStr, badRequest, assertDateFilter, toCSV } = require('../util/validate');
 const { parseLimit, decodeCursor, page } = require('../lib/cursor');
 const { resolveDataScope, scopeParams } = require('../auth/dataScope');
 const { hasPermission } = require('../auth/permissions');
@@ -184,8 +184,7 @@ async function listPayments(c, req, { cursor, limit, canFilterFees }) {
 
 // GET /?limit&cursor&sort&dir&status&accountId&agentId&customerId&categoryId&from&to&q&needsDetails&minAmount&maxAmount&minFee&maxFee
 router.get('/', requirePermission('payments.view'), asyncHandler(async (req, res) => {
-  const invalidDate = invalidDateFilter(req.query);
-  if (invalidDate) return badRequest(res, `${invalidDate} must be a date`, [invalidDate]);
+  assertDateFilter(req.query);
   const limit = parseLimit(req.query.limit);
   const cursor = decodeCursor(req.query.cursor);
   const seesFees = hasPermission(req.access, 'data.view_all');
@@ -198,8 +197,7 @@ router.get('/', requirePermission('payments.view'), asyncHandler(async (req, res
 
 // GET /summary — the filtered totals across all matching rows, before pagination.
 router.get('/summary', requirePermission('payments.view'), asyncHandler(async (req, res) => {
-  const invalidDate = invalidDateFilter(req.query);
-  if (invalidDate) return badRequest(res, `${invalidDate} must be a date`, [invalidDate]);
+  assertDateFilter(req.query);
   const out = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
     // Every total below is in one currency; summing across currencies would be meaningless.
@@ -272,8 +270,7 @@ router.get('/provider-reserve', requirePermission('payments.view'), asyncHandler
 
 // GET /rolling-reserve — the agency's own reserve ledger for the date range.
 router.get('/rolling-reserve', requirePermission('revenue.view'), asyncHandler(async (req, res) => {
-  const invalidDate = invalidDateFilter(req.query);
-  if (invalidDate) return badRequest(res, `${invalidDate} must be a date`, [invalidDate]);
+  assertDateFilter(req.query);
   if (!hasPermission(req.access, 'data.view_all')) return res.json({});
   const currency = await currencies.resolveReportingCurrency({ query }, wid(req), req.query.currency);
   res.json(await getRollingReserve({ query }, wid(req), currency, { from: req.query.from, to: req.query.to }));
@@ -380,8 +377,7 @@ const exportColumns = (labels, { showProviderName = false } = {}) => [
 // range cannot hold a connection open building a file nobody can open.
 const EXPORT_MAX_ROWS = 20000;
 router.get('/export', requirePermission('payments.export'), asyncHandler(async (req, res) => {
-  const invalidDate = invalidDateFilter(req.query);
-  if (invalidDate) return badRequest(res, `${invalidDate} must be a date`, [invalidDate]);
+  assertDateFilter(req.query);
   const seesFees = hasPermission(req.access, 'data.view_all');
   const workspace = (await query(
     'SELECT account_label, agent_label FROM workspaces WHERE id=$1',
