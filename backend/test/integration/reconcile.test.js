@@ -174,3 +174,23 @@ test('a closed link MantaPay still calls pending records nothing', async () => {
     'SELECT late_check_at FROM payment_links WHERE id = $1', [link.id])).rows[0];
   assert.ok(stamp.late_check_at, 'the sweep records that it asked');
 });
+
+// A webhook whose processing timed out stays unprocessed. When the reconciler
+// later records the same outcome, the inbox row must close, or /health stays red.
+test('recording an outcome closes the failed webhook that carried it', async () => {
+  const tenant = await createTenant(app);
+  const account = await createAccount(app, tenant);
+  const link = await createLink(tenant, account);
+  const ws = await workspaceOf(tenant);
+  const event = (await pool.query(
+    `INSERT INTO webhook_events
+       (workspace_id, provider, event_type, provider_event_id, signature_valid, payload, order_reference, processing_error)
+     VALUES ($1, 'mantapay', 'approved', '900200', true, '{}', $2, '57014')
+     RETURNING id`, [tenant.workspaceId, link.referenceId])).rows[0];
+
+  await withStubbedStatus([statusReply('approved', '900200')], () => reconcile(ws));
+
+  assert.deepEqual(await paymentsOf(link.id), [{ status: 'paid' }]);
+  const row = (await pool.query('SELECT processed FROM webhook_events WHERE id = $1', [event.id])).rows[0];
+  assert.equal(row.processed, true);
+});

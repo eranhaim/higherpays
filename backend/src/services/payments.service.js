@@ -197,6 +197,20 @@ async function recordPaymentOutcome(client, workspaceId, params) {
     idempotencyKey: providerTransactionId,
   });
 
+  // 3b) Close the provider notification this outcome answers. The webhook
+  //     closes its own row, but when its processing failed the reconciler
+  //     records the outcome, and an open row keeps /health red. SKIP LOCKED:
+  //     a webhook still processing the row holds it and closes it itself, and
+  //     waiting for it here would take the two locks in the opposite order.
+  await client.query(
+    `UPDATE webhook_events SET processed = true, processed_at = now()
+      WHERE id IN (
+        SELECT id FROM webhook_events
+         WHERE workspace_id = $1 AND provider = 'mantapay' AND provider_event_id = $2
+           AND order_reference = $3 AND event_type = $4 AND processed = false
+           FOR UPDATE SKIP LOCKED)`,
+    [workspaceId, providerTransactionId, linkReference, status]);
+
   // 4) A paid single-use link waits for the agent to complete the details.
   //    A reusable link stays open; a declined attempt leaves either untouched
   //    so the customer can try again.
