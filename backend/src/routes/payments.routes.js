@@ -18,8 +18,8 @@ const paymentsService = require('../services/payments.service');
 const { recordLinkEvent } = require('../services/linkEvents');
 const config = require('../config');
 const currencies = require('../services/currencies.service');
-const { getProviderReserve } = require('../services/providerReserve');
-const { getRollingReserve, revenueAdjustment, releaseRollingReserve } = require('../services/rollingReserve');
+const { getProviderReserve, providerReserveOnPaymentsSql } = require('../services/providerReserve');
+const { getRollingReserve, reserveHeldBack, releaseRollingReserve } = require('../services/rollingReserve');
 const { round2 } = require('../lib/money');
 const {
   enqueueLifecycleEventForReference,
@@ -198,6 +198,7 @@ router.get('/', requirePermission('payments.view'), asyncHandler(async (req, res
 // GET /summary — the filtered totals across all matching rows, before pagination.
 router.get('/summary', requirePermission('payments.view'), asyncHandler(async (req, res) => {
   assertDateFilter(req.query);
+  const seesFees = hasPermission(req.access, 'data.view_all');
   const out = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
     // Every total below is in one currency; summing across currencies would be meaningless.
@@ -224,27 +225,27 @@ router.get('/summary', requirePermission('payments.view'), asyncHandler(async (r
               COALESCE(SUM(surcharge) FILTER (
                 WHERE status IN ('paid', 'refunded') AND review_reason IS NULL
               ), 0) AS checkout_fees,
+              ${seesFees ? providerReserveOnPaymentsSql('$1', '$17::char(3)',
+                "SELECT id FROM matching WHERE status = 'paid' AND review_reason IS NULL") : '0'} AS provider_reserve,
               $17::char(3) AS currency
          FROM matching`,
-      [...paymentFilterParams(req, scope, {
-        canFilterFees: hasPermission(req.access, 'data.view_all'),
-      }), currency])).rows[0];
-    const rollingReserve = hasPermission(req.access, 'data.view_all')
-      ? await getRollingReserve(c, wid(req), currency, { from: req.query.from, to: req.query.to })
-      : null;
-    return { row, rollingReserve };
+      [...paymentFilterParams(req, scope, { canFilterFees: seesFees }), currency])).rows[0];
+    // The agency's revenue and profit leave out every reserve; the fee figures
+    // are the platform's and keep the full gross.
+    const heldBack = seesFees ? reserveHeldBack(Number(row.provider_reserve), await getRollingReserve(
+      c, wid(req), currency, { from: req.query.from, to: req.query.to })) : 0;
+    return { row, heldBack };
   });
 
-  const grossContent = Number(out.row.gross_content);
+  const grossContent = round2(Number(out.row.gross_content) - out.heldBack);
   const platformFees = Number(out.row.platform_fees);
   const afterFees = Number(out.row.after_fees);
-  const seesFees = hasPermission(req.access, 'data.view_all');
   res.json({
     ...(seesFees ? {
       grossContent,
       platformFees,
-      netRevenue: round2(afterFees + revenueAdjustment(out.rollingReserve)),
-      netProfit: grossContent - platformFees,
+      netRevenue: round2(afterFees - out.heldBack),
+      netProfit: round2(grossContent - platformFees),
       feesEstimated: out.row.estimated_fee_sales > 0,
       declinedCount: out.row.declined_count,
       checkoutFeeRevenue: Number(out.row.checkout_fees),

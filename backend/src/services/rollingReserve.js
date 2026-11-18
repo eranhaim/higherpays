@@ -45,10 +45,11 @@ async function getRollingReserve(db, workspaceId, currency, { from, to }) {
   };
 }
 
-// How the reserve moved the agency's revenue in a period: holds take money
-// out, releases and reversals put it back.
-function revenueAdjustment(reserve) {
-  return round2(reserve.released + reserve.reversed - reserve.reserved);
+// What an agency revenue or profit figure leaves out: the reserve MantaPay
+// holds on its sales, plus what this ledger held back in the period (holds
+// take money out, releases and reversals put it back).
+function reserveHeldBack(providerHeld, ledger) {
+  return round2(providerHeld + ledger.reserved - ledger.released - ledger.reversed);
 }
 
 // Releases `amount` (or the whole balance when null), oldest holds first, so a
@@ -83,4 +84,4 @@ async function releaseRollingReserve(c, workspaceId, { currency, amount, note, u
   return { amount: total, currency, releaseBatchId: batchId };
 }
 
-module.exports = { getRollingReserve, revenueAdjustment, releaseRollingReserve };
+module.exports = { getRollingReserve, reserveHeldBack, releaseRollingReserve };

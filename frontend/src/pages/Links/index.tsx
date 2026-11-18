@@ -155,8 +155,8 @@ export default function LinksPage() {
     { key: 'paid', label: 'Paid links', card: <StatCard isUnknown={statsUnknown} label="Paid links" value={summary?.paidLinks ?? 0} sub={`${conversion}% conversion`} /> },
     { key: 'payments', label: 'Successful payments', card: <StatCard isUnknown={statsUnknown} label="Successful payments" value={summary?.successfulPayments ?? 0} sub="Reusable payments count separately" /> },
     // Gross is agency-only: beside net it gives away the platform fee.
-    ...(can('data.view_all') ? [{ key: 'gross', label: 'Gross sales', card: <StatCard isUnknown={statsUnknown} label="Gross sales" value={<Money amount={summary?.grossSales ?? 0} currency={summary?.currency} direction="in" />} sub="Content sales" /> }] : []),
-    { key: 'net', label: 'Net revenue', card: <StatCard isUnknown={statsUnknown} label="Net revenue" value={<Money amount={summary?.netAfterFees ?? 0} currency={summary?.currency} direction="in" emphasis />} sub="Revenue after all fees" /> },
+    ...(can('data.view_all') ? [{ key: 'gross', label: 'Gross sales', card: <StatCard isUnknown={statsUnknown} label="Gross sales" value={<Money amount={summary?.grossSales ?? 0} currency={summary?.currency} direction="in" />} sub="Content sales after rolling reserve" /> }] : []),
+    { key: 'net', label: 'Net revenue', card: <StatCard isUnknown={statsUnknown} label="Net revenue" value={<Money amount={summary?.netAfterFees ?? 0} currency={summary?.currency} direction="in" emphasis />} sub={can('data.view_all') ? 'Revenue after all fees and rolling reserve' : 'Revenue after all fees'} /> },
   ];
   const statsView = useViewLayout('links.stats', statCards);
 

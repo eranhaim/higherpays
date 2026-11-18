@@ -243,7 +243,7 @@ export default function AnalyticsPage() {
           <StatCard label="Gross" value={<Money currency={currency} amount={h.gross} direction="in" />} sub={grossDelta?.text} trend={grossDelta?.trend} />
         )}
         <StatCard label="Net revenue" value={<Money currency={currency} amount={h.net} direction="in" emphasis />}
-          sub={netDelta?.text ?? 'Revenue after all fees'} trend={netDelta?.trend} />
+          sub={netDelta?.text ?? (h.gross !== undefined ? 'After all fees and rolling reserve' : 'Revenue after all fees')} trend={netDelta?.trend} />
         {h.takeRatePct !== undefined && <StatCard label="Take rate" value={pct(h.takeRatePct)} sub={takeDelta?.text} trend={takeDelta?.trend} />}
         <StatCard label="Avg order" value={<Money currency={currency} amount={h.aov} />} sub={aovDelta?.text} trend={aovDelta?.trend} />
         <StatCard label="Paid sales" value={h.paidCount} sub={paidDelta?.text} trend={paidDelta?.trend} />

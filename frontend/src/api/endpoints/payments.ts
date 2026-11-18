@@ -145,9 +145,12 @@ export interface PaymentFlow {
 }
 
 export interface PaymentsSummary {
-  /** Only sent to callers with workspace-wide data access. */
+  /**
+   * Only sent to callers with workspace-wide data access. Net of every
+   * reserve held on the matching sales, like `netRevenue` and `netProfit`.
+   */
   grossContent?: number;
-  /** After payment fees and the reserve accruals in the selected range. */
+  /** After payment fees and every reserve held on the matching sales. */
   netRevenue?: number;
   /** Sent to limited-scope users instead of gross: the net revenue after all fees. */
   afterFees?: number;
