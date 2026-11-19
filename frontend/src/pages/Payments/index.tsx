@@ -194,7 +194,7 @@ export default function PaymentsPage() {
     {
       key: 'gross', label: 'Gross',
       card: canScope
-        ? <StatCard isUnknown={statsUnknown} label="Gross revenue" value={<Money amount={summary?.grossContent ?? 0} currency={summary?.currency} direction="in" />} sub="Before fees, after rolling reserve" />
+        ? <StatCard isUnknown={statsUnknown} label="Gross revenue" value={<Money amount={summary?.grossContent ?? 0} currency={summary?.currency} direction="in" />} sub="Before fees" />
         : <StatCard isUnknown={statsUnknown} label="Net revenue" value={<Money amount={summary?.afterFees ?? 0} currency={summary?.currency} direction="in" />} sub="Revenue after all fees — your pay is based on this" />,
     },
     ...(canViewFees ? [{

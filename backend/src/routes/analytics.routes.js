@@ -20,9 +20,7 @@ const currencies = require('../services/currencies.service');
 
 const router = express.Router({ mergeParams: true });
 const { wid } = require('../lib/scope');
-const { toNumber, round2 } = require('../lib/money');
-const { providerReserveOnPaymentsSql } = require('../services/providerReserve');
-const { getRollingReserve, reserveHeldBack } = require('../services/rollingReserve');
+const { toNumber } = require('../lib/money');
 const { DAY_MS, reportRange } = require('../lib/reportRange');
 
 router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, res) => {
@@ -71,11 +69,6 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
         COUNT(DISTINCT p.customer_id) FILTER (WHERE re.entry_type='sale')          AS buyers
       ${RE_FROM} ${RE_WHERE}`, P)).rows[0];
     const revenue = toNumber(h.revenue), agencyKeep = toNumber(h.agency_keep), saleCount = toNumber(h.sale_count);
-    // The agency's revenue cards leave out every reserve. The rates and
-    // averages describe the sales themselves and keep the full gross.
-    const heldBack = seesAgencyFigures ? reserveHeldBack(toNumber((await c.query(
-      `SELECT ${providerReserveOnPaymentsSql('$3', CUR, `SELECT p.id ${RE_FROM} ${RE_WHERE} AND re.entry_type = 'sale'`)} AS held`,
-      P)).rows[0].held), await getRollingReserve(c, wid(req), currency, { from, to })) : 0;
 
     const ts = (await c.query(`
       SELECT to_char(date_trunc('day', t.occurred_at),'YYYY-MM-DD') AS d,
@@ -156,9 +149,9 @@ router.get('/', requirePermission('analytics.view'), asyncHandler(async (req, re
       range: { from, to, days }, currency, scope: seesAgencyFigures ? 'agency' : scope.kind,
       timeseries: ts,
       headline: {
-        net: round2(toNumber(h.net) - heldBack),
+        net: toNumber(h.net),
         ...(seesAgencyFigures ? {
-          gross: round2(revenue - heldBack),
+          gross: revenue,
           platformFee: toNumber(h.platform_fee),
           accountPayout: toNumber(h.account_payout), agentPayout: toNumber(h.agent_payout), agencyKeep,
           takeRatePct: revenue ? +(agencyKeep / revenue * 100).toFixed(1) : 0,

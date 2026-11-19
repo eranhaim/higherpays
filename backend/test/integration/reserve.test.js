@@ -106,36 +106,17 @@ test('the agency rolling reserve holds each sale, releases oldest first, and a r
     .send({ currency: 'EUR' }).expect(409);
 });
 
-test('agency revenue and profit cards leave out the reserve on their own sales; fees keep the full gross', async () => {
+test('the gross cards show the full gross while MantaPay holds a reserve', async () => {
   const t = await createTenant(app);
   const account = await createAccount(app, t);
   await paySale(app, t, account, 100);
-  const old = await paySale(app, t, account, 50);
-  await pool.query(
-    "UPDATE transactions SET occurred_at = now() - interval '200 days' WHERE payment_id = $1", [old.paymentId]);
-  await pool.query("UPDATE payments SET occurred_at = now() - interval '200 days' WHERE id = $1", [old.paymentId]);
   await setReserveTerms(t.workspaceId, { pct: 10, releaseDays: 0 });
-  const recent = { from: new Date(Date.now() - 10 * 86_400_000).toISOString() };
+  assert.equal((await getProviderReserve(t)).held, 10);
 
-  const paymentsSummary = async (q = {}) => (await request(app)
-    .get(`/workspaces/${t.workspaceId}/payments/summary`).query(q).set(t.authHeaders).expect(200)).body;
-  const linksSummary = async (q = {}) => (await request(app)
-    .get(`/workspaces/${t.workspaceId}/links/summary`).query(q).set(t.authHeaders).expect(200)).body;
-  const analytics = async (q) => (await request(app)
-    .get(`/workspaces/${t.workspaceId}/analytics`).query(q).set(t.authHeaders).expect(200)).body.headline;
-
-  const all = await paymentsSummary();
-  assert.equal(all.grossContent, 135);
-  assert.equal(all.netProfit, Math.round((135 - all.platformFees) * 100) / 100);
-  assert.equal((await paymentsSummary(recent)).grossContent, 90);
-  assert.equal((await linksSummary()).grossSales, 135);
-  assert.equal((await analytics(recent)).gross, 90);
-
-  // A release takes the oldest sale first: 5 from the old sale, 1 from the new one.
-  await pool.query(
-    `INSERT INTO reserve_releases (workspace_id, amount, currency, released_by_user_id)
-     VALUES ($1, 6, 'EUR', $2)`, [t.workspaceId, t.userId]);
-  assert.equal((await paymentsSummary()).grossContent, 141);
-  assert.equal((await paymentsSummary(recent)).grossContent, 91);
-  assert.equal((await getProviderReserve(t)).held, 9);
+  const paymentsSummary = (await request(app)
+    .get(`/workspaces/${t.workspaceId}/payments/summary`).set(t.authHeaders).expect(200)).body;
+  const linksSummary = (await request(app)
+    .get(`/workspaces/${t.workspaceId}/links/summary`).set(t.authHeaders).expect(200)).body;
+  assert.equal(paymentsSummary.grossContent, 100);
+  assert.equal(linksSummary.grossSales, 100);
 });

@@ -105,9 +105,8 @@ export interface LinksSummary {
   totalLinks: number;
   paidLinks: number;
   successfulPayments: number;
-  /** Only sent to callers with workspace-wide data access. Net of every reserve. */
+  /** Only sent to callers with workspace-wide data access. */
   grossSales?: number;
-  /** Net of every reserve for callers with workspace-wide data access. */
   netAfterFees: number;
   /** Non-overlapping bands: min inclusive, max exclusive. */
   priceBands: Array<{ min: number; max: number | null; count: number }>;

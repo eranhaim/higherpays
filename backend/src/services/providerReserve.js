@@ -54,14 +54,4 @@ async function getProviderReserve(db, workspaceId, currency) {
   };
 }
 
-// SQL for the reserve MantaPay holds on some payments: what a revenue or
-// profit figure over those payments leaves out. The arguments are SQL
-// expressions: the workspace and currency parameters, and a subquery that
-// yields payment ids.
-function providerReserveOnPaymentsSql(workspaceParam, currencyParam, paymentIdsSql) {
-  return `(SELECT COALESCE(SUM(r.held), 0)
-             FROM fn_provider_reserve_by_sale(${workspaceParam}, ${currencyParam}) r
-            WHERE r.payment_id IN (${paymentIdsSql}))`;
-}
-
-module.exports = { getProviderReserve, providerReserveOnPaymentsSql };
+module.exports = { getProviderReserve };

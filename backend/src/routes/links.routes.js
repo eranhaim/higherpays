@@ -15,9 +15,6 @@ const linksService = require('../services/links.service');
 const currencies = require('../services/currencies.service');
 const { recordLinkEvent } = require('../services/linkEvents');
 const { resolveAttribution, repostSales } = require('../services/attribution');
-const { providerReserveOnPaymentsSql } = require('../services/providerReserve');
-const { getRollingReserve, reserveHeldBack } = require('../services/rollingReserve');
-const { round2 } = require('../lib/money');
 const { generateOrderReference } = require('../lib/orderReference');
 const { payUrl } = require('../lib/payUrl');
 
@@ -204,14 +201,13 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
   const min = numberFilter(req.query.min), max = numberFilter(req.query.max);
   if (min != null && max != null && max < min) return badRequest(res, 'max must be >= min', ['min', 'max']);
   assertDateFilter(req.query);
-  const seesAgencyFigures = hasPermission(req.access, 'data.view_all');
 
-  const { row, heldBack } = await withTransaction(async (c) => {
+  const row = await withTransaction(async (c) => {
     const scope = await resolveDataScope(c, req);
     // Counts, price bands and revenue are about one currency; summing across
     // currencies would be meaningless.
     const currency = await currencies.resolveReportingCurrency(c, wid(req), req.query.currency);
-    const summary = (await c.query(
+    return (await c.query(
       `WITH effective AS (
          SELECT pl.*, ${EFFECTIVE_STATUS} AS effective_status,
                 latest.provider_status, latest.provider_transaction_id
@@ -259,19 +255,9 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
           WHERE re.workspace_id = $1 AND p.archived_at IS NULL
             AND ${PAYMENT_OCCURRED_IN_RANGE}
        )
-       SELECT link_counts.*, revenue.*,
-              ${seesAgencyFigures ? providerReserveOnPaymentsSql('$1', '$14::char(3)', `
-                SELECT p.id FROM payments p
-                  JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment'
-                  JOIN matching_links ml ON ml.id = p.payment_link_id
-                 WHERE p.archived_at IS NULL AND ${PAYMENT_OCCURRED_IN_RANGE}`) : '0'} AS provider_reserve,
-              $14::char(3) AS currency
+       SELECT link_counts.*, revenue.*, $14::char(3) AS currency
          FROM link_counts, revenue`,
       [...linkFilterParams(req, scope, false), currency])).rows[0];
-    // The agency's revenue leaves out every reserve.
-    const heldBack = seesAgencyFigures ? reserveHeldBack(Number(summary.provider_reserve), await getRollingReserve(
-      c, wid(req), currency, { from: req.query.from, to: req.query.to })) : 0;
-    return { row: summary, heldBack };
   });
   res.json({
     totalLinks: row.total_links,
@@ -279,8 +265,8 @@ router.get('/summary', requirePermission('links.view'), asyncHandler(async (req,
     successfulPayments: row.successful_payments,
     // An agent or creator gets the net figure only. Reporting gross beside it
     // hands them the platform fee by subtraction.
-    ...(seesAgencyFigures ? { grossSales: round2(Number(row.gross_sales) - heldBack) } : {}),
-    netAfterFees: round2(Number(row.net_after_fees) - heldBack),
+    ...(hasPermission(req.access, 'data.view_all') ? { grossSales: Number(row.gross_sales) } : {}),
+    netAfterFees: Number(row.net_after_fees),
     priceBands: [
       { min: 0, max: 50, count: row.band_0_50 },
       { min: 50, max: 100, count: row.band_50_100 },
