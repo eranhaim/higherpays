@@ -6,15 +6,13 @@ const request = require('supertest');
 const { app, pool } = require('../helpers/setup');
 const { createTenant, createAccount } = require('../helpers/tenant');
 const provider = require('../../src/providers/mantapay');
-const { withTransaction } = require('../../src/db');
 const { reconcileWorkspace } = require('../../src/services/links.service');
 
 test.after(async () => {
   await pool.end();
 });
 
-// The scheduler runs one reconcile pass per workspace inside a transaction.
-const reconcile = (ws) => withTransaction((c) => reconcileWorkspace(c, ws, 0));
+const reconcile = (ws) => reconcileWorkspace(ws, 0);
 
 async function withStubbedStatus(replies, run) {
   const real = provider.getPaymentStatus;
@@ -193,4 +191,28 @@ test('recording an outcome closes the failed webhook that carried it', async () 
   assert.deepEqual(await paymentsOf(link.id), [{ status: 'paid' }]);
   const row = (await pool.query('SELECT processed FROM webhook_events WHERE id = $1', [event.id])).rows[0];
   assert.equal(row.processed, true);
+});
+
+// MantaPay reported €1,132.27 for a €999 order. That one record threw, the
+// whole workspace pass rolled back on every run, and an approved €422 sale on
+// another link was never recorded (HP-SEB7-Q6PX-Q8GF, 19 Nov).
+test('an outcome with an unexpected amount is skipped without holding back the other links', async () => {
+  const tenant = await createTenant(app);
+  const account = await createAccount(app, tenant);
+  const odd = await createLink(tenant, account);
+  const paid = await createLink(tenant, account);
+  const ws = await workspaceOf(tenant);
+
+  const replies = {
+    [odd.referenceId]: statusReply('approved', '900300', { gross_amount: 47.13 }),
+    [paid.referenceId]: statusReply('approved', '900301'),
+  };
+  const real = provider.getPaymentStatus;
+  provider.getPaymentStatus = async (_ws, reference) => replies[reference];
+  let summary;
+  try { summary = await reconcile(ws); } finally { provider.getPaymentStatus = real; }
+
+  assert.deepEqual(summary.skipped, [{ linkId: odd.id, reason: 'provider_amount_mismatch' }]);
+  assert.deepEqual(await paymentsOf(paid.id), [{ status: 'paid' }]);
+  assert.deepEqual(await paymentsOf(odd.id), []);
 });

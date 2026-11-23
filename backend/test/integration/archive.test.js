@@ -73,7 +73,7 @@ test('archived links cannot be opened or reconciled, and can be restored', async
   await request(app).get(`/pay/${link.referenceId}`).expect(404);
 
   const workspace = (await pool.query('SELECT * FROM workspaces WHERE id = $1', [tenant.workspaceId])).rows[0];
-  const result = await reconcileWorkspace({ query: (...args) => pool.query(...args) }, workspace);
+  const result = await reconcileWorkspace(workspace);
   assert.equal(result.checked, 0);
 
   await request(app)

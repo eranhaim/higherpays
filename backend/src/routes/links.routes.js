@@ -645,7 +645,7 @@ router.post('/reconcile', requirePermission('revenue.manage'), asyncHandler(asyn
   const requested = Number(req.body && req.body.graceMinutes);
   const graceMin = Number.isFinite(requested) && requested >= 0 ? requested : linksService.DEFAULT_GRACE_MINUTES;
   const ws = (await query('SELECT * FROM workspaces WHERE id=$1', [wid(req)])).rows[0];
-  const summary = await withTransaction((c) => linksService.reconcileWorkspace(c, ws, graceMin));
+  const summary = await linksService.reconcileWorkspace(ws, graceMin);
   res.json(summary);
 }));
 
