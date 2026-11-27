@@ -371,3 +371,21 @@ test('a declined order later approved under a new transaction id ends up paid, e
     (await pool.query('SELECT status FROM payments WHERE id = $1', [paid.paymentId])).rows[0].status,
     'paid');
 });
+
+// Three Celesties USD links paid by EUR cards (24-26 Nov) were refused as a
+// currency mismatch: MantaPay signs the converted charge and reports the order
+// in otrans_*.
+test('a payment MantaPay charged in another currency is recorded as the order it paid', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const link = (await request(app).post(`/workspaces/${t.workspaceId}/links`).set(t.authHeaders)
+    .send({ accountId: account.id, type: 'single_use', amount: 25, currency: 'EUR' }).expect(201)).body;
+  const payload = buildPaidPayload({ reference: link.referenceId, transId: newTransId(), amount: 21.4, currency: 'GBP' });
+  payload.otrans_amount = '25';
+  payload.otrans_currency = 'EUR';
+
+  await postWebhook(app, await endpointFor(t.workspaceId), payload).expect(200);
+  const payment = (await pool.query(
+    'SELECT status, amount, currency FROM payments WHERE payment_link_id = $1', [link.id])).rows[0];
+  assert.deepEqual({ ...payment, amount: Number(payment.amount) }, { status: 'paid', amount: 25, currency: 'EUR' });
+});

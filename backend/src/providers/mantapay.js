@@ -85,8 +85,11 @@ async function createCheckout(ws, o = {}) {
  */
 function parseWebhook(raw) {
   const text = Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw || '');
-  const p = status.parseFormReply(text);
+  return readNotification(status.parseFormReply(text));
+}
 
+/** The same reading, for a notification's fields as stored in webhook_events.payload. */
+function readNotification(p) {
   if (sig.isChargebackNotification(p)) {
     return {
       kind: 'chargeback',
@@ -106,6 +109,12 @@ function parseWebhook(raw) {
 
   const code = reply.readReplyCode(p);
   const mapped = sig.mapReplyCode(code);
+  // MantaPay may charge a card in another currency than the order: a USD link
+  // paid by a EUR Google Pay card (24 Nov). trans_* then hold the converted
+  // charge and otrans_* the order as we sent it, in the link's currency.
+  const ordered = p.otrans_currency && p.otrans_amount
+    ? { amount: p.otrans_amount, currency: p.otrans_currency }
+    : { amount: p.trans_amount, currency: p.trans_currency };
   return {
     kind: 'payment',
     providerEventId: p.trans_id || null,
@@ -121,8 +130,8 @@ function parseWebhook(raw) {
     // `gross` is the name the routes read; `grossAmount` kept as an alias.
     // Whether trans_amount is content or customer total during the fee-mode
     // cutover is unconfirmed. Both signed values are validated downstream.
-    gross: p.trans_amount != null ? Number(p.trans_amount) : null,
-    grossAmount: p.trans_amount != null ? Number(p.trans_amount) : null,
+    gross: ordered.amount != null ? Number(ordered.amount) : null,
+    grossAmount: ordered.amount != null ? Number(ordered.amount) : null,
     // MantaPay does NOT report the fee or the net in the notification — unlike
     // the previous provider. Per-transaction fees come from the Search API
     // afterwards. So we record fee as unknown (null) here and let the payout
@@ -130,7 +139,7 @@ function parseWebhook(raw) {
     // the estimate with the provider's actual figure.
     fee: null,
     net: null,
-    currency: p.trans_currency || null,
+    currency: ordered.currency || null,
     paymentDetails: p.payment_details || null,
     clientEmail: p.client_email || null,
     clientName: p.client_fullname || null,
@@ -195,7 +204,7 @@ async function refundPayment() {
 module.exports = {
   SIGNATURE_HEADER,
   resolveApiKey, resolveMerchantId,
-  createCheckout, parseWebhook, verifyWebhookSignature,
+  createCheckout, parseWebhook, readNotification, verifyWebhookSignature,
   getPaymentStatus, mapPaymentStatus, isAmbiguousStatus, refundPayment,
   // richer surfaces, used directly by reconciliation
   status, search, auth, signature: sig, checkout,

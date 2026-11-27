@@ -6,6 +6,8 @@
  * uses:
  *
  *   open    — every active link older than the grace period.
+ *   webhooks — notifications that failed when they arrived (a timeout, a
+ *             payload the code could not read yet), applied again.
  *   closed  — links written off as expired or cancelled that MantaPay may
  *             still approve. MantaPay has approved orders days after the fact
  *             (HP-FKNP-CTAE-8JXA, 14 Oct), and without this sweep that money
@@ -25,7 +27,9 @@ const provider = require('../providers/mantapay');
 const { DECLINE_SOURCE } = require('../providers/mantapay-reply');
 const paymentsService = require('./payments.service');
 const { recordLinkEvent } = require('./linkEvents');
+const { applyWebhookEvent } = require('./webhookEvents');
 const { publishWorkspaceUpdate } = require('../events/workspaceEvents');
+const { drainMarketplaceOutbox } = require('../routes/marketplace.routes');
 
 const DEFAULT_GRACE_MINUTES = 10;
 const LOOP_INTERVAL_MS = 10 * 60_000;
@@ -33,6 +37,10 @@ const LOOP_INTERVAL_MS = 10 * 60_000;
 // How long after a closed link was created a MantaPay approval is still
 // believed. Long enough for the real cases — the 14 Oct batch was 9 days old.
 const LATE_APPROVAL_WINDOW_DAYS = 45;
+
+// How long a failed notification is retried, so one that can never apply
+// stops being tried.
+const WEBHOOK_RETRY_DAYS = LATE_APPROVAL_WINDOW_DAYS;
 
 // How many closed links one run may ask MantaPay about. In production ~1,150
 // orders are inside the window, so the sweep rotates through them (oldest
@@ -148,8 +156,32 @@ async function reconcileSingleUseLink(ws, link, statusResp, summary) {
   }
 }
 
+async function retryFailedWebhooks(ws, summary) {
+  const failed = (await query(
+    `SELECT id, payload FROM webhook_events
+      WHERE workspace_id = $1 AND provider = 'mantapay'
+        AND NOT processed AND signature_valid
+        AND received_at > now() - ($2 || ' days')::interval
+      ORDER BY received_at`,
+    [ws.id, String(WEBHOOK_RETRY_DAYS)])).rows;
+
+  for (const event of failed) {
+    try {
+      const result = await applyWebhookEvent(ws.id, event.id, provider.readNotification(event.payload));
+      summary.changed = true;
+      summary.updated.push({ webhookEventId: event.id, paymentId: result.paymentId, retried: true });
+      if (result.lifecycleQueued) void drainMarketplaceOutbox();
+    } catch (e) {
+      summary.skipped.push({ webhookEventId: event.id, reason: e.code || 'retry_failed' });
+    }
+  }
+}
+
 async function reconcileWorkspace(ws, graceMinutes = DEFAULT_GRACE_MINUTES) {
   const summary = { checked: 0, updated: [], skipped: [], changed: false };
+
+  // First, so an approval a failed notification carried is not polled again.
+  await retryFailedWebhooks(ws, summary);
 
   const stuck = (await query(
     `SELECT id, reference_id, type, amount, checkout_fee, currency, expires_at < now() AS is_expired

@@ -1,16 +1,12 @@
 'use strict';
 const crypto = require('crypto');
 const express = require('express');
-const { query, withTransaction } = require('../db');
+const { query } = require('../db');
 const { asyncHandler } = require('../lib/http');
 const provider = require('../providers/mantapay');
-const { DECLINE_SOURCE } = require('../providers/mantapay-reply');
-const paymentsService = require('../services/payments.service');
+const { applyWebhookEvent } = require('../services/webhookEvents');
 const { publishWorkspaceUpdate } = require('../events/workspaceEvents');
-const {
-  enqueueLifecycleEventForReference,
-  drainMarketplaceOutbox,
-} = require('./marketplace.routes');
+const { drainMarketplaceOutbox } = require('./marketplace.routes');
 
 const router = express.Router();
 const PROVIDER = 'mantapay';
@@ -75,61 +71,8 @@ router.post('/payment/:endpoint', asyncHandler(async (req, res) => {
     [ws.id, PROVIDER, ev.status, ev.providerEventId, signatureValid, ev.fields, ev.referenceId || ''])).rows[0];
   if (event.processed) return res.status(200).json({ ok: true, duplicate: true });
 
-  if (ev.kind !== 'chargeback' && !['pending', 'approved', 'declined'].includes(ev.status)) {
-    await query('UPDATE webhook_events SET processed=true, processed_at=now() WHERE id=$1', [event.id]);
-    return res.status(200).json({ ok: true, ignored: 'non_final_status' });
-  }
-
-  let result;
-  try {
-    result = await withTransaction(async (c) => {
-      const lockedEvent = (await c.query(
-        'SELECT processed FROM webhook_events WHERE id = $1 FOR UPDATE', [event.id])).rows[0];
-      if (lockedEvent.processed) return { duplicate: true };
-
-      const outcome = ev.kind === 'chargeback'
-        ? await paymentsService.recordPaymentReversal(c, ws.id, {
-            originalProviderTransactionId: ev.originalTransactionId,
-            providerTransactionId: ev.transactionId,
-            kind: 'chargeback',
-            rawPayload: ev.fields,
-          })
-        : await paymentsService.recordPaymentOutcome(c, ws.id, {
-            providerTransactionId: ev.transactionId,
-            status: ev.status,
-            gross: ev.gross,
-            fee: ev.fee,
-            currency: ev.currency,
-            linkReference: ev.referenceId,
-            paymentMethod: ev.paymentDetails,
-            declineCode: ev.replyCode,
-            declineReason: ev.replyDesc,
-            declineCodeSource: DECLINE_SOURCE.webhookSigned,
-            declineReasonSource: DECLINE_SOURCE.webhook,
-            rawPayload: ev.fields,
-          });
-      if (ev.kind === 'chargeback' && (outcome.notFound || outcome.noSale)) {
-        throw Object.assign(new Error(outcome.notFound
-          ? 'chargeback_original_transaction_not_found'
-          : 'chargeback_sale_not_found'), { status: 422 });
-      }
-      const lifecycleType = ev.kind === 'chargeback'
-        ? 'payment.chargeback'
-        : ev.status === 'approved' ? 'payment.approved' : null;
-      if (lifecycleType) {
-        await enqueueLifecycleEventForReference(c, ev.referenceId, lifecycleType, ev.transactionId);
-      }
-      await c.query(
-        'UPDATE webhook_events SET processed=true, processed_at=now(), processing_error=NULL WHERE id=$1',
-        [event.id]);
-      return { ...outcome, lifecycleQueued: Boolean(lifecycleType) };
-    });
-  } catch (error) {
-    await query(
-      'UPDATE webhook_events SET processing_error = $2 WHERE id = $1',
-      [event.id, String(error.code || error.message || 'processing_failed').slice(0, 500)]);
-    throw error;
-  }
+  const result = await applyWebhookEvent(ws.id, event.id, ev);
+  if (result.ignored) return res.status(200).json({ ok: true, ignored: result.ignored });
 
   if (!result.duplicate && !result.already) publishWorkspaceUpdate(ws.id);
   if (result.lifecycleQueued) void drainMarketplaceOutbox();

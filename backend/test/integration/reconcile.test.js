@@ -7,6 +7,7 @@ const { app, pool } = require('../helpers/setup');
 const { createTenant, createAccount } = require('../helpers/tenant');
 const provider = require('../../src/providers/mantapay');
 const { reconcileWorkspace } = require('../../src/services/links.service');
+const { buildPaidPayload } = require('../helpers/webhook');
 
 test.after(async () => {
   await pool.end();
@@ -215,4 +216,26 @@ test('an outcome with an unexpected amount is skipped without holding back the o
   assert.deepEqual(summary.skipped, [{ linkId: odd.id, reason: 'provider_amount_mismatch' }]);
   assert.deepEqual(await paymentsOf(paid.id), [{ status: 'paid' }]);
   assert.deepEqual(await paymentsOf(odd.id), []);
+});
+
+// A notification that failed on arrival (a timeout, or a payload the code could
+// not read yet) is the only record of some approvals: MantaPay's status API
+// reports a converted charge without the original order amount.
+test('an approved notification that failed on arrival is applied on the next run', async () => {
+  const tenant = await createTenant(app);
+  const account = await createAccount(app, tenant);
+  const link = await createLink(tenant, account);
+  const ws = await workspaceOf(tenant);
+  const payload = buildPaidPayload({ reference: link.referenceId, transId: '900400', amount: 40 });
+  const event = (await pool.query(
+    `INSERT INTO webhook_events
+       (workspace_id, provider, event_type, provider_event_id, signature_valid, payload, order_reference, processing_error)
+     VALUES ($1, 'mantapay', 'approved', '900400', true, $2, $3, 'provider_currency_mismatch')
+     RETURNING id`, [tenant.workspaceId, payload, link.referenceId])).rows[0];
+
+  await withStubbedStatus([statusReply('pending', '900401')], () => reconcile(ws));
+
+  assert.deepEqual(await paymentsOf(link.id), [{ status: 'paid' }]);
+  const row = (await pool.query('SELECT processed FROM webhook_events WHERE id = $1', [event.id])).rows[0];
+  assert.equal(row.processed, true);
 });

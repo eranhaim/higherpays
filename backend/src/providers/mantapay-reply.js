@@ -19,10 +19,14 @@ const DECLINE_SOURCE = {
 // truth instead: a code with no explanation behind it.
 const UNSPECIFIED_DECLINE_REASON = 'MantaPay declined the payment without giving a reason';
 
+// MantaPay sometimes sends its template unfilled: reply_desc "@replyDesc@"
+// reached staff as the reason for 15 declines in one week of November.
+const UNFILLED_PLACEHOLDER = /^@[A-Za-z_]+@$/;
+
 function providerText(value) {
   if (value == null) return null;
   const text = String(value).trim();
-  return text || null;
+  return text && !UNFILLED_PLACEHOLDER.test(text) ? text : null;
 }
 
 function readReplyCode(payload) {

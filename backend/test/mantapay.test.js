@@ -151,6 +151,25 @@ test('pending and abandoned webhooks do not become decline events', () => {
   assert.equal(abandoned.status, 'abandoned');
 });
 
+test('an unfilled MantaPay placeholder is no reason at all', () => {
+  assert.equal(reply.readReplyDescription({ reply_desc: '@replyDesc@' }), null);
+  assert.equal(reply.declineFields('declined', { code: '5220', reason: '@replyDesc@' }).reason,
+    reply.UNSPECIFIED_DECLINE_REASON);
+});
+
+// A USD link paid by a EUR Google Pay card (24 Nov): trans_* hold the converted
+// charge, otrans_* the order in the link's currency.
+test('a charge in another currency reads as the order it paid', () => {
+  const converted = provider.parseWebhook(
+    'reply_code=000&trans_id=1&trans_amount=235.78&trans_currency=EUR&otrans_amount=250&otrans_currency=USD');
+  assert.equal(converted.gross, 250);
+  assert.equal(converted.currency, 'USD');
+  const plain = provider.parseWebhook(
+    'reply_code=000&trans_id=2&trans_amount=40&trans_currency=EUR&otrans_amount=&otrans_currency=');
+  assert.equal(plain.gross, 40);
+  assert.equal(plain.currency, 'EUR');
+});
+
 test('integration errors are separated from card declines', () => {
   assert.equal(sig.isConfigurationError('500'), true, 'invalid signature/merchant');
   assert.equal(sig.isConfigurationError('100.051'), false, 'insufficient funds is not our bug');
