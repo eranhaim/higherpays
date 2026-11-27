@@ -370,6 +370,63 @@ test('a declined order later approved under a new transaction id ends up paid, e
   assert.equal(
     (await pool.query('SELECT status FROM payments WHERE id = $1', [paid.paymentId])).rows[0].status,
     'paid');
+
+  // The agency sees one paid row for the order; the attempt stays in the
+  // link's timeline.
+  const listed = (await request(app).get(`/workspaces/${t.workspaceId}/payments`)
+    .set(t.authHeaders).expect(200)).body.items;
+  assert.deepEqual(listed.map((payment) => payment.status), ['paid']);
+  const filters = (await request(app).get(`/workspaces/${t.workspaceId}/payments/filters`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.deepEqual(filters.statuses, ['paid']);
+  const linkDetail = (await request(app).get(`/workspaces/${t.workspaceId}/links/${link.id}`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.ok(linkDetail.events.some((event) => event.type === 'provider_declined'));
+});
+
+// 23 Nov: a customer paid a single-use link twice, 40 seconds apart. The
+// agency kept both charges as sales instead of refunding the second.
+test('a duplicate charge the agency keeps is counted as its own sale, once', async () => {
+  const t = await createTenant(app);
+  const account = await createAccount(app, t);
+  const { link } = await paySale(app, t, account, 25);
+  const endpoint = await endpointFor(t.workspaceId);
+
+  // The second charge's attempt, then its approval under a new id.
+  const attemptId = newTransId();
+  await postWebhook(app, endpoint, buildPaidPayload({
+    reference: link.referenceId, transId: attemptId, amount: 25, replyCode: '663',
+  })).expect(200);
+  const duplicateApproval = buildPaidPayload({ reference: link.referenceId, transId: newTransId(), amount: 25 });
+  const duplicate = (await postWebhook(app, endpoint, duplicateApproval).expect(200)).body;
+  assert.equal(duplicate.reviewRequired, true);
+  assert.equal((await pool.query(
+    'SELECT status FROM payments WHERE payment_link_id = $1 AND provider_payment_id = $2',
+    [link.id, attemptId])).rows[0].status, 'superseded');
+
+  const counted = (await request(app)
+    .post(`/workspaces/${t.workspaceId}/payments/${duplicate.paymentId}/count-duplicate`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(counted.reviewRequired, false);
+  assert.equal(counted.needsDetails, true);
+
+  // MantaPay re-sends the approval; the counted charge is not held back again.
+  await postWebhook(app, endpoint, duplicateApproval).expect(200);
+  await request(app)
+    .post(`/workspaces/${t.workspaceId}/payments/${duplicate.paymentId}/count-duplicate`)
+    .set(t.authHeaders).expect(409);
+
+  assert.equal((await pool.query(
+    'SELECT review_reason FROM payments WHERE id = $1', [duplicate.paymentId])).rows[0].review_reason, null);
+  assert.equal((await pool.query(
+    `SELECT count(*)::int AS count FROM revenue_entries re
+      JOIN transactions tx ON tx.id = re.transaction_id
+      JOIN payments p ON p.id = tx.payment_id
+     WHERE p.payment_link_id = $1 AND re.entry_type = 'sale'`, [link.id])).rows[0].count, 2);
+  const summary = (await request(app).get(`/workspaces/${t.workspaceId}/payments/summary`)
+    .set(t.authHeaders).expect(200)).body;
+  assert.equal(summary.grossContent, 50);
+  assert.equal(summary.detailsNeeded, 2);
 });
 
 // Three Celesties USD links paid by EUR cards (24-26 Nov) were refused as a

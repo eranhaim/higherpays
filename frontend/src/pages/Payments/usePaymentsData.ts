@@ -33,6 +33,8 @@ export interface UsePaymentsDataResult {
   loadMore: () => void;
   /** Records a reversal already issued in the provider dashboard. */
   recordReversal: (id: string, kind: 'refund' | 'chargeback') => Promise<void>;
+  countDuplicateCharge: (id: string) => Promise<void>;
+  isCountingDuplicate: boolean;
   /** Moves one payment to another creator or agent. */
   reassign: (id: string, input: ReassignInput) => Promise<void>;
   archivePayment: (id: string) => Promise<void>;
@@ -105,6 +107,10 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     mutationFn: (id: string) => paymentsApi.archive(id),
     onSuccess: invalidate,
   });
+  const countDuplicate = useMutation({
+    mutationFn: (id: string) => paymentsApi.countDuplicate(id),
+    onSuccess: invalidate,
+  });
   const releaseRollingReserve = useMutation({
     mutationFn: (input: { amount?: number; currency: string; note?: string }) => paymentsApi.releaseRollingReserve(input),
     onSuccess: invalidate,
@@ -127,6 +133,8 @@ export function usePaymentsData(filters: ListPaymentsQuery, canScope: boolean): 
     isLoadingMore: payments.isFetchingNextPage,
     loadMore: () => { void payments.fetchNextPage(); },
     recordReversal: async (id, kind) => { await reverse.mutateAsync({ id, kind }); },
+    countDuplicateCharge: async (id) => { await countDuplicate.mutateAsync(id); },
+    isCountingDuplicate: countDuplicate.isPending,
     reassign: async (id, input) => { await reassign.mutateAsync({ id, input }); },
     archivePayment: (id) => archive.mutateAsync(id).then(() => undefined),
     exportCsv: (input) => paymentsApi.exportCsv(

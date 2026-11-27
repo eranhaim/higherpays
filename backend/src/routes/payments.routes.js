@@ -169,6 +169,10 @@ const PAYMENT_FILTERS = `
 
 // The list and the export answer the same question with the same filters;
 // only the page size differs. `cursor` null and `limit` null mean "all".
+//
+// A superseded attempt is not listed: the agency asked to see one paid row per
+// order. The attempt stays in the link's timeline and in the summary's
+// attempt and decline counts.
 async function listPayments(c, req, { cursor, limit, canFilterFees }) {
   const sort = sortFor(req);
   const scope = await resolveDataScope(c, req);
@@ -176,6 +180,7 @@ async function listPayments(c, req, { cursor, limit, canFilterFees }) {
     `${SELECT}
       WHERE p.workspace_id = $1
         AND ${PAYMENT_FILTERS}
+        AND p.status <> 'superseded'
         AND ($17::text IS NULL OR (${sort.expr}, p.id) ${sort.after} ($17::${sort.cast}, $18::uuid))
       ORDER BY ${sort.expr} ${sort.dir}, p.id ${sort.dir} LIMIT $19`,
     [...paymentFilterParams(req, scope, { canFilterFees }),
@@ -325,7 +330,7 @@ router.get('/filters', requirePermission('payments.view'), asyncHandler(async (r
       )
       SELECT
         COALESCE((SELECT json_agg(status ORDER BY status) FROM (
-          SELECT DISTINCT status FROM visible
+          SELECT DISTINCT status FROM visible WHERE status <> 'superseded'
         ) statuses), '[]'::json) AS statuses,
         COALESCE((SELECT json_agg(row_to_json(items) ORDER BY items.name) FROM (
           SELECT DISTINCT account_id AS id, account AS name FROM visible
@@ -850,5 +855,17 @@ router.post('/:id/refund', requirePermission('revenue.manage'), asyncHandler(asy
 
 // POST /:id/chargeback
 router.post('/:id/chargeback', requirePermission('revenue.manage'), asyncHandler((req, res) => reverse(req, res, 'chargeback')));
+
+// POST /:id/count-duplicate — keeps a duplicate single-use charge as its own
+// sale instead of refunding it.
+router.post('/:id/count-duplicate', requirePermission('revenue.manage'), asyncHandler(async (req, res) => {
+  const row = await withTransaction(async (c) => {
+    const counted = await paymentsService.countDuplicateCharge(c, wid(req), req.params.id);
+    return counted ? loadScoped(c, req, req.params.id) : null;
+  });
+  if (!row) return res.status(409).json({ error: 'not_a_held_duplicate' });
+  await audit({ workspaceId: wid(req), actorUserId: uid(req), action: 'payment.count_duplicate', entityType: 'payment', entityId: req.params.id });
+  res.json(publicPayment(row, { seesFees: hasPermission(req.access, 'data.view_all'), seesAgents: hasPermission(req.access, 'agents.view') }));
+}));
 
 module.exports = router;

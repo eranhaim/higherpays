@@ -88,17 +88,20 @@ async function recordPaymentOutcome(client, workspaceId, params) {
     reasonSource: params.declineReasonSource,
   });
 
+  // An approval is a duplicate when the link already has a sale and this
+  // attempt is not one of its sales. A duplicate the agency counted as its own
+  // sale (countDuplicateCharge) is a sale, so a re-sent notice for it is not
+  // held back again.
   let reviewReason = null;
   if (status === 'approved' && link.type === 'single_use') {
-    const winner = (await client.query(
+    const sales = (await client.query(
       `SELECT p.provider_payment_id
          FROM payments p
          JOIN transactions t ON t.payment_id=p.id AND t.type='payment'
          JOIN revenue_entries re ON re.transaction_id=t.id AND re.entry_type='sale'
-        WHERE p.payment_link_id=$1 AND p.archived_at IS NULL
-        LIMIT 1`,
-      [link.id])).rows[0];
-    if (winner && winner.provider_payment_id !== providerTransactionId) {
+        WHERE p.payment_link_id=$1 AND p.archived_at IS NULL`,
+      [link.id])).rows;
+    if (sales.length > 0 && !sales.some((sale) => sale.provider_payment_id === providerTransactionId)) {
       reviewReason = 'duplicate_single_use_charge';
     }
   }
@@ -228,8 +231,9 @@ async function recordPaymentOutcome(client, workspaceId, params) {
   // 4b) A single-use order has one outcome. MantaPay re-identifies an attempt
   //     when it approves an order it had declined, so the decline survives
   //     under its old id and reads as money the agency never received. Mark
-  //     the attempts this approval beat; the provider's evidence stays.
-  if (payment.status === 'paid' && !payment.review_reason && link.type === 'single_use') {
+  //     the attempts this approval beat; the provider's evidence stays. A
+  //     duplicate charge beats its own earlier attempt in the same way.
+  if (payment.status === 'paid' && link.type === 'single_use') {
     await client.query(
       `UPDATE payments SET status = 'superseded'
         WHERE payment_link_id = $1 AND id <> $2
@@ -268,7 +272,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
           : status === 'approved' ? 'Payment received' : 'Payment declined',
         body: [
           account ? `${account.account_label}: ${account.name}` : null,
-          payment.review_reason ? 'The customer was charged twice on a single-use link. The second charge is not counted in sales; refund it with the payment provider.' : null,
+          payment.review_reason ? 'The customer was charged twice on a single-use link. The second charge is not counted in sales. Refund it with the payment provider, or count it as a separate sale in the payment details.' : null,
         ].filter(Boolean).join('. ') || null,
         accountId: link.account_id,
         agentId: link.created_by_agent_id,
@@ -414,4 +418,27 @@ async function recordPaymentReversal(client, workspaceId, {
   return { entry, amount: Number(p.amount), currency: p.currency, paymentId: p.id };
 }
 
-module.exports = { recordPaymentOutcome, recordPaymentReversal, validateProviderMoney };
+/**
+ * Counts a held duplicate charge as its own sale: the agency keeps the money
+ * instead of refunding it. Returns null when the payment is not a held
+ * duplicate (already counted, archived, or never one).
+ *
+ * @param {import('pg').PoolClient} client  a client inside an open transaction
+ */
+async function countDuplicateCharge(client, workspaceId, paymentId) {
+  const payment = (await client.query(
+    `SELECT p.id, t.id AS sale_tx_id
+       FROM payments p
+       JOIN transactions t ON t.payment_id = p.id AND t.type = 'payment' AND t.status = 'approved'
+      WHERE p.workspace_id = $1 AND p.id = $2 AND p.archived_at IS NULL
+        AND p.status = 'paid' AND p.review_reason = 'duplicate_single_use_charge'
+      FOR UPDATE OF p`,
+    [workspaceId, paymentId])).rows[0];
+  if (!payment) return null;
+  await client.query('UPDATE payments SET review_reason = NULL WHERE id = $1', [payment.id]);
+  await client.query('SELECT fn_post_sale($1)', [payment.sale_tx_id]);
+  await client.query('SELECT fn_hold_rolling_reserve($1)', [payment.sale_tx_id]);
+  return payment;
+}
+
+module.exports = { recordPaymentOutcome, recordPaymentReversal, countDuplicateCharge, validateProviderMoney };

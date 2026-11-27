@@ -350,6 +350,9 @@ export const paymentsApi = {
 
   chargeback: (id: string) => api.post<ReversalResult>(workspacePath(`/payments/${id}/chargeback`), {}),
 
+  /** Keeps a duplicate single-use charge as its own sale instead of refunding it. */
+  countDuplicate: (id: string) => api.post<Payment>(workspacePath(`/payments/${id}/count-duplicate`), {}),
+
   archive: (id: string) => api.post<Payment>(workspacePath(`/payments/${id}/archive`), {}),
 
   reactivate: (id: string) => api.post<Payment>(workspacePath(`/payments/${id}/reactivate`), {}),

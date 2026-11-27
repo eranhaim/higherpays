@@ -57,12 +57,6 @@ const STATUS_TONE: Record<Exclude<PaymentStatus, 'pending'>, 'ok' | 'no' | 'warn
   superseded: 'warn',
 };
 
-// A superseded attempt is not lost money: the provider approved the same order
-// under a new transaction id, and the Completed payment beside it is that
-// approval. Saying so on the row is what stops the agency reading its own
-// history as a failure.
-const SUPERSEDED_NOTE = 'This attempt did not go through; the same order was approved on a later attempt.';
-
 function StatusPill({ payment }: { payment: Payment }) {
   if (payment.status === 'pending') return <span className="sub">Waiting for payment</span>;
   if (payment.reviewRequired) return <Pill tone="warn">Review required</Pill>;
@@ -70,14 +64,6 @@ function StatusPill({ payment }: { payment: Payment }) {
 }
 
 function PaymentStatus({ payment, showProviderName }: { payment: Payment; showProviderName: boolean }) {
-  if (payment.status === 'superseded') {
-    return (
-      <div>
-        <StatusPill payment={payment} />
-        <div className="sub" title={SUPERSEDED_NOTE}>Superseded by a later approval</div>
-      </div>
-    );
-  }
   if (payment.status !== 'failed') return <StatusPill payment={payment} />;
   const raw = declineReasonLabel(payment.declineReason);
   const reason = showProviderName ? raw : sanitizeProviderText(raw);
@@ -168,6 +154,7 @@ export default function PaymentsPage() {
   const {
     payments, summary, providerReserve, rollingReserveSummary, releaseRollingReserve, accounts, filterOptions,
     isLoading, isError, isSummaryLoading, isSummaryError, hasMore, isLoadingMore, loadMore, recordReversal, reassign, archivePayment, exportCsv,
+    countDuplicateCharge, isCountingDuplicate,
   } = usePaymentsData(query, canScope);
 
   const [detail, setDetail] = useState<Payment | null>(null);
@@ -287,8 +274,7 @@ export default function PaymentsPage() {
   const range: DateRange = { from: filters.from, to: filters.to };
   const setRange = (r: DateRange) => setFilters((f) => ({ ...f, ...r }));
   const availableStatuses = PAYMENT_STATUSES.filter((status) =>
-    (canViewFlow || status !== 'superseded')
-    && (status === filters.status || filterOptions?.statuses.includes(status)),
+    status === filters.status || filterOptions?.statuses.includes(status),
   );
   const activeMoreFilters = [
     filters.customerId, filters.accountId, filters.agentId, filters.categoryId,
@@ -481,7 +467,7 @@ export default function PaymentsPage() {
 
       <DataTable
         columns={shownColumns}
-        rows={canViewFlow ? payments : payments.filter((p) => p.status !== 'superseded')}
+        rows={payments}
         rowKey={(p) => p.id}
         onRowClick={setDetail}
         mobileSummary={(p) => (
@@ -523,9 +509,6 @@ export default function PaymentsPage() {
                 : '—'}
             </DetailRow>
             <DetailRow label="Provider transaction ID">{detail.providerTransactionId ?? '—'}</DetailRow>
-            {detail.status === 'superseded' && (
-              <div className="callout"><p className="sub">{SUPERSEDED_NOTE}</p></div>
-            )}
             {detail.status === 'failed' && (
               <>
                 <DetailRow label="Decline reason">{showProviderName ? declineReasonLabel(detail.declineReason) : sanitizeProviderText(declineReasonLabel(detail.declineReason))}</DetailRow>
@@ -575,7 +558,10 @@ export default function PaymentsPage() {
             )}
             <DetailRow label="Date"><DateCell ts={detail.occurredAt} /></DetailRow>
             {detail.reviewRequired && (
-              <div className="warnbar">This duplicate single-use charge needs manual review and refund.</div>
+              <div className="warnbar">
+                The customer was charged twice on this single-use link, and this second charge is not counted in sales.
+                Refund it with the payment provider, or count it as a separate sale.
+              </div>
             )}
             {isReversed(detail.status) && <div className="warnbar">This sale has been reversed.</div>}
             <div className="modal-actions">
@@ -587,6 +573,17 @@ export default function PaymentsPage() {
                   <button className="btn danger" onClick={() => setReversing({ payment: detail, kind: 'refund' })}>Record refund</button>
                   <button className="btn ghost" onClick={() => setReversing({ payment: detail, kind: 'chargeback' })}>Record chargeback</button>
                 </>
+              )}
+              {detail.reviewRequired && canReverse && (
+                <button className="btn" disabled={isCountingDuplicate} onClick={async () => {
+                  try {
+                    await countDuplicateCharge(detail.id);
+                    setDetail(null);
+                    toast('Counted as a separate sale.');
+                  } catch (err) {
+                    toast(err instanceof Error ? err.message : 'Could not count the charge as a sale.');
+                  }
+                }}>{isCountingDuplicate ? 'Counting…' : 'Count as a separate sale'}</button>
               )}
               {canArchive && (
                 <button className="btn ghost" onClick={() => setArchiving(detail)}>Archive payment</button>
