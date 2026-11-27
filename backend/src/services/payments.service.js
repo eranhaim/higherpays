@@ -37,12 +37,13 @@ const REOPENABLE_LINK_STATUSES = ['active', 'expired', 'cancelled'];
  * @param {string|null} [params.declineCodeSource]
  * @param {string|null} [params.declineReasonSource]
  * @param {object}      params.rawPayload       stored verbatim
+ * @param {Date|null}   [params.occurredAt]     when the provider decided; defaults to now
  * @returns {Promise<{ paymentId: string|null, transactionId: string|null, linkId: string|null, newSale: boolean, reviewRequired?: boolean }>}
  */
 async function recordPaymentOutcome(client, workspaceId, params) {
   const {
     providerTransactionId, status, fee = null, currency,
-    linkReference = null, paymentMethod = null, rawPayload,
+    linkReference = null, paymentMethod = null, rawPayload, occurredAt = null,
   } = params;
 
   if (!['pending', 'approved', 'declined'].includes(status)) {
@@ -107,7 +108,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
     `INSERT INTO payments
        (workspace_id, account_id, payment_link_id, agent_id,
         amount, currency, status, payment_method, provider_payment_id, review_reason, occurred_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11::timestamptz, now()))
      ON CONFLICT (workspace_id, payment_link_id, provider_payment_id) DO UPDATE
        SET status = CASE
          WHEN payments.status = 'refunded' THEN 'refunded'
@@ -118,7 +119,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
            review_reason = COALESCE(payments.review_reason, EXCLUDED.review_reason)
      RETURNING id, status, review_reason`,
     [workspaceId, link.account_id, link.id, link.created_by_agent_id,
-     grossValue, currency, paymentStatus, paymentMethod, providerTransactionId, reviewReason])).rows[0];
+     grossValue, currency, paymentStatus, paymentMethod, providerTransactionId, reviewReason, occurredAt])).rows[0];
 
   // 3) The provider's record of the attempt.
   const tx = (await client.query(
@@ -126,7 +127,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
        (workspace_id, payment_id, type, status, gross, fee, fee_is_estimate, surcharge, net, currency,
         provider_transaction_id, provider_decline_code, provider_decline_reason,
         provider_decline_code_source, provider_decline_reason_source, occurred_at, raw_payload)
-     VALUES ($1,$2,'payment',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,now(),$15)
+     VALUES ($1,$2,'payment',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,COALESCE($16::timestamptz, now()),$15)
      ON CONFLICT (workspace_id, payment_id, provider_transaction_id) DO UPDATE
        SET status = CASE
          WHEN transactions.status = 'approved' OR EXCLUDED.status = 'approved' THEN 'approved'
@@ -186,7 +187,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
      RETURNING id, status`,
     [workspaceId, payment.id, status, grossValue, feeValue, feeIsEstimate, surcharge,
      grossValue - feeValue, currency, providerTransactionId, decline.code, decline.reason,
-     decline.codeSource, decline.reasonSource, rawPayload])).rows[0];
+     decline.codeSource, decline.reasonSource, rawPayload, occurredAt])).rows[0];
 
   await recordLinkEvent(client, {
     workspaceId,
@@ -267,7 +268,7 @@ async function recordPaymentOutcome(client, workspaceId, params) {
           : status === 'approved' ? 'Payment received' : 'Payment declined',
         body: [
           account ? `${account.account_label}: ${account.name}` : null,
-          payment.review_reason ? 'Paid twice on a single-use link. The second charge is not counted in sales. Refund it in MantaPay.' : null,
+          payment.review_reason ? 'The customer was charged twice on a single-use link. The second charge is not counted in sales; refund it with the payment provider.' : null,
         ].filter(Boolean).join('. ') || null,
         accountId: link.account_id,
         agentId: link.created_by_agent_id,

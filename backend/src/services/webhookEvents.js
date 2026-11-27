@@ -18,9 +18,11 @@ const FINAL_PAYMENT_STATUSES = ['pending', 'approved', 'declined'];
  * @param {string} workspaceId
  * @param {string} eventId  webhook_events.id
  * @param {object} ev       the parsed notification (provider.readNotification)
+ * @param {Date|null} [receivedAt]  when the notification arrived, for a retry; a
+ *                                  payment is dated by MantaPay's decision, not the retry
  * @returns {Promise<object>} the outcome, with `duplicate`, `ignored` or `lifecycleQueued`
  */
-async function applyWebhookEvent(workspaceId, eventId, ev) {
+async function applyWebhookEvent(workspaceId, eventId, ev, receivedAt = null) {
   if (ev.kind !== 'chargeback' && !FINAL_PAYMENT_STATUSES.includes(ev.status)) {
     await query('UPDATE webhook_events SET processed=true, processed_at=now() WHERE id=$1', [eventId]);
     return { ignored: 'non_final_status' };
@@ -52,6 +54,7 @@ async function applyWebhookEvent(workspaceId, eventId, ev) {
             declineCodeSource: DECLINE_SOURCE.webhookSigned,
             declineReasonSource: DECLINE_SOURCE.webhook,
             rawPayload: ev.fields,
+            occurredAt: receivedAt,
           });
       if (ev.kind === 'chargeback' && (outcome.notFound || outcome.noSale)) {
         throw Object.assign(new Error(outcome.notFound

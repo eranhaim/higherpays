@@ -158,7 +158,7 @@ async function reconcileSingleUseLink(ws, link, statusResp, summary) {
 
 async function retryFailedWebhooks(ws, summary) {
   const failed = (await query(
-    `SELECT id, payload FROM webhook_events
+    `SELECT id, payload, received_at FROM webhook_events
       WHERE workspace_id = $1 AND provider = 'mantapay'
         AND NOT processed AND signature_valid
         AND received_at > now() - ($2 || ' days')::interval
@@ -167,7 +167,7 @@ async function retryFailedWebhooks(ws, summary) {
 
   for (const event of failed) {
     try {
-      const result = await applyWebhookEvent(ws.id, event.id, provider.readNotification(event.payload));
+      const result = await applyWebhookEvent(ws.id, event.id, provider.readNotification(event.payload), event.received_at);
       summary.changed = true;
       summary.updated.push({ webhookEventId: event.id, paymentId: result.paymentId, retried: true });
       if (result.lifecycleQueued) void drainMarketplaceOutbox();

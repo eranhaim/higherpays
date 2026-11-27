@@ -232,10 +232,15 @@ test('an approved notification that failed on arrival is applied on the next run
        (workspace_id, provider, event_type, provider_event_id, signature_valid, payload, order_reference, processing_error)
      VALUES ($1, 'mantapay', 'approved', '900400', true, $2, $3, 'provider_currency_mismatch')
      RETURNING id`, [tenant.workspaceId, payload, link.referenceId])).rows[0];
+  await pool.query("UPDATE webhook_events SET received_at = now() - interval '2 days' WHERE id = $1", [event.id]);
 
   await withStubbedStatus([statusReply('pending', '900401')], () => reconcile(ws));
 
   assert.deepEqual(await paymentsOf(link.id), [{ status: 'paid' }]);
   const row = (await pool.query('SELECT processed FROM webhook_events WHERE id = $1', [event.id])).rows[0];
   assert.equal(row.processed, true);
+  const dated = (await pool.query(
+    `SELECT abs(extract(epoch FROM p.occurred_at - we.received_at)) < 0.001 AS on_time FROM payments p, webhook_events we
+      WHERE p.payment_link_id = $1 AND we.id = $2`, [link.id, event.id])).rows[0];
+  assert.equal(dated.on_time, true, 'dated by MantaPay, not by the retry');
 });

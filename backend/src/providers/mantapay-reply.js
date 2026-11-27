@@ -17,7 +17,7 @@ const DECLINE_SOURCE = {
 // and its status lookup answers blank too. The provider documents no meaning
 // for those codes, so we cannot name a cause without inventing one. State the
 // truth instead: a code with no explanation behind it.
-const UNSPECIFIED_DECLINE_REASON = 'MantaPay declined the payment without giving a reason';
+const UNSPECIFIED_DECLINE_REASON = 'The payment provider declined the payment without giving a reason';
 
 // MantaPay sometimes sends its template unfilled: reply_desc "@replyDesc@"
 // reached staff as the reason for 15 declines in one week of November.
